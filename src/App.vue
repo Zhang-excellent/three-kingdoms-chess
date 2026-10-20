@@ -1,31 +1,43 @@
 <script setup lang="ts">
 import { computed, ref, toRaw, watch } from 'vue';
-import { ORDER, PLAYERS, at, legalMoves, newGame, pieceName, playMove, validGame } from './game.ts';
+import { ORDER, PLAYERS, RULES_VERSION, TURN_CYCLE, at, legalMoves, newGame, pieceName, playMove, validGame } from './game.ts';
 import type { Faction, Game, MoveRecord, Piece, Point } from './game.ts';
 
-const storageKey = 'three-kingdoms-chess:capture-v0.1';
+const storageKey = 'three-kingdoms-chess:turn-cycle-v1';
+const legacyStorageKey = 'three-kingdoms-chess:capture-v0.1';
 let restored: { game: Game; undo: Game[] } = { game: newGame(), undo: [] };
 let initialMessage = '请选择一枚魏方棋子，曹操先行。';
+let requiresNewGame = false;
+let storageUsable = true;
 try {
   const raw = localStorage.getItem(storageKey);
   if (raw) {
     const value = JSON.parse(raw);
-    if (validGame(value.game)) {
-      restored = { game: value.game, undo: Array.isArray(value.undo) ? value.undo.filter(validGame).slice(-50) : [] };
+    const validUndo = Array.isArray(value.undo) && value.undo.every(validGame);
+    if (value.rulesVersion === RULES_VERSION && validGame(value.game) && validUndo) {
+      restored = { game: value.game, undo: value.undo.slice(-50) };
       initialMessage = '已恢复上次棋局，继续行棋即可。';
-    } else initialMessage = '上次棋局无法恢复，已为你重新摆好棋。';
+    } else {
+      requiresNewGame = true;
+      initialMessage = '检测到无法无歧义恢复的存档，原数据已保留，请按新规则另开一局。';
+    }
+  } else if (localStorage.getItem(legacyStorageKey)) {
+    requiresNewGame = true;
+    initialMessage = '检测到旧轮次规则存档，原数据已保留，请按新规则另开一局。';
   }
-} catch { /* A browser may disallow storage; the game remains usable without it. */ }
+} catch { storageUsable = false; }
 const game = ref<Game>(restored.game), undo = ref<Game[]>(restored.undo);
 const selectedId = ref<string | null>(null), message = ref(initialMessage), feedbackError = ref(false);
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
-const sound = ref(false), saveAvailable = ref(true);
+const sound = ref(false), saveAvailable = ref(storageUsable), compatibilityWarning = ref(requiresNewGame);
 let audio: AudioContext | null = null;
 const selected = computed(() => game.value.pieces.find(p => p.id === selectedId.value) ?? null);
 const moves = computed(() => selected.value ? legalMoves(game.value.pieces, selected.value) : []);
 const active = computed(() => game.value.turn ? PLAYERS[game.value.turn] : null);
 const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
+const turnPosition = computed(() => game.value.turnSlot === null ? '' : game.value.eliminated.length
+  ? `双人交替 · 循环位 ${game.value.turnSlot + 1}` : `四拍循环 · 第 ${game.value.turnSlot + 1} 位`);
 const px = (x: number) => 50 + x * 55;
 const py = (y: number) => 50 + y * 55;
 const coordinate = (p: Point) => `(${p.x + 1}, ${p.y + 1})`;
@@ -35,7 +47,8 @@ const eliminatedNames = (record: MoveRecord) => record.eliminated.map(f => PLAYE
 const capturedAt = (point: Point) => !!at(game.value.pieces, point);
 
 watch([game, undo], () => {
-  try { localStorage.setItem(storageKey, JSON.stringify({ game: game.value, undo: undo.value.slice(-50) })); saveAvailable.value = true; }
+  if (compatibilityWarning.value) return;
+  try { localStorage.setItem(storageKey, JSON.stringify({ rulesVersion: RULES_VERSION, game: game.value, undo: undo.value.slice(-50) })); saveAvailable.value = true; }
   catch { saveAvailable.value = false; }
 }, { deep: true });
 
@@ -51,6 +64,7 @@ function tone(capture: boolean) {
   } catch { /* Optional sound never blocks a move. */ }
 }
 function cellClick(x: number, y: number) {
+  if (compatibilityWarning.value) { notify('旧存档无法确定魏方处于哪个轮次位置，请先按新规则另开一局。', true); return; }
   if (game.value.status !== 'playing') { notify('本局已经结束，可以悔棋复盘或重新开局。'); return; }
   const piece = at(game.value.pieces, { x, y });
   if (piece?.faction === game.value.turn) {
@@ -82,6 +96,7 @@ function undoMove() {
   notify(`已撤回一步，轮到${active.value?.name ?? '本局已结束'}。`);
 }
 function reset() {
+  compatibilityWarning.value = false;
   game.value = newGame(); undo.value = []; selectedId.value = null;
   notify('棋子已归位，曹操先行。'); resetDialog.value?.close();
 }
@@ -93,7 +108,7 @@ function onEscape() { selectedId.value = null; notify(active.value ? `轮到${ac
 </script>
 
 <template>
-  <div class="app-shell" @keydown.esc="onEscape">
+  <div class="app-shell" :data-turn-slot="game.turnSlot ?? undefined" @keydown.esc="onEscape">
     <header class="site-header">
       <div class="brand"><span class="brand-seal" aria-hidden="true">弈</span><div><h1>三国象棋</h1><p>THREE KINGDOMS CHESS</p></div></div>
       <div class="header-actions"><span class="mode-tag"><i></i>同屏试玩</span><button class="plain-button" @click="rulesDialog?.showModal()">玩法说明 <span aria-hidden="true">↗</span></button></div>
@@ -111,12 +126,13 @@ function onEscape() { selectedId.value = null; notify(active.value ? `轮到${ac
             <div class="player-card-bottom"><span>{{ count(faction) }} 枚子力</span><strong v-if="game.eliminated.includes(faction)">已出局</strong><strong v-else-if="game.turn === faction" class="turn-label"><i></i>正在行棋</strong><span v-else-if="game.status === 'playing'">等待回合</span><strong v-else>{{ (game.winner === 'wei') === (faction === 'wei') ? '获胜' : '本局结束' }}</strong></div>
           </section>
         </div>
-        <div class="turn-order"><span>行棋顺序</span><p>曹操 <b>›</b> 刘备 <b>›</b> 孙权</p><small>出局后跳过该国回合</small></div>
+        <div class="turn-order"><span>行棋顺序</span><p><template v-for="(faction, slot) in TURN_CYCLE" :key="slot"><b v-if="slot">›</b><strong :class="{current: game.turnSlot === slot}">{{ PLAYERS[faction].name }}</strong></template></p><small>蜀或吴出局后，魏与剩余一方交替</small></div>
         <div class="alliance-note"><span class="tiny-seal">盟</span><p>刘备与孙权结盟<br><strong>互不吃子，共同对抗曹操</strong></p></div>
       </aside>
 
       <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · 首版棋局</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else>{{ game.winner === 'wei' ? '曹操获胜' : '蜀吴联盟获胜' }}</h2></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · 首版棋局</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else>{{ game.winner === 'wei' ? '曹操获胜' : '蜀吴联盟获胜' }}</h2><small v-if="turnPosition" class="turn-position">{{ turnPosition }}</small></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div v-if="compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则未记录魏方的具体循环位，无法安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
         <div class="board-frame">
           <svg class="board-svg" viewBox="0 0 540 595" role="group" aria-label="九路十横线棋盘，坐标从左上角起编号" @click="boardClick">
             <defs>
@@ -144,7 +160,7 @@ function onEscape() { selectedId.value = null; notify(active.value ? `轮到${ac
             </g>
           </svg>
         </div>
-        <div class="board-tools"><button class="tool-button" :disabled="!undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button class="tool-button sound-button" :aria-pressed="sound" @click="sound = !sound">音效 {{ sound ? '开' : '关' }}</button></div>
+        <div class="board-tools"><button class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button class="tool-button sound-button" :aria-pressed="sound" @click="sound = !sound">音效 {{ sound ? '开' : '关' }}</button></div>
         <p class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
         <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner === 'wei' ? '魏方胜 · 曹操获胜' : '联盟胜 · 刘备与孙权共同获胜' }}</strong><span>本局共 {{ game.history.length }} 步，棋谱保留供复盘。</span></div>
       </section>
@@ -158,7 +174,7 @@ function onEscape() { selectedId.value = null; notify(active.value ? `轮到${ac
       </aside>
     </main>
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈。</span><span>{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
-    <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>同一页面轮流控制三国。曹操 → 刘备 → 孙权，出局国家跳过回合。</p><ul><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>蜀吴互不吃子，也不能落在本方或盟友占据的位置。所有棋子都可以作炮架。</li><li>蜀吴主公被吃或该国困毙，全军清空。曹操出局则联盟胜；蜀吴均出局则曹操胜。</li><li>取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判胜负，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
+    <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>同一页面轮流控制三国。三方存活时按曹操 → 刘备 → 曹操 → 孙权循环，每个位置只走一步。</p><ul><li>蜀或吴出局后，曹操与剩余一方严格交替，不会连续行动。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>蜀吴互不吃子，也不能落在本方或盟友占据的位置。所有棋子都可以作炮架。</li><li>蜀吴主公被吃或该国困毙，全军清空。曹操出局则联盟胜；蜀吴均出局则曹操胜。</li><li>取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判胜负，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
   </div>
 </template>

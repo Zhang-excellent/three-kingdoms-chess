@@ -1,19 +1,22 @@
 export type Faction = 'wei' | 'shu' | 'wu';
 export type Kind = 'king' | 'rook' | 'horse' | 'elephant' | 'advisor' | 'cannon' | 'pawn' | 'feng';
+export type TurnSlot = 0 | 1 | 2 | 3;
 export interface Point { x: number; y: number }
 export interface Piece extends Point { id: string; faction: Faction; kind: Kind }
 export interface MoveRecord {
-  number: number; faction: Faction; pieceId: string; kind: Kind;
+  number: number; faction: Faction; turnSlot: TurnSlot; pieceId: string; kind: Kind;
   from: Point; to: Point; captured: Piece | null; eliminated: Faction[];
 }
 export interface Game {
-  schema: 1; pieces: Piece[]; turn: Faction | null; eliminated: Faction[];
+  schema: 2; pieces: Piece[]; turn: Faction | null; turnSlot: TurnSlot | null; eliminated: Faction[];
   history: MoveRecord[]; lastMove: MoveRecord | null;
   winner: 'wei' | 'alliance' | null; status: 'playing' | 'finished';
 }
 export type MoveResult = { ok: true; game: Game; notices: string[] } | { ok: false; error: string };
 
 export const ORDER: Faction[] = ['wei', 'shu', 'wu'];
+export const TURN_CYCLE: readonly Faction[] = ['wei', 'shu', 'wei', 'wu'];
+export const RULES_VERSION = 'turn-cycle-wei-shu-wei-wu-v1';
 export const PLAYERS = {
   wei: { nation: '魏', name: '曹操', color: '#ac493b', initial: '曹', team: '独立阵营' },
   shu: { nation: '蜀', name: '刘备', color: '#303943', initial: '刘', team: '蜀吴联盟' },
@@ -41,7 +44,7 @@ export function newGame(): Game {
   add('wu', 'rook', 8, 0); add('wu', 'king', 6, 0);
   add('wu', 'cannon', 7, 2); add('wu', 'feng', 5, 2);
   [6, 8].forEach(x => add('wu', 'pawn', x, 3));
-  return { schema: 1, pieces, turn: 'wei', eliminated: [], history: [], lastMove: null, winner: null, status: 'playing' };
+  return { schema: 2, pieces, turn: 'wei', turnSlot: 0, eliminated: [], history: [], lastMove: null, winner: null, status: 'playing' };
 }
 
 export const at = (pieces: Piece[], p: Point): Piece | undefined => pieces.find(q => q.x === p.x && q.y === p.y);
@@ -115,10 +118,10 @@ export function legalMoves(pieces: Piece[], piece: Piece): Point[] {
 
 function victory(game: Game): boolean {
   if (game.eliminated.includes('wei')) {
-    game.winner = 'alliance'; game.status = 'finished'; game.turn = null; return true;
+    game.winner = 'alliance'; game.status = 'finished'; game.turn = null; game.turnSlot = null; return true;
   }
   if (game.eliminated.includes('shu') && game.eliminated.includes('wu')) {
-    game.winner = 'wei'; game.status = 'finished'; game.turn = null; return true;
+    game.winner = 'wei'; game.status = 'finished'; game.turn = null; game.turnSlot = null; return true;
   }
   return false;
 }
@@ -128,8 +131,19 @@ function eliminate(game: Game, faction: Faction): void {
   game.pieces = game.pieces.filter(piece => piece.faction !== faction);
 }
 
+function nextTurn(game: Game, movedFaction: Faction, movedSlot: TurnSlot): { faction: Faction; slot: TurnSlot } {
+  const living = ORDER.filter(faction => !game.eliminated.includes(faction));
+  if (living.length === 2 && living.includes('wei')) {
+    const ally = living.find(faction => faction !== 'wei') as 'shu' | 'wu';
+    if (movedFaction === 'wei') return { faction: ally, slot: ally === 'shu' ? 1 : 3 };
+    return { faction: 'wei', slot: ally === 'shu' ? 2 : 0 };
+  }
+  const slot = ((movedSlot + 1) % TURN_CYCLE.length) as TurnSlot;
+  return { faction: TURN_CYCLE[slot], slot };
+}
+
 export function playMove(current: Game, pieceId: string, to: Point): MoveResult {
-  if (current.status !== 'playing' || !current.turn) return { ok: false, error: '对局已经结束，可以重新开局或悔棋复盘。' };
+  if (current.status !== 'playing' || !current.turn || current.turnSlot === null) return { ok: false, error: '对局已经结束，可以重新开局或悔棋复盘。' };
   const piece = current.pieces.find(p => p.id === pieceId);
   if (!piece) return { ok: false, error: '这枚棋子已离开棋盘。' };
   if (piece.faction !== current.turn) return { ok: false, error: `现在轮到${PLAYERS[current.turn].name}行棋。` };
@@ -143,19 +157,17 @@ export function playMove(current: Game, pieceId: string, to: Point): MoveResult 
     eliminate(game, captured.faction);
     notices.push(`${PLAYERS[captured.faction].name}被吃，${PLAYERS[captured.faction].nation}军全部撤出。`);
   }
-  const record: MoveRecord = { number: game.history.length + 1, faction: piece.faction, pieceId, kind: piece.kind,
+  const movedSlot = current.turnSlot;
+  const record: MoveRecord = { number: game.history.length + 1, faction: piece.faction, turnSlot: movedSlot, pieceId, kind: piece.kind,
     from: { x: piece.x, y: piece.y }, to: { ...to }, captured: captured ? { ...captured } : null, eliminated: [] };
   if (!victory(game)) {
-    let cursor = ORDER.indexOf(piece.faction);
-    for (let i = 0; i < ORDER.length; i++) {
-      cursor = (cursor + 1) % ORDER.length;
-      const next = ORDER[cursor];
-      if (game.eliminated.includes(next)) continue;
-      const hasMove = game.pieces.some(p => p.faction === next && legalMoves(game.pieces, p).length > 0);
+    while (game.status === 'playing') {
+      const candidate = nextTurn(game, piece.faction, movedSlot);
+      const hasMove = game.pieces.some(p => p.faction === candidate.faction && legalMoves(game.pieces, p).length > 0);
       if (!hasMove) {
-        eliminate(game, next); notices.push(`${PLAYERS[next].name}无棋可走，困毙出局，全军撤出。`);
+        eliminate(game, candidate.faction); notices.push(`${PLAYERS[candidate.faction].name}无棋可走，困毙出局，全军撤出。`);
         if (victory(game)) break;
-      } else { game.turn = next; break; }
+      } else { game.turn = candidate.faction; game.turnSlot = candidate.slot; break; }
     }
   }
   record.eliminated = game.eliminated.filter(f => !current.eliminated.includes(f));
@@ -169,11 +181,17 @@ export function playMove(current: Game, pieceId: string, to: Point): MoveResult 
 export function validGame(value: unknown): value is Game {
   if (!value || typeof value !== 'object') return false;
   const game = value as Game;
-  if (game.schema !== 1 || !Array.isArray(game.pieces) || !Array.isArray(game.history) || !Array.isArray(game.eliminated)) return false;
+  if (game.schema !== 2 || !Array.isArray(game.pieces) || !Array.isArray(game.history) || !Array.isArray(game.eliminated)) return false;
   if (!['playing', 'finished'].includes(game.status) || ![null, 'wei', 'alliance'].includes(game.winner)) return false;
   if (game.eliminated.some(f => !ORDER.includes(f)) || new Set(game.eliminated).size !== game.eliminated.length) return false;
-  if (game.status === 'playing' && (!game.turn || !ORDER.includes(game.turn) || game.eliminated.includes(game.turn) || game.winner !== null)) return false;
-  if (game.status === 'finished' && (game.turn !== null || game.winner === null)) return false;
+  const isTurnSlot = (slot: unknown): slot is TurnSlot => Number.isInteger(slot) && Number(slot) >= 0 && Number(slot) < TURN_CYCLE.length;
+  if (game.status === 'playing' && (!game.turn || !ORDER.includes(game.turn) || game.eliminated.includes(game.turn) || game.winner !== null
+    || !isTurnSlot(game.turnSlot) || TURN_CYCLE[game.turnSlot] !== game.turn)) return false;
+  if (game.status === 'finished' && (game.turn !== null || game.turnSlot !== null || game.winner === null)) return false;
+  if (game.status === 'playing' && game.eliminated.includes('shu') !== game.eliminated.includes('wu')) {
+    const expectedSlot = game.eliminated.includes('shu') ? (game.turn === 'wei' ? 0 : 3) : (game.turn === 'wei' ? 2 : 1);
+    if (game.turnSlot !== expectedSlot) return false;
+  }
   const ids = new Set<string>(), positions = new Set<string>();
   const kinds: Kind[] = ['king', 'rook', 'horse', 'elephant', 'advisor', 'cannon', 'pawn', 'feng'];
   for (const piece of game.pieces) {
@@ -184,6 +202,7 @@ export function validGame(value: unknown): value is Game {
   }
   for (const faction of ORDER) if (!game.eliminated.includes(faction) && game.pieces.filter(p => p.faction === faction && p.kind === 'king').length !== 1) return false;
   const validRecord = (r: MoveRecord, index: number) => r && r.number === index + 1 && ORDER.includes(r.faction)
+    && isTurnSlot(r.turnSlot) && TURN_CYCLE[r.turnSlot] === r.faction
     && kinds.includes(r.kind) && typeof r.pieceId === 'string' && r.from && r.to && inside(r.from) && inside(r.to)
     && Array.isArray(r.eliminated) && r.eliminated.every(f => ORDER.includes(f));
   if (!game.history.every(validRecord)) return false;
