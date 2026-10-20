@@ -1,0 +1,13 @@
+node_modules/
+.npm-cache/
+.deploy/
+dist/
+*.local
+.env
+.env.*
+!.env.example
+coverage/
+preview/
+tests/.compiled-app.mts
+*.log
+.DS_Store
