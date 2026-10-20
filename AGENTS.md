@@ -9,3 +9,4 @@
 - Update rule and interaction tests when a behavior changes. Use npm test and npm run build for relevant source changes.
 - Run browser acceptance where supported and report what was actually verified. Simulated-DOM tests do not prove visual or touch correctness.
 - Preserve existing Git history, user documents and images when integrating this baseline into the existing GitHub repository.
+- After each substantial completed change, run the relevant verification, create a local Git commit, and push the resulting branch to the configured GitHub remote. Never force-push over existing history; report authentication or remote conflicts instead of bypassing them.
