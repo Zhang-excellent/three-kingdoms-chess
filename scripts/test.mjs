@@ -10,10 +10,12 @@ const source = readFileSync(resolve(root, 'src/App.vue'), 'utf8');
 const { descriptor, errors } = parse(source, { filename: 'App.vue' });
 if (errors.length) throw errors[0];
 const result = compileScript(descriptor, { id: 'game-ui-tests', inlineTemplate: true });
-writeFileSync(output, result.content.replaceAll("'./game.ts'", "'../src/game.ts'"));
+writeFileSync(output, result.content
+  .replaceAll("'./game.ts'", "'../src/game.ts'")
+  .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/game.test.ts', 'tests/ui.test.ts'], { cwd: root, stdio: 'inherit' });
+  const run = spawnSync(process.execPath, ['--test', 'tests/game.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], { cwd: root, stdio: 'inherit' });
   status = run.status ?? 1;
 } finally { unlinkSync(output); }
 process.exit(status);

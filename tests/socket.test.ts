@@ -1,0 +1,66 @@
+import { after, before, test } from 'node:test';
+import assert from 'node:assert/strict';
+import type { AddressInfo } from 'node:net';
+import { io as connect, type Socket } from 'socket.io-client';
+import { createOnlineServer } from '../server/create-server.ts';
+import type { ClientAck, RoomView, SessionReceipt } from '../src/online.ts';
+
+const server = createOnlineServer();
+let origin = '';
+const sockets: Socket[] = [];
+
+before(async () => {
+  await new Promise<void>(resolve => server.httpServer.listen(0, '127.0.0.1', resolve));
+  origin = `http://127.0.0.1:${(server.httpServer.address() as AddressInfo).port}`;
+});
+after(async () => {
+  for (const socket of sockets) socket.disconnect();
+  await new Promise<void>(resolve => server.io.close(() => resolve()));
+});
+
+async function client(): Promise<Socket> {
+  const socket = connect(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+  sockets.push(socket);
+  await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+  return socket;
+}
+
+function emit<T>(socket: Socket, event: string, payload: unknown): Promise<ClientAck<T>> {
+  return new Promise(resolve => socket.emit(event, payload, resolve));
+}
+
+function success<T>(ack: ClientAck<T>): T {
+  assert.equal(ack.ok, true); if (!ack.ok) assert.fail('socket action failed'); return ack.data;
+}
+
+const pause = () => new Promise(resolve => setTimeout(resolve, 30));
+
+test('three independent Socket.IO clients create, join, start, move, and reconnect in sync', async () => {
+  const [wei, shu, wu] = await Promise.all([client(), client(), client()]);
+  const latest: Array<RoomView | null> = [null, null, null];
+  [wei, shu, wu].forEach((socket, index) => socket.on('room:state', state => { latest[index] = state; }));
+  const a = success(await emit<SessionReceipt>(wei, 'room:create', { nickname: '网络魏' }));
+  const b = success(await emit<SessionReceipt>(shu, 'room:join', { nickname: '网络蜀', roomCode: a.roomCode }));
+  const c = success(await emit<SessionReceipt>(wu, 'room:join', { nickname: '网络吴', roomCode: a.roomCode }));
+  const sessions = [a, b, c], clients = [wei, shu, wu], factions = ['wei', 'shu', 'wu'];
+  for (let index = 0; index < 3; index++) success(await emit(clients[index], 'room:choose-faction', {
+    roomCode: a.roomCode, reconnectToken: sessions[index].reconnectToken, faction: factions[index],
+  }));
+  for (let index = 0; index < 3; index++) success(await emit(clients[index], 'room:ready', {
+    roomCode: a.roomCode, reconnectToken: sessions[index].reconnectToken, ready: true,
+  }));
+  await pause();
+  assert.equal(latest.every(state => state?.phase === 'playing' && state.game?.pieces.length === 29), true);
+  const version = latest[0]!.version;
+  success(await emit(wei, 'game:move', { roomCode: a.roomCode, reconnectToken: a.reconnectToken,
+    intent: { requestId: 'socketmove01', version, pieceId: 'wei-pawn-0-6', to: { x: 0, y: 5 } } }));
+  await pause();
+  assert.deepEqual(latest.map(state => state?.game?.history.length), [1, 1, 1]);
+  assert.deepEqual(latest.map(state => state?.game?.turn), ['shu', 'shu', 'shu']);
+  shu.disconnect(); await pause();
+  assert.equal(latest[0]?.players.find(player => player.id === b.playerId)?.online, false);
+  const resumedClient = await client();
+  const resumed = success(await emit<SessionReceipt>(resumedClient, 'room:resume', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
+  assert.equal(resumed.state.players.length, 3); assert.equal(resumed.state.game?.history.length, 1);
+  assert.equal(resumed.state.players.find(player => player.id === b.playerId)?.online, true);
+});
