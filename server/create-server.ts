@@ -11,7 +11,11 @@ export function createOnlineServer() {
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, { path: '/three-chess/socket.io', cors: { origin: true, credentials: true } });
-  const rooms = new RoomService();
+  const broadcast = (room?: InternalRoom) => {
+    if (!room) return;
+    for (const item of rooms.views(room)) io.to(item.socketId).emit('room:state', item.state);
+  };
+  const rooms = new RoomService(broadcast);
 
   app.disable('x-powered-by');
   app.get('/three-chess/api/health', (_request, response) => response.json({ ok: true, service: 'three-kingdoms-chess', storage: 'memory' }));
@@ -22,11 +26,6 @@ export function createOnlineServer() {
   app.get(['/three-chess', '/three-chess/'], sendIndex);
   app.use('/three-chess', express.static(resolve(root, 'dist'), { index: false, immutable: true, maxAge: '1y' }));
   app.get('/three-chess/{*path}', sendIndex);
-
-  const broadcast = (room?: InternalRoom) => {
-    if (!room) return;
-    for (const item of rooms.views(room)) io.to(item.socketId).emit('room:state', item.state);
-  };
 
   io.on('connection', socket => {
     socket.on('room:create', (payload: { nickname?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
@@ -49,15 +48,30 @@ export function createOnlineServer() {
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:choose-faction', (payload: { roomCode?: unknown; reconnectToken?: unknown; faction?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
-      const result = rooms.chooseFaction(payload?.roomCode, payload?.reconnectToken, payload?.faction);
+      const result = rooms.chooseFaction(payload?.roomCode, payload?.reconnectToken, payload?.faction, socket.id);
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:ready', (payload: { roomCode?: unknown; reconnectToken?: unknown; ready?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
-      const result = rooms.setReady(payload?.roomCode, payload?.reconnectToken, payload?.ready);
+      const result = rooms.setReady(payload?.roomCode, payload?.reconnectToken, payload?.ready, socket.id);
+      done(result.ack); broadcast(result.room);
+    });
+    socket.on('room:release-offline', (payload: { roomCode?: unknown; reconnectToken?: unknown; playerId?: unknown },
+      done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = rooms.releaseOffline(payload?.roomCode, payload?.reconnectToken, payload?.playerId, socket.id);
+      done(result.ack); broadcast(result.room);
+    });
+    socket.on('room:leave', async (payload: { roomCode?: unknown; reconnectToken?: unknown }, done: (ack: ClientAck) => void) => {
+      const result = await rooms.leaveRoom(payload?.roomCode, payload?.reconnectToken, socket.id);
+      if (result.ack.ok && result.room) socket.leave(result.room.code);
+      done(result.ack); broadcast(result.room);
+    });
+    socket.on('game:resign', async (payload: { roomCode?: unknown; reconnectToken?: unknown },
+      done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = await rooms.resignRoom(payload?.roomCode, payload?.reconnectToken, socket.id);
       done(result.ack); broadcast(result.room);
     });
     socket.on('game:move', async (payload: { roomCode?: unknown; reconnectToken?: unknown; intent?: MoveIntent }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
-      const result = await rooms.submitMove(payload?.roomCode, payload?.reconnectToken, payload?.intent);
+      const result = await rooms.submitMove(payload?.roomCode, payload?.reconnectToken, payload?.intent, socket.id);
       done(result.ack); broadcast(result.room);
     });
     socket.on('disconnect', () => broadcast(rooms.disconnect(socket.id)));

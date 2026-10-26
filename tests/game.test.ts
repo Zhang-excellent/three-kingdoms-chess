@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reactive, toRaw } from 'vue';
-import { TURN_CYCLE, at, legalMoves, moveError, newGame, playMove, validGame } from '../src/game.ts';
+import { TURN_CYCLE, at, legalMoves, moveError, newGame, playMove, resignFaction, validGame } from '../src/game.ts';
 import type { Faction, Game, Kind, MoveResult, Piece, TurnSlot } from '../src/game.ts';
 
 const p = (faction: Faction, kind: Kind, x: number, y: number, id = `${faction}-${kind}-${x}-${y}`): Piece => ({ faction, kind, x, y, id });
@@ -11,6 +11,23 @@ const fixture = (pieces: Piece[], turn: Faction = 'wei', eliminated: Faction[] =
 });
 const kings = () => [p('wei','king',4,9),p('shu','king',2,0),p('wu','king',6,0)];
 function success(result: MoveResult): Game { if (!result.ok) assert.fail(result.error); return result.game; }
+
+test('resigning current or waiting faction keeps turn, history and rankings consistent', () => {
+  const initial = newGame();
+  const afterWu = success(resignFaction(initial, 'wu'));
+  assert.equal(afterWu.turn, 'wei'); assert.equal(afterWu.turnSlot, 0);
+  assert.equal(afterWu.placements.wu, 3); assert.equal(afterWu.history.length, 0);
+  assert.equal(afterWu.pieces.some(piece => piece.faction === 'wu'), false);
+  assert.equal(validGame(afterWu), true);
+  const afterWei = success(resignFaction(afterWu, 'wei'));
+  assert.equal(afterWei.status, 'finished'); assert.equal(afterWei.winner, 'shu');
+  assert.deepEqual(afterWei.placements, { wu: 3, wei: 2, shu: 1 });
+  assert.equal(validGame(afterWei), true);
+  assert.equal(resignFaction(afterWei, 'shu').ok, false);
+  const current = success(resignFaction(initial, 'wei'));
+  assert.equal(current.turn, 'shu'); assert.equal(current.turnSlot, 1);
+  assert.equal(validGame(current), true);
+});
 
 test('initial board has 29 unique pieces and the central pawn belongs to Shu', () => {
   const g = newGame();

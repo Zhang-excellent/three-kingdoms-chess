@@ -30,9 +30,10 @@ try {
 const localGame = ref<Game>(restored.game), undo = ref<Game[]>(restored.undo);
 const selectedId = ref<string | null>(null), message = ref(initialMessage), feedbackError = ref(false);
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
+const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const sound = ref(false), saveAvailable = ref(storageUsable), compatibilityWarning = ref(requiresNewGame);
 const online = useOnlineRoom();
-const { mode, nickname, joinCode, room, self, connection, error: onlineError, busy: onlineBusy } = online;
+const { mode, nickname, joinCode, room, self, connection, error: onlineError, exitNotice, busy: onlineBusy } = online;
 const fallbackGame = newGame();
 const game = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
 const onlineLobby = computed(() => online.mode.value === 'online' && (!online.room.value || online.room.value.phase === 'lobby'));
@@ -137,8 +138,30 @@ function onEscape() { selectedId.value = null; notify(active.value ? `轮到${ac
 async function copyInvite() { notify(await online.copyInvite() ? '邀请链接已复制，发给另外两位朋友即可。' : '复制失败，请手动复制浏览器地址。', false); }
 function chooseMode(mode: 'local' | 'online') {
   selectedId.value = null;
-  if (mode === 'local') { online.useLocal(); notify('本地试玩：同一设备轮流操作三方。'); }
+  if (mode === 'local') {
+    if (online.room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value)) {
+      exitDialog.value?.showModal(); return;
+    }
+    online.useLocal(); notify('本地试玩：同一设备轮流操作三方。');
+  }
   else { online.connect(); notify('联机对弈：三人各控制一个阵营。'); }
+}
+function requestLeave() {
+  if (room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value))
+    exitDialog.value?.showModal();
+  else { online.leaveRoom(); selectedId.value = null; }
+}
+function confirmLeave() {
+  exitDialog.value?.close(); online.leaveRoom(); selectedId.value = null;
+}
+async function confirmResign() {
+  resignDialog.value?.close();
+  const result = await online.resign();
+  notify(result.ok ? '已认输出局，可以留在房间查看后续对局。' : result.error, !result.ok);
+}
+async function releaseOffline(playerId: string) {
+  const result = await online.releaseOffline(playerId);
+  notify(result.ok ? '离线席位已释放，朋友可以补位加入。' : result.error, !result.ok);
 }
 </script>
 
@@ -154,13 +177,14 @@ function chooseMode(mode: 'local' | 'online') {
         <label>你的昵称<input v-model="nickname" maxlength="16" autocomplete="nickname" placeholder="最多 16 个字符"></label>
         <div class="entry-actions"><button class="primary-button" :disabled="onlineBusy || connection !== 'online'" @click="online.createRoom">创建房间</button><span>或</span><div class="join-row"><input v-model="joinCode" maxlength="6" autocomplete="off" placeholder="输入 6 位房间号" @input="joinCode = joinCode.toUpperCase()"><button class="tool-button" :disabled="onlineBusy || connection !== 'online'" @click="online.joinRoom">加入房间</button></div></div>
         <p class="connection-note" :class="{error: onlineError}"><i :class="connection"></i>{{ connection === 'online' ? '已连接联机服务器' : connection === 'connecting' ? '正在连接服务器…' : connection === 'replaced' ? '席位已在另一设备恢复' : '连接已断开，正在重连' }}<span v-if="onlineError"> · {{ onlineError }}</span></p>
+        <p v-if="exitNotice" class="connection-note" role="status">{{ exitNotice }}</p>
         <p class="memory-warning">首版房间仅保存在服务器内存中；服务器重启后房间会丢失。</p>
       </section>
       <section v-else class="room-lobby">
-        <div class="room-heading"><div><span class="eyebrow">等待三人准备</span><h2>房间 {{ room.code }}</h2></div><button class="tool-button" @click="copyInvite">复制邀请链接</button></div>
-        <div class="lobby-players"><article v-for="player in room.players" :key="player.id" :class="{self: player.id === room.selfId}"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.nickname }}</strong><small>{{ player.id === room.selfId ? '这是你' : player.online ? '在线' : '已断线，座位保留' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em></article><article v-for="slot in 3 - room.players.length" :key="`empty-${slot}`" class="empty"><span>等待朋友加入…</span></article></div>
-        <div class="faction-choice"><span>选择你的阵营</span><div><button v-for="faction in ORDER" :key="faction" :class="[faction,{selected: self?.faction === faction}]" :disabled="factionTaken(faction)" @click="online.chooseFaction(faction)">{{ PLAYERS[faction].nation }} · {{ PLAYERS[faction].name }}</button></div></div>
-        <button class="primary-button ready-button" :disabled="!self?.faction" @click="online.setReady(!self?.ready)">{{ self?.ready ? '取消准备' : '我已准备' }}</button>
+        <div class="room-heading"><div><span class="eyebrow">等待三人准备</span><h2>房间 {{ room.code }}</h2></div><div class="room-heading-actions"><button class="tool-button" @click="copyInvite">复制邀请链接</button><button class="tool-button leave-button" @click="requestLeave">退出房间</button></div></div>
+        <div class="lobby-players"><article v-for="player in room.players" :key="player.id" :class="{self: player.id === room.selfId}"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.nickname }}</strong><small>{{ player.id === room.selfId ? '这是你' : player.online ? '在线' : '已断线，席位最多保留 60 秒' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em><button v-if="!player.online && player.id !== room.selfId" class="tool-button release-button" :disabled="connection !== 'online'" @click="releaseOffline(player.id)">释放席位</button></article><article v-for="slot in 3 - room.players.length" :key="`empty-${slot}`" class="empty"><span>等待朋友加入…</span></article></div>
+        <div class="faction-choice"><span>选择你的阵营</span><div><button v-for="faction in ORDER" :key="faction" :class="[faction,{selected: self?.faction === faction}]" :disabled="factionTaken(faction) || connection !== 'online'" @click="online.chooseFaction(faction)">{{ PLAYERS[faction].nation }} · {{ PLAYERS[faction].name }}</button></div></div>
+        <button class="primary-button ready-button" :disabled="!self?.faction || connection !== 'online'" @click="online.setReady(!self?.ready)">{{ self?.ready ? '取消准备' : '我已准备' }}</button>
         <p class="lobby-tip">三人占满魏、蜀、吴并全部准备后自动开局。房间最多三人，阵营不可重复。</p>
         <p v-if="onlineError" class="connection-note error">{{ onlineError }}</p>
       </section>
@@ -214,7 +238,7 @@ function chooseMode(mode: 'local' | 'online') {
             </g>
           </svg>
         </div>
-        <div class="board-tools"><button class="tool-button" :disabled="mode === 'online' || compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button class="tool-button" :disabled="mode === 'online'" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button class="tool-button sound-button" :aria-pressed="sound" @click="sound = !sound">音效 {{ sound ? '开' : '关' }}</button><span v-if="mode === 'online'" class="online-lock">联机局由服务器保存，已禁用单方悔棋与重开</span></div>
+        <div class="board-tools"><button class="tool-button" :disabled="mode === 'online' || compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button class="tool-button" :disabled="mode === 'online'" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button class="tool-button sound-button" :aria-pressed="sound" @click="sound = !sound">音效 {{ sound ? '开' : '关' }}</button><button v-if="mode === 'online' && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online'" class="tool-button leave-button" @click="requestLeave">退出房间</button><span v-if="mode === 'online'" class="online-lock">联机局由服务器保存，已禁用单方悔棋与重开</span></div>
         <p class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
         <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ PLAYERS[game.winner!].name }}夺冠</strong><span>{{ rankingText }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
@@ -230,5 +254,7 @@ function chooseMode(mode: 'local' | 'online') {
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="mode === 'online'">房间保存在服务器内存；重启后会丢失</span><span v-else>{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。</p><ul><li>三方独立竞争。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃或轮到本国时无合法走法，该国出局并清空全部棋子；剩余两国严格交替。</li><li>第一位出局为第三名，第二位出局为第二名，最后存活方为冠军。曹操先出局时蜀吴继续对弈。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
+    <dialog ref="resignDialog" class="reset-dialog"><h2>确认认输？</h2><p>本国立即出局并清空棋子，名次按出局先后确定；你仍可留在房间查看。</p><div class="dialog-actions"><button class="tool-button" @click="resignDialog?.close()">继续对局</button><button class="primary-button" @click="confirmResign">确认认输</button></div></dialog>
+    <dialog ref="exitDialog" class="reset-dialog"><h2>确认退出房间？</h2><p>你仍在对局中，退出将先按认输出局，再返回大厅。断网时本机立即退出，服务器恢复连接后补发通知。</p><div class="dialog-actions"><button class="tool-button" @click="exitDialog?.close()">继续对局</button><button class="primary-button" @click="confirmLeave">确认退出</button></div></dialog>
   </div>
 </template>

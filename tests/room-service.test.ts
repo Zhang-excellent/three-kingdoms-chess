@@ -113,3 +113,75 @@ test('disconnect keeps the seat and a secret token resumes without duplicating i
   assert.equal(resumed.ack.ok, true); assert.equal(room.players[1].online, true);
   assert.equal(room.players[1].socketId, 'socket-shu-new'); assert.equal(room.players.length, 3);
 });
+
+test('waiting player leaves, frees faction and seat, and last exit deletes room', async () => {
+  const service = new RoomService();
+  const a = receipt(service.createRoom('房主', 'a'));
+  const b = receipt(service.joinRoom(a.roomCode, '第二人', 'b') as ReturnType<RoomService['createRoom']>);
+  service.chooseFaction(a.roomCode, b.reconnectToken, 'shu', 'b');
+  service.setReady(a.roomCode, b.reconnectToken, true, 'b');
+  assert.equal((await service.leaveRoom(a.roomCode, b.reconnectToken, 'b')).ack.ok, true);
+  assert.equal(service.getRoom(a.roomCode)?.players.length, 1);
+  assert.equal(service.resumeRoom(a.roomCode, b.reconnectToken, 'b-new').ack.ok, false);
+  const c = receipt(service.joinRoom(a.roomCode, '新人', 'c') as ReturnType<RoomService['createRoom']>);
+  assert.equal(service.chooseFaction(a.roomCode, c.reconnectToken, 'shu', 'c').ack.ok, true);
+  await service.leaveRoom(a.roomCode, a.reconnectToken, 'a');
+  await service.leaveRoom(a.roomCode, c.reconnectToken, 'c');
+  assert.equal(service.getRoom(a.roomCode), undefined);
+});
+
+test('lobby disconnect cancels readiness, reconnect beats expiry, and offline seat is releasable', async () => {
+  const service = new RoomService(() => {}, 25);
+  const a = receipt(service.createRoom('房主', 'a'));
+  const b = receipt(service.joinRoom(a.roomCode, '第二人', 'b') as ReturnType<RoomService['createRoom']>);
+  service.chooseFaction(a.roomCode, b.reconnectToken, 'shu', 'b');
+  service.setReady(a.roomCode, b.reconnectToken, true, 'b');
+  service.disconnect('b');
+  assert.equal(service.getRoom(a.roomCode)?.players[1].ready, false);
+  assert.equal(service.getRoom(a.roomCode)?.players[1].online, false);
+  assert.ok(service.getRoom(a.roomCode)?.players[1].offlineUntil);
+  assert.equal(service.releaseOffline(a.roomCode, a.reconnectToken, b.playerId, 'a').ack.ok, true);
+  assert.equal(service.resumeRoom(a.roomCode, b.reconnectToken, 'b2').ack.ok, false);
+  const c = receipt(service.joinRoom(a.roomCode, '第三人', 'c') as ReturnType<RoomService['createRoom']>);
+  assert.equal(service.releaseOffline(a.roomCode, a.reconnectToken, c.playerId, 'a').ack.ok, false);
+  service.disconnect('c');
+  assert.equal(service.resumeRoom(a.roomCode, c.reconnectToken, 'c2').ack.ok, true);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(service.getRoom(a.roomCode)?.players.length, 2);
+  service.disconnect('c2');
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(service.getRoom(a.roomCode)?.players.length, 1);
+});
+
+test('one socket has one seat; consecutive leave and create gets a new canonical room', async () => {
+  const service = new RoomService();
+  const a = receipt(service.createRoom('甲', 'same'));
+  assert.equal(receipt(service.createRoom('甲', 'same')).roomCode, a.roomCode);
+  const other = receipt(service.createRoom('乙', 'other'));
+  const rejected = service.joinRoom(other.roomCode, '甲', 'same');
+  assert.equal(rejected.ack.ok, false);
+  await service.leaveRoom(a.roomCode, a.reconnectToken, 'same');
+  const b = receipt(service.createRoom('甲', 'same'));
+  assert.notEqual(b.roomCode, a.roomCode);
+  assert.equal(service.getRoom(a.roomCode), undefined);
+});
+
+test('resignation and active exit rank players once, while finished game rejects moves', async () => {
+  const { service, code, players, room } = startedRoom();
+  const first = await service.resignRoom(code, players[0].reconnectToken, 'socket-wei');
+  assert.equal(first.ack.ok, true);
+  assert.equal(room.game?.placements.wei, 3);
+  assert.equal(room.game?.turn, 'shu');
+  assert.equal(room.game?.pieces.some(piece => piece.faction === 'wei'), false);
+  assert.equal((await service.resignRoom(code, players[0].reconnectToken, 'socket-wei')).ack.ok, false);
+  const second = await service.leaveRoom(code, players[1].reconnectToken, 'socket-shu');
+  assert.equal(second.ack.ok, true);
+  assert.equal(room.game?.placements.shu, 2);
+  assert.equal(room.game?.placements.wu, 1);
+  assert.equal(room.game?.winner, 'wu');
+  assert.equal(room.players.length, 2);
+  assert.equal((await service.submitMove(code, players[2].reconnectToken,
+    intent('afterend01', room.version, 'wu-pawn-6-3', 6, 4), 'socket-wu')).ack.ok, false);
+  assert.equal((await service.leaveRoom(code, players[0].reconnectToken, 'socket-wei')).ack.ok, true);
+  assert.equal(room.game?.placements.wei, 3);
+});

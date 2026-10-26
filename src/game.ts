@@ -139,6 +139,34 @@ function nextTurn(game: Game, previousSlot: TurnSlot): { faction: Faction; slot:
   throw new Error('棋局没有存活阵营。');
 }
 
+function settleNextTurn(game: Game, previousSlot: TurnSlot, notices: string[]): void {
+  if (finishIfChampion(game)) return;
+  while (game.status === 'playing') {
+    const candidate = nextTurn(game, previousSlot);
+    const hasMove = game.pieces.some(p => p.faction === candidate.faction && legalMoves(game.pieces, p).length > 0);
+    if (hasMove) { game.turn = candidate.faction; game.turnSlot = candidate.slot; return; }
+    eliminate(game, candidate.faction);
+    notices.push(`${PLAYERS[candidate.faction].name}无棋可走，困毙出局，全军撤出，获得第${game.placements[candidate.faction]}名。`);
+    if (finishIfChampion(game)) return;
+    previousSlot = candidate.slot;
+  }
+}
+
+/** A player may resign outside their turn; the current turn only advances if that player was due to move. */
+export function resignFaction(current: Game, faction: Faction): MoveResult {
+  if (current.status !== 'playing' || current.eliminated.includes(faction))
+    return { ok: false, error: '该阵营已经出局或对局已经结束。' };
+  const game: Game = structuredClone(current);
+  const notices: string[] = [];
+  eliminate(game, faction);
+  notices.push(`${PLAYERS[faction].name}认输，${PLAYERS[faction].nation}军全部撤出，获得第${game.placements[faction]}名。`);
+  if (game.turn === faction) settleNextTurn(game, current.turnSlot!, notices);
+  else finishIfChampion(game);
+  if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获得冠军。`);
+  else notices.push(`轮到${PLAYERS[game.turn!].name}行棋。`);
+  return { ok: true, game, notices };
+}
+
 export function playMove(current: Game, pieceId: string, to: Point): MoveResult {
   if (current.status !== 'playing' || !current.turn || current.turnSlot === null) return { ok: false, error: '对局已经结束，可以重新开局或悔棋复盘。' };
   const piece = current.pieces.find(p => p.id === pieceId);
@@ -157,18 +185,7 @@ export function playMove(current: Game, pieceId: string, to: Point): MoveResult 
   const movedSlot = current.turnSlot;
   const record: MoveRecord = { number: game.history.length + 1, faction: piece.faction, turnSlot: movedSlot, pieceId, kind: piece.kind,
     from: { x: piece.x, y: piece.y }, to: { ...to }, captured: captured ? { ...captured } : null, eliminated: [] };
-  if (!finishIfChampion(game)) {
-    let previousSlot = movedSlot;
-    while (game.status === 'playing') {
-      const candidate = nextTurn(game, previousSlot);
-      const hasMove = game.pieces.some(p => p.faction === candidate.faction && legalMoves(game.pieces, p).length > 0);
-      if (!hasMove) {
-        eliminate(game, candidate.faction); notices.push(`${PLAYERS[candidate.faction].name}无棋可走，困毙出局，全军撤出，获得第${game.placements[candidate.faction]}名。`);
-        if (finishIfChampion(game)) break;
-        previousSlot = candidate.slot;
-      } else { game.turn = candidate.faction; game.turnSlot = candidate.slot; break; }
-    }
-  }
+  settleNextTurn(game, movedSlot, notices);
   record.eliminated = game.eliminated.filter(f => !current.eliminated.includes(f));
   game.history.push(record); game.lastMove = record;
   if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获得冠军。`);

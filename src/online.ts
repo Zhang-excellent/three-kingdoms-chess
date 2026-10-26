@@ -8,6 +8,7 @@ export interface RoomPlayerView {
   faction: Faction | null;
   ready: boolean;
   online: boolean;
+  offlineUntil: number | null;
 }
 
 export interface RoomView {
@@ -34,7 +35,8 @@ export interface MoveIntent {
 }
 
 export type ClientAck<T = undefined> =
-  | ({ ok: true } & (T extends undefined ? Record<string, never> : { data: T }))
+  | { ok: true; data: T }
   | { ok: false; code: string; error: string; state?: RoomView };
 
 export const ONLINE_SESSION_KEY = 'three-kingdoms-chess:online-session-v1';
+export const PENDING_LEAVES_KEY = 'three-kingdoms-chess:pending-leaves-v1';
