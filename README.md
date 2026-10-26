@@ -112,7 +112,7 @@ npm run build
 
 2026-10-13 历史静态版：曾部署到 `47.95.251.153` 的 `/three-chess`，原站点配置备份保留在 `/etc/nginx/sites-available/zhongchuliang.bak.codex-20261013`。
 
-2026-10-26 当前联机版：[http://47.95.251.153/three-chess/](http://47.95.251.153/three-chess/) 已运行三方独立竞争规则，游戏源码提交 `02aea686692f2a9f132d2be82030e9d40c9999f0`。Node.js 服务由 systemd 守护，Nginx 仅将 `/three-chess/` 转发给本机服务。上线前的静态页和 Nginx 片段已备份；回退步骤见 [联机试玩与部署](docs/联机试玩与部署.md)。
+2026-10-26 当前联机版：[http://47.95.251.153/three-chess/](http://47.95.251.153/three-chess/) 已更新为房间退出、断线席位释放与认输版本，游戏源码提交 `96d73a0347d71ed296b52b0344c2845a032dbf76`。Node.js 服务由 systemd 守护，Nginx 仅将 `/three-chess/` 转发给本机服务。前一联机版 `02aea68` 与切换前的配置已保留；回退步骤见 [联机试玩与部署](docs/联机试玩与部署.md)。
 
 ## 后续范围
 
