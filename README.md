@@ -103,9 +103,9 @@ npm run build
 
 ## 当前部署
 
-2026-10-13：生产构建已部署到 `47.95.251.153` 的 `/three-chess`，公网入口为 [http://47.95.251.153/three-chess/](http://47.95.251.153/three-chess/)。nginx 使用独立的 `/etc/nginx/snippets/three-chess.conf` 路由片段；原站点配置备份保留在 `/etc/nginx/sites-available/zhongchuliang.bak.codex-20261013`。部署后已从公网核对首页内容与静态资源，并在浏览器中实际完成一步行棋。部署使用的临时 SSH 公钥与本机私钥均已移除。
+2026-10-13 历史静态版：曾部署到 `47.95.251.153` 的 `/three-chess`，原站点配置备份保留在 `/etc/nginx/sites-available/zhongchuliang.bak.codex-20261013`。
 
-本次三方独立规则只在本地构建并推送 GitHub，未更新上述服务器；线上内容以其实际部署版本为准。
+2026-10-26 当前联机版：[http://47.95.251.153/three-chess/](http://47.95.251.153/three-chess/) 已运行三方独立竞争规则，游戏源码提交 `02aea686692f2a9f132d2be82030e9d40c9999f0`。Node.js 服务由 systemd 守护，Nginx 仅将 `/three-chess/` 转发给本机服务。上线前的静态页和 Nginx 片段已备份；回退步骤见 [联机试玩与部署](docs/联机试玩与部署.md)。
 
 ## 后续范围
 

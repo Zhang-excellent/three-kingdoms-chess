@@ -1,16 +1,16 @@
 [Unit]
-Description=Three Kingdoms Chess Socket.IO service
+Description=Three Kingdoms Chess online room service
 After=network.target
 
 [Service]
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/opt/three-kingdoms-chess
+WorkingDirectory=/opt/three-kingdoms-chess/current
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=3000
-ExecStart=/usr/bin/npm start
+ExecStart=/opt/three-kingdoms-chess/runtime/node-v24.22.1-linux-x64/bin/node /opt/three-kingdoms-chess/current/node_modules/tsx/dist/cli.mjs server/index.ts
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
