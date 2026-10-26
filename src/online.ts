@@ -40,3 +40,10 @@ export type ClientAck<T = undefined> =
 
 export const ONLINE_SESSION_KEY = 'three-kingdoms-chess:online-session-v1';
 export const PENDING_LEAVES_KEY = 'three-kingdoms-chess:pending-leaves-v1';
+
+/** getRandomValues works on the site's HTTP IP address; randomUUID requires a secure context. */
+export function createMoveRequestId(source: Pick<Crypto, 'getRandomValues'> = globalThis.crypto): string {
+  const random = new Uint32Array(4);
+  source.getRandomValues(random);
+  return `move-${Array.from(random, value => value.toString(36)).join('-')}`;
+}

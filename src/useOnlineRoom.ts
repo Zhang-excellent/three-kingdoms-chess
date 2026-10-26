@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { io, type Socket } from 'socket.io-client';
-import { ONLINE_SESSION_KEY, PENDING_LEAVES_KEY } from './online.ts';
+import { ONLINE_SESSION_KEY, PENDING_LEAVES_KEY, createMoveRequestId } from './online.ts';
 import type { ClientAck, MoveIntent, RoomView, SessionReceipt } from './online.ts';
 import type { Faction, Point } from './game.ts';
 
@@ -43,7 +43,6 @@ export function useOnlineRoom() {
   const faction = computed(() => self.value?.faction ?? null);
   const inRoom = computed(() => !!room.value && !!session.value);
 
-  function requestId(): string { return globalThis.crypto.randomUUID(); }
   function setAddress(code: string | null) {
     const url = new URL(location.href);
     if (code) { url.searchParams.set('mode', 'online'); url.searchParams.set('room', code); }
@@ -220,7 +219,7 @@ export function useOnlineRoom() {
   const resign = () => action<{ state: RoomView }>('game:resign');
   async function move(pieceId: string, to: Point): Promise<ClientAck<{ state: RoomView }>> {
     if (!room.value) return { ok: false, code: 'NO_ROOM', error: '尚未进入房间。' };
-    const intent: MoveIntent = { requestId: requestId(), version: room.value.version, pieceId, to };
+    const intent: MoveIntent = { requestId: createMoveRequestId(), version: room.value.version, pieceId, to };
     return action<{ state: RoomView }>('game:move', { intent });
   }
   async function copyInvite(): Promise<boolean> {
