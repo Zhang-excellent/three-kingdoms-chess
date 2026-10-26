@@ -64,16 +64,15 @@ test('a room rejects a fourth player and separate rooms never share state', asyn
   assert.equal(service.getRoom(other.roomCode)!.game, null);
 });
 
-test('server enforces faction ownership, turn, legal moves, and four-slot order', async () => {
+test('server enforces faction ownership, turn, legal moves, and three-slot order', async () => {
   const { service, code, players, room } = startedRoom();
   failure(await service.submitMove(code, players[1].reconnectToken, intent('wrongturn1', room.version, 'wei-pawn-0-6', 0, 5)), 'NOT_YOUR_TURN');
   failure(await service.submitMove(code, players[0].reconnectToken, intent('wrongpiece', room.version, 'shu-pawn-2-3', 2, 4)), 'NOT_YOUR_PIECE');
   failure(await service.submitMove(code, players[0].reconnectToken, intent('illegal001', room.version, 'wei-pawn-0-6', 1, 6)), 'ILLEGAL_MOVE');
   const sequence = [
-    [0, 'wei-pawn-0-6', 0, 5], [1, 'shu-pawn-2-3', 2, 4],
-    [0, 'wei-pawn-4-6', 4, 5], [2, 'wu-pawn-6-3', 6, 4],
-    [0, 'wei-pawn-2-6', 2, 5], [1, 'shu-pawn-0-3', 0, 4],
-    [0, 'wei-pawn-6-6', 6, 5], [2, 'wu-pawn-8-3', 8, 4],
+    [0, 'wei-pawn-0-6', 0, 5], [1, 'shu-pawn-2-3', 2, 4], [2, 'wu-pawn-6-3', 6, 4],
+    [0, 'wei-pawn-4-6', 4, 5], [1, 'shu-pawn-0-3', 0, 4], [2, 'wu-pawn-8-3', 8, 4],
+    [0, 'wei-pawn-2-6', 2, 5], [1, 'shu-pawn-4-3', 4, 4], [2, 'wu-feng-5-2', 5, 3],
   ] as const;
   for (const [index, [playerIndex, piece, x, y]] of sequence.entries()) {
     const result = await service.submitMove(code, players[playerIndex].reconnectToken,
@@ -82,7 +81,7 @@ test('server enforces faction ownership, turn, legal moves, and four-slot order'
     if (index === 0) failure(await service.submitMove(code, players[1].reconnectToken,
       intent('allypiece1', room.version, 'wu-pawn-6-3', 6, 4)), 'NOT_YOUR_PIECE');
   }
-  assert.deepEqual(room.game?.history.map(move => move.turnSlot), [0, 1, 2, 3, 0, 1, 2, 3]);
+  assert.deepEqual(room.game?.history.map(move => move.turnSlot), [0, 1, 2, 0, 1, 2, 0, 1, 2]);
   assert.equal(room.game?.turn, 'wei'); assert.equal(room.game?.turnSlot, 0);
 });
 

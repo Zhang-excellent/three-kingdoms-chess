@@ -4,8 +4,8 @@ import { ORDER, PLAYERS, RULES_VERSION, TURN_CYCLE, at, legalMoves, newGame, pie
 import type { Faction, Game, MoveRecord, Piece, Point } from './game.ts';
 import { useOnlineRoom } from './useOnlineRoom.ts';
 
-const storageKey = 'three-kingdoms-chess:turn-cycle-v1';
-const legacyStorageKey = 'three-kingdoms-chess:capture-v0.1';
+const storageKey = 'three-kingdoms-chess:independent-v1';
+const legacyStorageKeys = ['three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
 let restored: { game: Game; undo: Game[] } = { game: newGame(), undo: [] };
 let initialMessage = '请选择一枚魏方棋子，曹操先行。';
 let requiresNewGame = false;
@@ -13,18 +13,18 @@ let storageUsable = true;
 try {
   const raw = localStorage.getItem(storageKey);
   if (raw) {
-    const value = JSON.parse(raw);
-    const validUndo = Array.isArray(value.undo) && value.undo.every(validGame);
-    if (value.rulesVersion === RULES_VERSION && validGame(value.game) && validUndo) {
-      restored = { game: value.game, undo: value.undo.slice(-50) };
-      initialMessage = '已恢复上次棋局，继续行棋即可。';
-    } else {
-      requiresNewGame = true;
-      initialMessage = '检测到无法无歧义恢复的存档，原数据已保留，请按新规则另开一局。';
-    }
-  } else if (localStorage.getItem(legacyStorageKey)) {
+    try {
+      const value = JSON.parse(raw);
+      const validUndo = Array.isArray(value?.undo) && value.undo.every(validGame);
+      if (value?.rulesVersion === RULES_VERSION && validGame(value.game) && validUndo) {
+        restored = { game: value.game, undo: value.undo.slice(-50) };
+        initialMessage = '已恢复上次棋局，继续行棋即可。';
+      } else requiresNewGame = true;
+    } catch { requiresNewGame = true; }
+    if (requiresNewGame) initialMessage = '检测到无法无歧义恢复的存档，原数据已保留，请按新规则另开一局。';
+  } else if (legacyStorageKeys.some(key => localStorage.getItem(key))) {
     requiresNewGame = true;
-    initialMessage = '检测到旧轮次规则存档，原数据已保留，请按新规则另开一局。';
+    initialMessage = '检测到旧联盟或四拍规则存档，原数据已保留，请按三方独立规则另开一局。';
   }
 } catch { storageUsable = false; }
 const localGame = ref<Game>(restored.game), undo = ref<Game[]>(restored.undo);
@@ -46,7 +46,9 @@ const active = computed(() => game.value.turn ? PLAYERS[game.value.turn] : null)
 const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
 const turnPosition = computed(() => game.value.turnSlot === null ? '' : game.value.eliminated.length
-  ? `双人交替 · 循环位 ${game.value.turnSlot + 1}` : `四拍循环 · 第 ${game.value.turnSlot + 1} 位`);
+  ? `双人交替 · 当前${PLAYERS[game.value.turn!].nation}方` : `三拍循环 · 第 ${game.value.turnSlot + 1} 位`);
+const ranking = computed(() => ORDER.filter(faction => game.value.placements[faction]).sort((a, b) => game.value.placements[a]! - game.value.placements[b]!));
+const rankingText = computed(() => ranking.value.map(faction => `${game.value.placements[faction] === 1 ? '冠军' : `第${game.value.placements[faction]}名`} ${PLAYERS[faction].name}`).join(' · '));
 const px = (x: number) => 50 + x * 55;
 const py = (y: number) => 50 + y * 55;
 const coordinate = (p: Point) => `(${p.x + 1}, ${p.y + 1})`;
@@ -65,7 +67,7 @@ watch(() => online.room.value?.version, () => {
   if (online.mode.value !== 'online' || !online.room.value?.game) return;
   selectedId.value = null;
   const synced = online.room.value.game;
-  if (synced.status === 'finished') notify(synced.winner === 'wei' ? '对局结束，曹操获胜。' : '对局结束，蜀吴联盟获胜。');
+  if (synced.status === 'finished') notify(`对局结束，${PLAYERS[synced.winner!].name}获得冠军。`);
   else if (!synced.turn) notify('服务器局面暂不可用，请等待重新同步。', true);
   else if (synced.turn === ownFaction.value) notify(`轮到你控制的${PLAYERS[synced.turn].nation}方行棋。`);
   else notify(`等待${PLAYERS[synced.turn].name}行棋，服务器局面已同步。`);
@@ -83,7 +85,7 @@ function tone(capture: boolean) {
   } catch { /* Optional sound never blocks a move. */ }
 }
 async function cellClick(x: number, y: number) {
-  if (online.mode.value === 'local' && compatibilityWarning.value) { notify('旧存档无法确定魏方处于哪个轮次位置，请先按新规则另开一局。', true); return; }
+  if (online.mode.value === 'local' && compatibilityWarning.value) { notify('旧规则存档不能按三方独立规则续局，请另开一局。', true); return; }
   if (game.value.status !== 'playing') { notify('本局已经结束，可以悔棋复盘或重新开局。'); return; }
   const piece = at(game.value.pieces, { x, y });
   if (piece?.faction === game.value.turn) {
@@ -125,7 +127,7 @@ function reset() {
   if (online.mode.value === 'online') { notify('联机模式不能由单方重新开局。', true); return; }
   compatibilityWarning.value = false;
   localGame.value = newGame(); undo.value = []; selectedId.value = null;
-  notify('棋子已归位，曹操先行。'); resetDialog.value?.close();
+  notify('三方独立对弈，棋子已归位，曹操先行。'); resetDialog.value?.close();
 }
 function resetRequest() {
   if (game.value.history.length) resetDialog.value?.showModal(); else reset();
@@ -165,7 +167,7 @@ function chooseMode(mode: 'local' | 'online') {
     </main>
     <main v-else class="play-layout">
       <aside class="players-panel" aria-label="玩家与当前回合">
-        <div class="section-label"><span>本局席位</span><span>三人 · 两队</span></div>
+        <div class="section-label"><span>本局席位</span><span>三人 · 独立竞争</span></div>
         <div class="player-cards">
           <section v-for="faction in ORDER" :key="faction" class="player-card" :class="{active: game.turn === faction, eliminated: game.eliminated.includes(faction)}" :style="{'--faction-color': PLAYERS[faction].color}" :aria-current="game.turn === faction ? 'true' : undefined">
             <div class="player-card-top">
@@ -173,17 +175,18 @@ function chooseMode(mode: 'local' | 'online') {
               <div class="player-name"><span class="nation">{{ PLAYERS[faction].nation }}国</span><h2>{{ PLAYERS[faction].name }}</h2><p v-if="mode === 'online'">{{ roomPlayer(faction)?.nickname ?? '等待玩家' }} · {{ roomPlayer(faction)?.online ? '在线' : '离线' }}</p><p v-else>{{ PLAYERS[faction].team }}</p></div>
               <span class="seat-number">0{{ ORDER.indexOf(faction) + 1 }}</span>
             </div>
-            <div class="player-card-bottom"><span>{{ count(faction) }} 枚子力</span><strong v-if="game.eliminated.includes(faction)">已出局</strong><strong v-else-if="game.turn === faction" class="turn-label"><i></i>正在行棋</strong><span v-else-if="game.status === 'playing'">等待回合</span><strong v-else>{{ (game.winner === 'wei') === (faction === 'wei') ? '获胜' : '本局结束' }}</strong></div>
+            <div class="player-card-bottom"><span>{{ count(faction) }} 枚子力</span><strong v-if="game.placements[faction]">{{ game.placements[faction] === 1 ? '冠军' : `第${game.placements[faction]}名` }}</strong><strong v-else-if="game.turn === faction" class="turn-label"><i></i>正在行棋</strong><span v-else>等待回合</span></div>
           </section>
         </div>
-        <div class="turn-order"><span>行棋顺序</span><p><template v-for="(faction, slot) in TURN_CYCLE" :key="slot"><b v-if="slot">›</b><strong :class="{current: game.turnSlot === slot}">{{ PLAYERS[faction].name }}</strong></template></p><small>蜀或吴出局后，魏与剩余一方交替</small></div>
-        <div class="alliance-note"><span class="tiny-seal">盟</span><p>刘备与孙权结盟<br><strong>互不吃子，共同对抗曹操</strong></p></div>
+        <div class="turn-order"><span>行棋顺序</span><p><template v-for="(faction, slot) in TURN_CYCLE" :key="slot"><b v-if="slot">›</b><strong :class="{current: game.turnSlot === slot, eliminated: game.eliminated.includes(faction)}">{{ PLAYERS[faction].name }}</strong></template></p><small>出局方跳过，剩余两国严格交替</small></div>
+        <div class="alliance-note"><span class="tiny-seal">竞</span><p>三方独立竞争<br><strong>可自由选择合作或进攻，名次按出局顺序确定</strong></p></div>
+        <div class="ranking-card"><strong>本局名次</strong><p v-for="faction in ranking" :key="faction">{{ game.placements[faction] === 1 ? '冠军' : `第${game.placements[faction]}名` }} · {{ PLAYERS[faction].name }}</p><small v-if="game.status === 'playing'">其余名次待对局继续确定</small></div>
       </aside>
 
       <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · {{ mode === 'online' ? `联机房间 ${room?.code}` : '本地试玩' }}</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else>{{ game.winner === 'wei' ? '曹操获胜' : '蜀吴联盟获胜' }}</h2><small v-if="turnPosition" class="turn-position">{{ turnPosition }}</small></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · {{ mode === 'online' ? `联机房间 ${room?.code}` : '本地试玩' }}</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else>{{ PLAYERS[game.winner!].name }}获得冠军</h2><small v-if="turnPosition" class="turn-position">{{ turnPosition }}</small></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
         <div v-if="mode === 'online' && connection !== 'online'" class="network-banner" role="alert">连接已中断，座位与服务器局面不会跳过；恢复连接后将重新同步完整棋局。</div>
-        <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则未记录魏方的具体循环位，无法安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
+        <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧联盟或四拍规则与三方独立竞争不兼容，无法安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
         <div class="board-frame">
           <svg class="board-svg" viewBox="0 0 540 595" role="group" aria-label="九路十横线棋盘，坐标从左上角起编号" @click="boardClick">
             <defs>
@@ -213,19 +216,19 @@ function chooseMode(mode: 'local' | 'online') {
         </div>
         <div class="board-tools"><button class="tool-button" :disabled="mode === 'online' || compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button class="tool-button" :disabled="mode === 'online'" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button class="tool-button sound-button" :aria-pressed="sound" @click="sound = !sound">音效 {{ sound ? '开' : '关' }}</button><span v-if="mode === 'online'" class="online-lock">联机局由服务器保存，已禁用单方悔棋与重开</span></div>
         <p class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
-        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner === 'wei' ? '魏方胜 · 曹操获胜' : '联盟胜 · 刘备与孙权共同获胜' }}</strong><span>本局共 {{ game.history.length }} 步，棋谱保留供复盘。</span></div>
+        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ PLAYERS[game.winner!].name }}夺冠</strong><span>{{ rankingText }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">
         <div class="section-label"><span>行棋记录</span><span>{{ game.history.length }} 步</span></div>
         <div class="last-move-card"><span class="eyebrow">上一步</span><template v-if="latest"><h3 :style="{color: PLAYERS[latest.faction].color}">{{ PLAYERS[latest.faction].name }} · {{ pieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} <b>→</b> {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${PLAYERS[latest.captured.faction].name}的${pieceName(latest.captured)}` : '已标记起点和落点' }}</small></template><template v-else><h3>棋局已就绪</h3><p>曹操先行</p><small>走子后保留起点与落点痕迹</small></template></div>
-        <ol v-if="records.length" class="move-list"><li v-for="record in records" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局</small></div></li></ol>
+        <ol v-if="records.length" class="move-list"><li v-for="record in records" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局 · 名次见本局席位</small></div></li></ol>
         <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>第一步，开启新棋局。</p></div>
         <div class="board-legend"><p><i class="legend-dot"></i> 可走位置</p><p><i class="legend-ring"></i> 可以吃子</p><p><i class="legend-square"></i> 上一步起点与落点</p><small>坐标从左上角起：第 1 路、第 1 线。</small></div>
       </aside>
     </main>
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="mode === 'online'">房间保存在服务器内存；重启后会丢失</span><span v-else>{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
-    <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。三方存活时按曹操 → 刘备 → 曹操 → 孙权循环，每个位置只走一步。</p><ul><li>蜀或吴出局后，曹操与剩余一方严格交替，不会连续行动。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>蜀吴互不吃子，也不能落在本方或盟友占据的位置。所有棋子都可以作炮架。</li><li>蜀吴主公被吃或该国困毙，全军清空。曹操出局则联盟胜；蜀吴均出局则曹操胜。</li><li>取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判胜负，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
+    <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。</p><ul><li>三方独立竞争。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃或轮到本国时无合法走法，该国出局并清空全部棋子；剩余两国严格交替。</li><li>第一位出局为第三名，第二位出局为第二名，最后存活方为冠军。曹操先出局时蜀吴继续对弈。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
   </div>
 </template>

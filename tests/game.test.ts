@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reactive, toRaw } from 'vue';
-import { TURN_CYCLE, allied, at, legalMoves, moveError, newGame, playMove, validGame } from '../src/game.ts';
+import { TURN_CYCLE, at, legalMoves, moveError, newGame, playMove, validGame } from '../src/game.ts';
 import type { Faction, Game, Kind, MoveResult, Piece, TurnSlot } from '../src/game.ts';
 
 const p = (faction: Faction, kind: Kind, x: number, y: number, id = `${faction}-${kind}-${x}-${y}`): Piece => ({ faction, kind, x, y, id });
 const fixture = (pieces: Piece[], turn: Faction = 'wei', eliminated: Faction[] = [], turnSlot?: TurnSlot): Game => ({
-  ...newGame(), pieces, turn, eliminated,
-  turnSlot: turnSlot ?? (turn === 'shu' ? 1 : turn === 'wu' ? 3 : eliminated.includes('wu') ? 2 : 0),
+  ...newGame(), pieces, turn, eliminated, placements: eliminated.length ? { [eliminated[0]]: 3 } : {},
+  turnSlot: turnSlot ?? (turn === 'shu' ? 1 : turn === 'wu' ? 2 : 0),
 });
 const kings = () => [p('wei','king',4,9),p('shu','king',2,0),p('wu','king',6,0)];
 function success(result: MoveResult): Game { if (!result.ok) assert.fail(result.error); return result.game; }
@@ -18,23 +18,22 @@ test('initial board has 29 unique pieces and the central pawn belongs to Shu', (
   assert.deepEqual(['wei','shu','wu'].map(f=>g.pieces.filter(q=>q.faction===f).length),[16,7,6]);
   assert.equal(at(g.pieces,{x:4,y:3})?.faction,'shu'); assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0); assert.equal(validGame(g),true);
 });
-test('the first eight moves follow Wei, Shu, Wei, Wu twice and record every exact cycle slot', () => {
+test('the first nine moves follow Wei, Shu, Wu three times and record every cycle slot', () => {
   let g = newGame();
   const moves = [
-    ['wei-pawn-0-6',{x:0,y:5}], ['shu-pawn-2-3',{x:2,y:4}],
-    ['wei-pawn-4-6',{x:4,y:5}], ['wu-pawn-6-3',{x:6,y:4}],
-    ['wei-pawn-2-6',{x:2,y:5}], ['shu-pawn-0-3',{x:0,y:4}],
-    ['wei-pawn-6-6',{x:6,y:5}], ['wu-pawn-8-3',{x:8,y:4}],
+    ['wei-pawn-0-6',{x:0,y:5}], ['shu-pawn-2-3',{x:2,y:4}], ['wu-pawn-6-3',{x:6,y:4}],
+    ['wei-pawn-4-6',{x:4,y:5}], ['shu-pawn-0-3',{x:0,y:4}], ['wu-pawn-8-3',{x:8,y:4}],
+    ['wei-pawn-2-6',{x:2,y:5}], ['shu-pawn-4-3',{x:4,y:4}], ['wu-feng-5-2',{x:5,y:3}],
   ] as const;
-  const expected = ['wei','shu','wei','wu','wei','shu','wei','wu'] as const;
+  const expected = ['wei','shu','wu','wei','shu','wu','wei','shu','wu'] as const;
   for (let index=0; index<moves.length; index++) {
-    assert.equal(g.turn,expected[index]); assert.equal(g.turnSlot,index % 4);
+    assert.equal(g.turn,expected[index]); assert.equal(g.turnSlot,index % 3);
     g = success(playMove(g,moves[index][0],moves[index][1]));
   }
   assert.deepEqual(g.history.map(record=>record.faction),expected);
-  assert.deepEqual(g.history.map(record=>record.turnSlot),[0,1,2,3,0,1,2,3]);
+  assert.deepEqual(g.history.map(record=>record.turnSlot),[0,1,2,0,1,2,0,1,2]);
   assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0);
-  assert.equal(g.history.length,8); assert.deepEqual(g.lastMove?.from,{x:8,y:3}); assert.deepEqual(g.lastMove?.to,{x:8,y:4});
+  assert.equal(g.history.length,9); assert.deepEqual(g.lastMove?.from,{x:5,y:2}); assert.deepEqual(g.lastMove?.to,{x:5,y:3});
   assert.equal(validGame(g),true);
 });
 test('wrong player and illegal moves neither change turn nor add history', () => {
@@ -55,11 +54,12 @@ test('rook paths are blocked by any faction and diagonals are forbidden', () => 
   assert.ok(moveError([rook,p('wu','pawn',4,3)],rook,{x:4,y:0}));
   assert.ok(moveError([rook],rook,{x:5,y:4}));
 });
-test('Shu and Wu may neither capture nor occupy each other; ally pieces also block rook paths', () => {
-  const rook=p('shu','rook',0,0), ally=p('wu','pawn',0,2);
-  assert.equal(allied('shu','wu'),true); assert.equal(allied('wei','shu'),false);
-  assert.ok(moveError([rook,ally],rook,{x:0,y:2})); assert.ok(moveError([rook,ally],rook,{x:0,y:3}));
-  assert.equal(moveError([rook,ally],rook,{x:0,y:1}),null);
+test('all different factions may capture each other, while all pieces still block paths', () => {
+  for (const attacker of ['wei','shu','wu'] as Faction[]) for (const defender of ['wei','shu','wu'] as Faction[]) {
+    const rook=p(attacker,'rook',0,0), target=p(defender,'pawn',0,2);
+    assert.equal(moveError([rook,target],rook,target),attacker === defender ? '这里已有本方棋子。' : null);
+    assert.ok(moveError([rook,target],rook,{x:0,y:3}));
+  }
 });
 test('friendly targets cannot be occupied', () => {
   const rook=p('wei','rook',0,8), own=p('wei','pawn',0,6);
@@ -72,8 +72,8 @@ test('cannon captures with exactly one screen from any faction, including a king
   assert.ok(moveError([cannon,enemy],cannon,enemy));
   assert.ok(moveError([cannon,p('wu','pawn',1,3),p('shu','pawn',1,5),enemy],cannon,enemy));
 });
-test('cannon cannot jump without capturing or capture an ally', () => {
-  const cannon=p('shu','cannon',1,2), screen=p('wu','pawn',1,4), ally=p('wu','rook',1,7);
+test('cannon cannot jump without capturing or capture its own side', () => {
+  const cannon=p('shu','cannon',1,2), screen=p('wu','pawn',1,4), ally=p('shu','rook',1,7);
   assert.ok(moveError([cannon,screen],cannon,{x:1,y:7}));
   assert.ok(moveError([cannon,screen,ally],cannon,ally));
   assert.equal(moveError([cannon],cannon,{x:1,y:7}),null);
@@ -130,43 +130,71 @@ test('Feng never jumps and captures at the same destinations as movement', () =>
   const feng=p('shu','feng',3,2), enemy=p('wei','rook',3,4);
   assert.equal(moveError([feng,enemy],feng,enemy),null);
   assert.ok(moveError([feng,p('wu','pawn',3,3),enemy],feng,enemy));
-  assert.ok(moveError([feng,p('wu','pawn',3,4)],feng,{x:3,y:4}));
+  assert.equal(moveError([feng,p('wu','pawn',3,4)],feng,{x:3,y:4}),null);
 });
 test('capturing Liu Bei removes every Shu piece and passes the turn to Sun Quan', () => {
   const rook=p('wei','rook',2,1,'attacker'), g=fixture([...kings(),rook,p('shu','cannon',0,5),p('wu','pawn',8,3)]);
   const next=success(playMove(g,'attacker',{x:2,y:0}));
-  assert.equal(next.turn,'wu'); assert.equal(next.turnSlot,3); assert.deepEqual(next.eliminated,['shu']); assert.equal(next.pieces.some(q=>q.faction==='shu'),false);
+  assert.equal(next.turn,'wu'); assert.equal(next.turnSlot,2); assert.deepEqual(next.eliminated,['shu']); assert.equal(next.pieces.some(q=>q.faction==='shu'),false);
+  assert.deepEqual(next.placements,{shu:3}); assert.equal(next.status,'playing'); assert.equal(next.winner,null);
   assert.equal(next.pieces.some(q=>q.faction==='wu'),true); assert.deepEqual(next.lastMove?.eliminated,['shu']);
 });
-test('capturing Sun Quan passes the next move to Liu Bei', () => {
-  const rook=p('wei','rook',6,1,'attacker'), g=fixture([...kings(),rook,p('shu','pawn',0,3),p('wu','cannon',8,5)],'wei',[],2);
+test('capturing Sun Quan gives third place and passes the next move to Shu', () => {
+  const rook=p('wei','rook',6,1,'attacker'), g=fixture([...kings(),rook,p('shu','pawn',0,3),p('wu','cannon',8,5)]);
   const next=success(playMove(g,'attacker',{x:6,y:0}));
-  assert.equal(next.turn,'shu'); assert.equal(next.turnSlot,1); assert.deepEqual(next.eliminated,['wu']);
+  assert.equal(next.turn,'shu'); assert.equal(next.turnSlot,1); assert.deepEqual(next.eliminated,['wu']); assert.deepEqual(next.placements,{wu:3});
 });
-test('after a country is eliminated, the two surviving countries alternate', () => {
+test('after Shu is eliminated, Wei and Wu alternate without an extra turn', () => {
   let g=fixture([p('wei','king',4,9),p('wu','king',6,0),p('wu','pawn',8,3),p('wei','pawn',0,6)],'wei',['shu']);
-  g=success(playMove(g,'wei-pawn-0-6',{x:0,y:5})); assert.equal(g.turn,'wu'); assert.equal(g.turnSlot,3);
+  g=success(playMove(g,'wei-pawn-0-6',{x:0,y:5})); assert.equal(g.turn,'wu'); assert.equal(g.turnSlot,2);
   g=success(playMove(g,'wu-pawn-8-3',{x:8,y:4})); assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0);
 });
-test('capturing Cao Cao immediately wins for the alliance and freezes play', () => {
-  const g=fixture([...kings(),p('shu','rook',4,7,'attacker')],'shu');
-  const next=success(playMove(g,'attacker',{x:4,y:9}));
-  assert.equal(next.winner,'alliance'); assert.equal(next.status,'finished'); assert.equal(next.turn,null); assert.equal(next.turnSlot,null);
-  assert.equal(playMove(next,'wu-king-6-0',{x:7,y:0}).ok,false); assert.equal(validGame(next),true);
+test('Cao Cao first eliminated leaves Shu and Wu competing, then Wu can win', () => {
+  const g=fixture([...kings(),p('shu','rook',4,7,'shu-attacker'),p('wu','rook',2,1,'wu-attacker')],'shu');
+  const afterCao=success(playMove(g,'shu-attacker',{x:4,y:9}));
+  assert.equal(afterCao.status,'playing'); assert.equal(afterCao.turn,'wu'); assert.equal(afterCao.turnSlot,2);
+  assert.deepEqual(afterCao.eliminated,['wei']); assert.deepEqual(afterCao.placements,{wei:3});
+  assert.equal(afterCao.pieces.some(q=>q.faction==='wei'),false); assert.equal(validGame(afterCao),true);
+  const afterWu=success(playMove(afterCao,'wu-attacker',{x:2,y:2}));
+  assert.equal(afterWu.turn,'shu'); assert.equal(afterWu.turnSlot,1); assert.deepEqual(afterWu.placements,{wei:3});
+  const afterShu=success(playMove(afterWu,'shu-attacker',{x:4,y:8}));
+  assert.equal(afterShu.turn,'wu'); assert.equal(afterShu.turnSlot,2); assert.equal(validGame(afterShu),true);
+  const final=success(playMove(afterCao,'wu-attacker',{x:2,y:0}));
+  assert.equal(final.status,'finished'); assert.equal(final.winner,'wu'); assert.deepEqual(final.eliminated,['wei','shu']);
+  assert.deepEqual(final.placements,{wei:3,shu:2,wu:1}); assert.equal(final.turn,null); assert.equal(final.turnSlot,null);
+  assert.deepEqual(final.lastMove?.eliminated,['shu']); assert.equal(playMove(final,'wu-king-6-0',{x:7,y:0}).ok,false);
+  assert.equal(validGame(final),true);
 });
-test('Wei wins when the last alliance king is captured', () => {
+test('every first and second elimination ordering awards third, second and champion correctly', () => {
+  for (const first of ['wei','shu','wu'] as Faction[]) for (const second of ['wei','shu','wu'] as Faction[]) {
+    if (first === second) continue;
+    const champion = (['wei','shu','wu'] as Faction[]).find(f => f !== first && f !== second)!;
+    const targetKing = second === 'wei' ? p('wei','king',4,9) : second === 'shu' ? p('shu','king',2,0) : p('wu','king',6,0);
+    const winnerKing = champion === 'wei' ? p('wei','king',4,9) : champion === 'shu' ? p('shu','king',2,0) : p('wu','king',6,0);
+    const attacker = p(champion,'rook',targetKing.x,second === 'wei' ? 8 : 1,'finisher');
+    const before=fixture([targetKing,winnerKing,attacker],champion,[first]);
+    assert.equal(validGame(before),true);
+    const after=success(playMove(before,'finisher',targetKing));
+    assert.deepEqual(after.eliminated,[first,second]); assert.equal(after.winner,champion);
+    assert.deepEqual(after.placements,{[first]:3,[second]:2,[champion]:1}); assert.equal(validGame(after),true);
+  }
+});
+test('Wei wins only when the last other king is captured', () => {
   const g=fixture([p('wei','king',4,9),p('wu','king',6,0),p('wei','rook',6,1,'attacker')],'wei',['shu']);
   const next=success(playMove(g,'attacker',{x:6,y:0})); assert.equal(next.winner,'wei'); assert.equal(next.turn,null);
+  assert.deepEqual(next.placements,{shu:3,wu:2,wei:1});
 });
-test('a country with no legal move is eliminated on its turn, including ally blockage', () => {
-  const g=fixture([p('wei','king',4,9),p('wei','pawn',0,6),p('shu','king',1,0),p('wu','king',7,0),p('wu','rook',2,0)]);
+test('a country with no legal move is eliminated on its turn', () => {
+  const g=fixture([p('wei','king',4,9),p('wei','pawn',0,6),p('shu','king',1,0),p('shu','pawn',2,0),p('shu','elephant',2,1),p('wei','pawn',1,2),p('wei','pawn',3,2),p('wu','king',7,0)]);
   const next=success(playMove(g,'wei-pawn-0-6',{x:0,y:5}));
-  assert.equal(next.turn,'wu'); assert.equal(next.turnSlot,3); assert.deepEqual(next.eliminated,['shu']); assert.equal(next.pieces.some(q=>q.faction==='shu'),false);
+  assert.equal(next.turn,'wu'); assert.equal(next.turnSlot,2); assert.deepEqual(next.eliminated,['shu']); assert.equal(next.pieces.some(q=>q.faction==='shu'),false);
+  assert.deepEqual(next.placements,{shu:3});
 });
-test('stalemating Wu from the second Wei slot eliminates Wu and hands play to Shu', () => {
-  const g=fixture([p('wei','king',4,9),p('wei','pawn',0,6),p('shu','king',1,0),p('shu','rook',6,0),p('shu','pawn',8,0),p('wu','king',7,0)],'wei',[],2);
-  const next=success(playMove(g,'wei-pawn-0-6',{x:0,y:5}));
-  assert.equal(next.turn,'shu'); assert.equal(next.turnSlot,1); assert.deepEqual(next.eliminated,['wu']); assert.equal(next.pieces.some(q=>q.faction==='wu'),false);
+test('stalemating Wu on its turn eliminates Wu and leaves Wei and Shu competing', () => {
+  const g=fixture([p('wei','king',4,9),p('wei','pawn',0,6),p('shu','king',1,0),p('wu','king',7,0),p('wu','pawn',6,0),p('wu','elephant',6,1),p('shu','pawn',5,2),p('shu','pawn',7,2)],'shu');
+  const next=success(playMove(g,'shu-king-1-0',{x:2,y:0}));
+  assert.equal(next.turn,'wei'); assert.equal(next.turnSlot,0); assert.deepEqual(next.eliminated,['wu']); assert.equal(next.pieces.some(q=>q.faction==='wu'),false);
+  assert.deepEqual(next.placements,{wu:3});
 });
 test('removed armies cease to block paths or supply cannon screens', () => {
   const g=fixture([...kings(),p('wei','rook',2,1,'attacker'),p('shu','pawn',5,5),p('wu','cannon',5,2),p('wei','pawn',5,7)]);
@@ -183,8 +211,9 @@ test('malformed coordinates and overlapping snapshots are rejected', () => {
   assert.ok(moveError(g.pieces,g.pieces[0],{x:-1,y:9}));
   const duplicate=structuredClone(g); duplicate.pieces[1].x=duplicate.pieces[0].x; duplicate.pieces[1].y=duplicate.pieces[0].y;
   assert.equal(validGame(duplicate),false); assert.equal(validGame({...g,turn:'invalid'}),false);
-  assert.equal(validGame({...g,schema:1}),false); assert.equal(validGame({...g,turnSlot:1}),false); assert.equal(validGame({...g,turnSlot:2}),true);
-  assert.deepEqual(TURN_CYCLE,['wei','shu','wei','wu']);
+  assert.equal(validGame({...g,schema:1}),false); assert.equal(validGame({...g,rulesVersion:'turn-cycle-wei-shu-wei-wu-v1'}),false);
+  assert.equal(validGame({...g,turnSlot:1}),false); assert.equal(validGame({...g,turnSlot:2}),false);
+  assert.deepEqual(TURN_CYCLE,['wei','shu','wu']);
 });
 test('deterministic multi-game runs preserve occupancy, turns, kings and snapshot validity', () => {
   let seed=2317;

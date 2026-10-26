@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { io as connect, type Socket } from 'socket.io-client';
 import { createOnlineServer } from '../server/create-server.ts';
+import { newGame } from '../src/game.ts';
 import type { ClientAck, RoomView, SessionReceipt } from '../src/online.ts';
 
 const server = createOnlineServer();
@@ -60,7 +61,25 @@ test('three independent Socket.IO clients create, join, start, move, and reconne
   shu.disconnect(); await pause();
   assert.equal(latest[0]?.players.find(player => player.id === b.playerId)?.online, false);
   const resumedClient = await client();
+  resumedClient.on('room:state', state => { latest[1] = state; });
   const resumed = success(await emit<SessionReceipt>(resumedClient, 'room:resume', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
   assert.equal(resumed.state.players.length, 3); assert.equal(resumed.state.game?.history.length, 1);
   assert.equal(resumed.state.players.find(player => player.id === b.playerId)?.online, true);
+  // Put this room at a legal near-end position to verify the actual server broadcast and ranking protocol.
+  const stored = server.rooms.getRoom(a.roomCode)!;
+  const nearEnd = newGame();
+  nearEnd.pieces = nearEnd.pieces.filter(piece => piece.kind === 'king');
+  nearEnd.pieces.push({ id: 'shu-attacker', faction: 'shu', kind: 'rook', x: 4, y: 7 },
+    { id: 'wu-attacker', faction: 'wu', kind: 'rook', x: 2, y: 1 });
+  nearEnd.turn = 'shu'; nearEnd.turnSlot = 1;
+  stored.game = nearEnd; stored.version++;
+  success(await emit(resumedClient, 'game:move', { roomCode: a.roomCode, reconnectToken: b.reconnectToken,
+    intent: { requestId: 'caoout0001', version: stored.version, pieceId: 'shu-attacker', to: { x: 4, y: 9 } } }));
+  await pause();
+  assert.equal(latest.every(state => state?.game?.status === 'playing' && state.game.placements.wei === 3 && state.game.turn === 'wu'), true);
+  success(await emit(wu, 'game:move', { roomCode: a.roomCode, reconnectToken: c.reconnectToken,
+    intent: { requestId: 'shuout0001', version: stored.version, pieceId: 'wu-attacker', to: { x: 2, y: 0 } } }));
+  await pause();
+  assert.equal(latest.every(state => state?.phase === 'finished' && state.game?.winner === 'wu'
+    && state.game.placements.wei === 3 && state.game.placements.shu === 2 && state.game.placements.wu === 1), true);
 });
