@@ -12,10 +12,11 @@ if (errors.length) throw errors[0];
 const result = compileScript(descriptor, { id: 'game-ui-tests', inlineTemplate: true });
 writeFileSync(output, result.content
   .replaceAll("'./game.ts'", "'../src/game.ts'")
+  .replaceAll("'./board-view.ts'", "'../src/board-view.ts'")
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/game.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], { cwd: root, stdio: 'inherit' });
+  const run = spawnSync(process.execPath, ['--test', 'tests/board-view.test.ts', 'tests/game.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], { cwd: root, stdio: 'inherit' });
   status = run.status ?? 1;
 } finally { unlinkSync(output); }
 process.exit(status);

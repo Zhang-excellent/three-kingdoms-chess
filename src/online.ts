@@ -17,7 +17,7 @@ export interface RoomView {
   version: number;
   players: RoomPlayerView[];
   game: Game | null;
-  selfId: string;
+  selfId: string | null;
 }
 
 export interface SessionReceipt {

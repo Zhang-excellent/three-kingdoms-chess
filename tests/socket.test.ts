@@ -141,3 +141,65 @@ test('three sockets receive resignation and in-game exit; departed connection ca
     intent: { requestId: 'departed01', version: latest[2]!.version, pieceId: 'shu-pawn-2-3', to: { x: 2, y: 4 } } });
   assert.equal(departed.ok, false);
 });
+
+test('fourth socket watches a full room, stays read-only, reconnects, switches rooms and sees closure', async () => {
+  const [wei, shu, wu, viewer, otherViewer] = await Promise.all([client(), client(), client(), client(), client()]);
+  const a = success(await emit<SessionReceipt>(wei, 'room:create', { nickname: '观战魏' }));
+  const b = success(await emit<SessionReceipt>(shu, 'room:join', { roomCode: a.roomCode, nickname: '观战蜀' }));
+  const c = success(await emit<SessionReceipt>(wu, 'room:join', { roomCode: a.roomCode, nickname: '观战吴' }));
+  const waitView = success(await emit<{ state: RoomView }>(viewer, 'room:watch', { roomCode: a.roomCode })).state;
+  assert.equal(waitView.phase, 'lobby'); assert.equal(waitView.players.length, 3);
+  assert.equal(waitView.selfId, null);
+  assert.equal(JSON.stringify(waitView).includes('reconnectToken'), false);
+  assert.equal(JSON.stringify(waitView).includes(a.reconnectToken), false);
+  const full = await emit<SessionReceipt>(otherViewer, 'room:join', { roomCode: a.roomCode, nickname: '第四人' });
+  assert.equal(full.ok, false);
+  const latest: RoomView[] = [];
+  viewer.on('room:state', state => latest.push(state));
+  for (const [socket, receipt, faction] of [[wei, a, 'wei'], [shu, b, 'shu'], [wu, c, 'wu']] as const)
+    success(await emit(socket, 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipt.reconnectToken, faction }));
+  for (const [socket, receipt] of [[wei, a], [shu, b], [wu, c]] as const)
+    success(await emit(socket, 'room:ready', { roomCode: a.roomCode, reconnectToken: receipt.reconnectToken, ready: true }));
+  await pause();
+  assert.equal(latest.at(-1)?.phase, 'playing');
+  const version = latest.at(-1)!.version;
+  for (const [event, extra] of [
+    ['room:ready', { ready: true }], ['room:choose-faction', { faction: 'wei' }],
+    ['room:release-offline', { playerId: a.playerId }], ['game:resign', {}],
+    ['room:leave', {}], ['game:move', { intent: { requestId: 'viewerfake01', version, pieceId: 'wei-pawn-0-6', to: { x: 0, y: 5 } } }],
+  ] as const) {
+    const denied = await emit(viewer, event, { roomCode: a.roomCode, reconnectToken: a.reconnectToken, ...extra });
+    assert.equal(denied.ok, false, `${event} must reject spectator`);
+    if (!denied.ok) assert.equal(denied.code, 'SPECTATOR_FORBIDDEN');
+  }
+  assert.equal((await emit(viewer, 'room:create', { nickname: '偷席位' })).ok, false);
+  assert.equal((await emit(viewer, 'room:resume', { roomCode: a.roomCode, reconnectToken: a.reconnectToken })).ok, false);
+  success(await emit(wei, 'game:move', { roomCode: a.roomCode, reconnectToken: a.reconnectToken,
+    intent: { requestId: 'viewmove001', version, pieceId: 'wei-pawn-0-6', to: { x: 0, y: 5 } } }));
+  await pause();
+  assert.equal(latest.at(-1)?.game?.history.length, 1);
+  assert.equal(latest.at(-1)?.game?.lastMove?.to.y, 5);
+  assert.equal(latest.at(-1)?.game?.turn, 'shu');
+  success(await emit(wei, 'game:resign', { roomCode: a.roomCode, reconnectToken: a.reconnectToken }));
+  await pause();
+  assert.equal(latest.at(-1)?.game?.placements.wei, 3);
+  assert.equal(latest.at(-1)?.game?.status, 'playing');
+  const playersBefore = server.rooms.getRoom(a.roomCode)!.players.length;
+  viewer.disconnect(); await pause();
+  assert.equal(server.rooms.getRoom(a.roomCode)!.players.length, playersBefore);
+  const returning = await client();
+  const resumed = success(await emit<{ state: RoomView }>(returning, 'room:watch', { roomCode: a.roomCode })).state;
+  assert.equal(resumed.game?.history.length, 1);
+  const other = success(await emit<SessionReceipt>(otherViewer, 'room:create', { nickname: '另一个房间' }));
+  assert.equal((await emit(otherViewer, 'room:watch', { roomCode: a.roomCode })).ok, false);
+  const switched = success(await emit<{ state: RoomView }>(returning, 'room:watch', { roomCode: other.roomCode })).state;
+  assert.equal(switched.code, other.roomCode);
+  assert.equal(server.rooms.getRoom(a.roomCode)!.spectators.has(returning.id!), false);
+  success(await emit(returning, 'room:unwatch', { roomCode: a.roomCode }));
+  assert.equal(server.rooms.getRoom(other.roomCode)!.spectators.has(returning.id!), true);
+  const closedNotice = new Promise<string>(resolve => returning.once('room:closed', resolve));
+  success(await emit(otherViewer, 'room:leave', { roomCode: other.roomCode, reconnectToken: other.reconnectToken }));
+  const closed = await closedNotice;
+  assert.equal(closed, other.roomCode);
+  assert.equal(server.rooms.getRoom(other.roomCode), undefined);
+});

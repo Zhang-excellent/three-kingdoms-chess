@@ -29,6 +29,33 @@ test('screen starts with 29 pieces, Cao Cao highlighted and undo disabled', t =>
   assert.match(wrapper.get('.alliance-note').text(),/三方独立竞争/);
   assert.ok(wrapper.findAll('button').find(b=>b.text().includes('悔棋'))?.attributes('disabled') !== undefined);
 });
+
+test('local flip moves pieces, legal targets and last trail without changing canonical history', async t => {
+  const wrapper = setup(t);
+  const soldier = piece('魏','兵',1,7);
+  assert.match(wrapper.get(soldier).attributes('style')!, /translate\(50px, 380px\)/);
+  await wrapper.findAll('button').find(button => button.text() === '翻转棋盘')!.trigger('click');
+  assert.match(wrapper.get(soldier).attributes('style')!, /translate\(490px, 215px\)/);
+  assert.equal(wrapper.get('.coordinates text').text(), '9');
+  await wrapper.get(soldier).trigger('click');
+  assert.equal(wrapper.get(target(1,6)).get('circle').attributes('cx'), '490');
+  await wrapper.get(target(1,6)).trigger('click');
+  assert.equal(wrapper.get('.last-trail line').attributes('x1'), '490');
+  assert.equal(wrapper.get('.last-trail line').attributes('y2'), '270');
+  assert.match(wrapper.get('.last-move-card').text(), /\(1, 7\).*\(1, 6\)/);
+  await wrapper.findAll('button').find(button => button.text() === '翻转棋盘')!.trigger('click');
+  assert.equal(wrapper.get('.last-trail line').attributes('x1'), '50');
+});
+
+test('flipped board accepts touch on a piece and a legal destination', async t => {
+  const wrapper = setup(t);
+  await wrapper.findAll('button').find(button => button.text() === '翻转棋盘')!.trigger('click');
+  await wrapper.get(piece('魏','兵',1,7)).trigger('touchend', { changedTouches: [{ clientX: 490, clientY: 215 }] });
+  assert.equal(wrapper.findAll('g.legal-point').length, 1);
+  await wrapper.get(target(1,6)).trigger('touchend', { changedTouches: [{ clientX: 490, clientY: 270 }] });
+  assert.equal(wrapper.get('.player-card.active h2').text(), '刘备');
+  assert.match(wrapper.get('.last-move-card').text(), /\(1, 7\).*\(1, 6\)/);
+});
 test('clicking a piece reveals legal positions; moving lights Liu Bei and records the last path', async t => {
   const wrapper = setup(t);
   await wrapper.get(piece('魏','兵',1,7)).trigger('click');

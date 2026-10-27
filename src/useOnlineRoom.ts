@@ -25,7 +25,11 @@ function loadPending(): PendingLeave[] {
 export function useOnlineRoom() {
   const params = new URLSearchParams(location.search);
   const initialSession = loadSession();
-  const mode = ref<'local' | 'online'>(params.get('mode') === 'online' || params.has('room') ? 'online' : 'local');
+  const initialSpectating = !initialSession && params.get('mode') === 'spectate';
+  const mode = ref<'local' | 'online'>(params.get('mode') === 'online' || params.has('room') || initialSpectating ? 'online' : 'local');
+  const spectating = ref(initialSpectating);
+  const watchCode = ref(initialSpectating ? (params.get('room') ?? '').toUpperCase() : '');
+  const watchingCode = ref(initialSpectating ? watchCode.value : '');
   const nickname = ref(initialSession?.nickname ?? '');
   const joinCode = ref((params.get('room') ?? '').toUpperCase());
   const room = ref<RoomView | null>(null);
@@ -45,7 +49,7 @@ export function useOnlineRoom() {
 
   function setAddress(code: string | null) {
     const url = new URL(location.href);
-    if (code) { url.searchParams.set('mode', 'online'); url.searchParams.set('room', code); }
+    if (code) { url.searchParams.set('mode', spectating.value ? 'spectate' : 'online'); url.searchParams.set('room', code); }
     else url.searchParams.delete('room');
     history.replaceState(history.state, '', url);
   }
@@ -78,6 +82,12 @@ export function useOnlineRoom() {
     return true;
   }
   function acceptState(state: RoomView, expected: SavedSession | null = session.value) {
+    if (spectating.value) {
+      if (state.code !== watchingCode.value || state.selfId !== null) return;
+      if (room.value?.code === state.code && state.version < room.value.version) return;
+      room.value = state;
+      return;
+    }
     if (!expected || state.code !== expected.roomCode || (expected.playerId && state.selfId !== expected.playerId)) return;
     if (room.value?.code === state.code && state.version < room.value.version) return;
     room.value = state;
@@ -120,6 +130,10 @@ export function useOnlineRoom() {
     return flushing;
   }
   async function resume(generation: number) {
+    if (spectating.value) {
+      if (watchingCode.value) await watch(watchingCode.value, generation, true);
+      return;
+    }
     const saved = session.value;
     if (!saved) return;
     const ack = await emit<SessionReceipt>('room:resume', saved);
@@ -145,7 +159,13 @@ export function useOnlineRoom() {
       if (reason !== 'io client disconnect' && session.value) error.value = '连接已中断，正在自动重连；等待区座位暂留 60 秒。';
     });
     socket.on('room:state', (state: RoomView) => acceptState(state));
+    socket.on('room:closed', (code: string) => {
+      if (!spectating.value || watchingCode.value !== code) return;
+      epoch++; watchingCode.value = ''; room.value = null; setAddress(null);
+      error.value = '房间已销毁，请返回大厅或输入其他房间号。';
+    });
     socket.on('session:replaced', () => {
+      if (!session.value) return;
       epoch++; connection.value = 'replaced'; error.value = '这个席位已在另一设备恢复，本页面已停止联机。';
       if (session.value) sessionStorage.setItem(REPLACED_SESSION_KEY, session.value.reconnectToken);
       session.value = null; room.value = null; setAddress(null);
@@ -153,7 +173,7 @@ export function useOnlineRoom() {
     });
     socket.connect();
   }
-  function connect() { mode.value = 'online'; openSocket(); }
+  function connect() { if (spectating.value) { stopWatching(); spectating.value = false; } mode.value = 'online'; openSocket(); }
   async function ensureConnected(): Promise<boolean> {
     openSocket();
     if (!socket?.connected) {
@@ -176,8 +196,57 @@ export function useOnlineRoom() {
     error.value = '';
     if (saved) { queueLeave(saved); if (socket?.connected) void flushPendingLeaves(); else openSocket(); }
   }
+  function openWatchEntry() {
+    if (session.value) { error.value = '请先退出玩家房间，再进入观战。'; return; }
+    if (spectating.value) stopWatching();
+    epoch++; spectating.value = true; mode.value = 'online'; room.value = null;
+    watchingCode.value = ''; watchCode.value = ''; error.value = '';
+    const url = new URL(location.href); url.searchParams.set('mode', 'spectate'); url.searchParams.delete('room');
+    history.replaceState(history.state, '', url);
+    openSocket();
+  }
+  async function watch(codeValue: string, generation = epoch, connected = false): Promise<ClientAck<{ state: RoomView }>> {
+    const code = codeValue.trim().toUpperCase();
+    if (!code) return { ok: false, code: 'INVALID_ROOM', error: '请输入房间号。' };
+    if (!connected && !await ensureConnected()) return { ok: false, code: 'OFFLINE', error: '无法连接联机服务器，请稍后重试。' };
+    if (!connected && flushing) await flushing;
+    const ack = await emit<{ state: RoomView }>('room:watch', { roomCode: code });
+    if (generation !== epoch || !spectating.value) {
+      if (ack.ok && watchingCode.value !== ack.data.state.code)
+        void emit('room:unwatch', { roomCode: ack.data.state.code });
+      return ack;
+    }
+    if (ack.ok) {
+      watchingCode.value = ack.data.state.code; watchCode.value = ack.data.state.code;
+      room.value = ack.data.state; setAddress(watchingCode.value); error.value = '';
+    } else {
+      watchingCode.value = ''; room.value = null; setAddress(null); error.value = ack.error;
+    }
+    return ack;
+  }
+  async function startWatching() {
+    if (busy.value) return;
+    busy.value = true; const generation = ++epoch;
+    try {
+      const result = await watch(watchCode.value, generation);
+      if (generation === epoch && !result.ok) error.value = result.error;
+    }
+    finally { if (generation === epoch) busy.value = false; }
+  }
+  function stopWatching() {
+    epoch++; const code = watchingCode.value;
+    watchingCode.value = ''; room.value = null; watchCode.value = '';
+    setAddress(null); error.value = '';
+    if (code && socket?.connected) void emit('room:unwatch', { roomCode: code });
+  }
+  function exitWatching() {
+    stopWatching(); spectating.value = false; mode.value = 'online'; joinCode.value = '';
+    const url = new URL(location.href); url.searchParams.set('mode', 'online');
+    history.replaceState(history.state, '', url);
+  }
   function useLocal() {
     if (session.value) leaveRoom();
+    if (spectating.value) { stopWatching(); spectating.value = false; }
     mode.value = 'local';
     const url = new URL(location.href); url.searchParams.delete('mode'); url.searchParams.delete('room');
     history.replaceState(history.state, '', url);
@@ -188,6 +257,7 @@ export function useOnlineRoom() {
     if (!nickname.value.trim()) { error.value = '请先输入昵称。'; return; }
     if (event === 'room:join' && !joinCode.value.trim()) { error.value = '请输入房间号。'; return; }
     if (session.value) { error.value = '请先退出当前房间。'; return; }
+    if (spectating.value) { error.value = '请先退出观战。'; return; }
     busy.value = true;
     const generation = epoch;
     try {
@@ -233,5 +303,6 @@ export function useOnlineRoom() {
   onBeforeUnmount(() => socket?.disconnect());
   if (mode.value === 'online' || pending().length) openSocket();
   return { mode, nickname, joinCode, room, self, faction, connection, error, exitNotice, busy, inRoom,
+    spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
     connect, useLocal, createRoom, joinRoom, chooseFaction, setReady, move, resign, releaseOffline, leaveRoom, copyInvite, forgetSession };
 }

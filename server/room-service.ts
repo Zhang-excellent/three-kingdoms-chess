@@ -24,6 +24,7 @@ interface Room {
   phase: RoomPhase;
   version: number;
   players: Player[];
+  spectators: Set<string>;
   game: Game | null;
   requests: Map<string, Map<string, StoredAck>>;
 }
@@ -45,6 +46,7 @@ export class RoomService {
   private readonly rooms = new Map<string, Room>();
   private readonly tokenRoom = new Map<string, string>();
   private readonly socketRoom = new Map<string, { code: string; playerId: string }>();
+  private readonly spectatorRoom = new Map<string, string>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly onRoomChanged: (room: Room) => void;
@@ -56,6 +58,7 @@ export class RoomService {
   }
 
   createRoom(nicknameValue: unknown, socketId: string): RoomActionResult<SessionReceipt> {
+    if (this.spectatorRoom.has(socketId)) return { ack: { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战，再创建玩家房间。' } };
     const existing = this.playerForSocket(socketId);
     if (existing) return { room: existing.room, ack: { ok: true, data: this.receipt(existing.room, existing.player) } };
     const nickname = cleanNickname(nicknameValue);
@@ -63,13 +66,14 @@ export class RoomService {
     let code = '';
     do code = randomBytes(3).toString('hex').toUpperCase(); while (this.rooms.has(code));
     const player = this.newPlayer(nickname, socketId);
-    const room: Room = { code, phase: 'lobby', version: 1, players: [player], game: null, requests: new Map() };
+    const room: Room = { code, phase: 'lobby', version: 1, players: [player], spectators: new Set(), game: null, requests: new Map() };
     this.rooms.set(code, room); this.tokenRoom.set(player.token, code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
     return { room, ack: { ok: true, data: this.receipt(room, player) } };
   }
 
   joinRoom(codeValue: unknown, nicknameValue: unknown, socketId: string): RoomActionResult<SessionReceipt> {
+    if (this.spectatorRoom.has(socketId)) return { ack: { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战，再加入玩家房间。' } };
     const code = cleanCode(codeValue), nickname = cleanNickname(nicknameValue), room = this.rooms.get(code);
     const existing = this.playerForSocket(socketId);
     if (existing) return existing.room.code === code
@@ -86,6 +90,7 @@ export class RoomService {
   }
 
   resumeRoom(codeValue: unknown, tokenValue: unknown, socketId: string): RoomActionResult<SessionReceipt> {
+    if (this.spectatorRoom.has(socketId)) return { ack: { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战，再恢复玩家席位。' } };
     const code = cleanCode(codeValue), token = typeof tokenValue === 'string' ? tokenValue : '';
     const existing = this.playerForSocket(socketId);
     if (existing && existing.player.token !== token)
@@ -154,6 +159,7 @@ export class RoomService {
   }
 
   leaveRoom(codeValue: unknown, tokenValue: unknown, socketId: string): Promise<RoomActionResult> {
+    if (this.spectatorRoom.has(socketId)) return Promise.resolve({ ack: { ok: false, code: 'SPECTATOR_FORBIDDEN', error: '观战者没有玩家席位可退出。' } });
     const code = cleanCode(codeValue);
     return this.serial(code, () => {
       const found = this.findPlayer(code, tokenValue);
@@ -188,6 +194,7 @@ export class RoomService {
   }
 
   disconnect(socketId: string): Room | undefined {
+    this.unwatch(socketId);
     const found = this.playerForSocket(socketId);
     this.socketRoom.delete(socketId);
     if (!found || found.player.socketId !== socketId) return undefined;
@@ -200,7 +207,36 @@ export class RoomService {
   }
 
   views(room: Room): Array<{ socketId: string; state: RoomView }> {
-    return room.players.flatMap(player => player.socketId ? [{ socketId: player.socketId, state: this.view(room, player) }] : []);
+    return [
+      ...room.players.flatMap(player => player.socketId ? [{ socketId: player.socketId, state: this.view(room, player) }] : []),
+      ...Array.from(room.spectators, socketId => ({ socketId, state: this.publicView(room) })),
+    ];
+  }
+
+  watchRoom(codeValue: unknown, socketId: string): RoomActionResult<{ state: RoomView; previousCode: string | null }> {
+    if (this.playerForSocket(socketId)) return { ack: { ok: false, code: 'PLAYER_ACTIVE', error: '请先按现有退出流程离开玩家席位，再观战。' } };
+    const code = cleanCode(codeValue), room = this.rooms.get(code);
+    if (!room) return { ack: { ok: false, code: 'ROOM_NOT_FOUND', error: '没有找到这个房间，可能已退出或服务器已重启。' } };
+    const previousCode = this.spectatorRoom.get(socketId) ?? null;
+    if (previousCode && previousCode !== code) this.rooms.get(previousCode)?.spectators.delete(socketId);
+    this.spectatorRoom.set(socketId, code);
+    room.spectators.add(socketId);
+    return { ack: { ok: true, data: { state: this.publicView(room), previousCode } } };
+  }
+
+  unwatch(socketId: string, expectedCode?: string): string | null {
+    const code = this.spectatorRoom.get(socketId);
+    if (!code || (expectedCode && code !== cleanCode(expectedCode))) return null;
+    this.spectatorRoom.delete(socketId);
+    this.rooms.get(code)?.spectators.delete(socketId);
+    return code;
+  }
+
+  spectatorSockets(room: Room): string[] { return [...room.spectators]; }
+
+  closeSpectators(room: Room): void {
+    for (const socketId of room.spectators) this.spectatorRoom.delete(socketId);
+    room.spectators.clear();
   }
 
   getRoom(code: string): Room | undefined { return this.rooms.get(cleanCode(code)); }
@@ -241,6 +277,8 @@ export class RoomService {
   private findPlayer(codeValue: unknown, tokenValue: unknown, socketId?: string):
     | { ok: true; room: Room; player: Player }
     | { ok: false; ack: ClientAck<never> } {
+    if (socketId && this.spectatorRoom.has(socketId))
+      return { ok: false, ack: { ok: false, code: 'SPECTATOR_FORBIDDEN', error: '观战者只能查看棋局，不能执行玩家操作。' } };
     const code = cleanCode(codeValue), token = typeof tokenValue === 'string' ? tokenValue : '', room = this.rooms.get(code);
     const player = room?.players.find(item => item.token === token);
     if (!room || !player) return { ok: false, ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '席位凭证无效，请重新加入房间。' } };
@@ -296,6 +334,13 @@ export class RoomService {
     const players: RoomPlayerView[] = room.players.map(({ id, nickname, faction, ready, online, offlineUntil }) =>
       ({ id, nickname, faction, ready, online, offlineUntil }));
     return { code: room.code, phase: room.phase, version: room.version, players, game: room.game ? structuredClone(room.game) : null, selfId: self.id };
+  }
+
+  private publicView(room: Room): RoomView {
+    const players: RoomPlayerView[] = room.players.map(({ id, nickname, faction, ready, online, offlineUntil }) =>
+      ({ id, nickname, faction, ready, online, offlineUntil }));
+    return { code: room.code, phase: room.phase, version: room.version, players,
+      game: room.game ? structuredClone(room.game) : null, selfId: null };
   }
 
   private serial<T>(code: string, action: () => T | Promise<T>): Promise<T> {

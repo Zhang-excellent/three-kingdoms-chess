@@ -13,6 +13,14 @@ export function createOnlineServer() {
   const io = new Server(httpServer, { path: '/three-chess/socket.io', cors: { origin: true, credentials: true } });
   const broadcast = (room?: InternalRoom) => {
     if (!room) return;
+    if (rooms.getRoom(room.code) !== room) {
+      for (const socketId of rooms.spectatorSockets(room)) {
+        io.to(socketId).emit('room:closed', room.code);
+        io.sockets.sockets.get(socketId)?.leave(room.code);
+      }
+      rooms.closeSpectators(room);
+      return;
+    }
     for (const item of rooms.views(room)) io.to(item.socketId).emit('room:state', item.state);
   };
   const rooms = new RoomService(broadcast);
@@ -28,6 +36,20 @@ export function createOnlineServer() {
   app.get('/three-chess/{*path}', sendIndex);
 
   io.on('connection', socket => {
+    socket.on('room:watch', (payload: { roomCode?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = rooms.watchRoom(payload?.roomCode, socket.id);
+      if (result.ack.ok) {
+        const { state, previousCode } = result.ack.data;
+        if (previousCode && previousCode !== state.code) socket.leave(previousCode);
+        socket.join(state.code);
+        done({ ok: true, data: { state } });
+      } else done(result.ack);
+    });
+    socket.on('room:unwatch', (payload: { roomCode?: string }, done: (ack: ClientAck) => void) => {
+      const code = rooms.unwatch(socket.id, payload?.roomCode);
+      if (code) socket.leave(code);
+      done({ ok: true, data: undefined });
+    });
     socket.on('room:create', (payload: { nickname?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
       const result = rooms.createRoom(payload?.nickname, socket.id);
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
