@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
-import { newGame, playMove, RULES_VERSION } from '../src/game.ts';
+import { newGame, playMove, resignFaction, RULES_VERSION } from '../src/game.ts';
 
 GlobalRegistrator.register({ url: 'http://localhost:5173' });
 const { mount } = await import('@vue/test-utils');
@@ -119,7 +119,7 @@ test('refresh restores the three-slot position from versioned saves', async t =>
   wrapper = remount(t,wrapper);
   assert.equal(wrapper.get('.player-card.active h2').text(),'曹操');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'0');
-  const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:independent-v1')!);
+  const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:win-loss-v1')!);
   assert.equal(saved.rulesVersion,RULES_VERSION);
 });
 test('old alliance and four-slot saves remain untouched until starting a new independent game', async t => {
@@ -129,25 +129,65 @@ test('old alliance and four-slot saves remain untouched until starting a new ind
   const wrapper = setup(t,false);
   assert.ok(wrapper.find('.legacy-save-banner').exists());
   assert.equal(localStorage.getItem('three-kingdoms-chess:turn-cycle-v1'),legacy);
-  assert.equal(localStorage.getItem('three-kingdoms-chess:independent-v1'),null);
+  assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'),null);
   await wrapper.get(piece('魏','兵',1,7)).trigger('click');
   assert.equal(wrapper.findAll('g.legal-point').length,0); assert.match(wrapper.get('.feedback.error').text(),/另开一局/);
   await wrapper.get('.legacy-save-banner .primary-button').trigger('click');
   assert.equal(wrapper.find('.legacy-save-banner').exists(),false);
   assert.equal(localStorage.getItem('three-kingdoms-chess:turn-cycle-v1'),legacy);
-  const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:independent-v1')!);
+  const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:win-loss-v1')!);
   assert.equal(saved.rulesVersion,RULES_VERSION); assert.equal(saved.game.turnSlot,0);
 });
 test('malformed current save remains available and requires a new game', t => {
   localStorage.clear();
   const malformed = '{"rulesVersion":';
-  localStorage.setItem('three-kingdoms-chess:independent-v1', malformed);
+  localStorage.setItem('three-kingdoms-chess:win-loss-v1', malformed);
   const wrapper = setup(t, false);
   assert.ok(wrapper.find('.legacy-save-banner').exists());
-  assert.equal(localStorage.getItem('three-kingdoms-chess:independent-v1'), malformed);
+  assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'), malformed);
   assert.match(wrapper.get('.feedback').text(), /另开一局/);
 });
-test('rankings survive refresh and undo restores the pre-elimination state', async t => {
+test('old ranking save remains untouched and cannot silently resume under win-loss rules', t => {
+  localStorage.clear();
+  const previous = JSON.stringify({ rulesVersion: 'independent-three-way-ranking-v1', game: { schema: 3, placements: { wei: 3 } }, undo: [] });
+  localStorage.setItem('three-kingdoms-chess:independent-v1', previous);
+  const wrapper = setup(t, false);
+  assert.ok(wrapper.find('.legacy-save-banner').exists());
+  assert.equal(localStorage.getItem('three-kingdoms-chess:independent-v1'), previous);
+  assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'), null);
+});
+test('settings keep music and effect switches and volumes independently on this browser', async t => {
+  localStorage.clear();
+  let wrapper = setup(t, false);
+  await wrapper.findAll('button').find(b => b.text() === '设置')!.trigger('click');
+  assert.equal(wrapper.get('#music-toggle').text(), '关闭');
+  assert.equal(wrapper.get('#effects-toggle').text(), '关闭');
+  await wrapper.get('#effects-toggle').trigger('click');
+  await wrapper.get('#effects-volume').setValue('0.42');
+  await wrapper.get('#music-volume').setValue('0.18');
+  let saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:audio-v1')!);
+  assert.equal(saved.effectsEnabled, true);
+  assert.equal(saved.musicEnabled, false);
+  assert.equal(saved.effectsVolume, 0.42);
+  assert.equal(saved.musicVolume, 0.18);
+  wrapper = remount(t, wrapper);
+  assert.equal(wrapper.get('#effects-toggle').text(), '开启');
+  assert.equal(wrapper.get('#music-toggle').text(), '关闭');
+  assert.equal((wrapper.get('#effects-volume').element as HTMLInputElement).value, '0.42');
+});
+test('finished local game presents one winner and two losses without placement labels', t => {
+  localStorage.clear();
+  const first = resignFaction(newGame(), 'shu');
+  assert.equal(first.ok, true); if (!first.ok) return;
+  const last = resignFaction(first.game, 'wu');
+  assert.equal(last.ok, true); if (!last.ok) return;
+  localStorage.setItem('three-kingdoms-chess:win-loss-v1', JSON.stringify({ rulesVersion: RULES_VERSION, game: last.game, undo: [] }));
+  const wrapper = setup(t, false);
+  assert.match(wrapper.get('.result-banner').text(), /曹操获胜.*刘备、孙权失败/);
+  assert.match(wrapper.get('.ranking-card').text(), /曹操.*胜利.*刘备.*失败.*孙权.*失败/);
+  assert.doesNotMatch(wrapper.text(), /第[一二三123]名|亚军|季军|冠军/);
+});
+test('win-loss results survive refresh and undo restores the pre-elimination state', async t => {
   localStorage.clear();
   const before = newGame();
   before.pieces = before.pieces.filter(q=>q.kind==='king');
@@ -155,15 +195,15 @@ test('rankings survive refresh and undo restores the pre-elimination state', asy
   before.turn='shu'; before.turnSlot=1;
   const result=playMove(before,'shu-attacker',{x:4,y:9});
   assert.equal(result.ok,true); if (!result.ok) return;
-  localStorage.setItem('three-kingdoms-chess:independent-v1',JSON.stringify({rulesVersion:RULES_VERSION,game:result.game,undo:[before]}));
+  localStorage.setItem('three-kingdoms-chess:win-loss-v1',JSON.stringify({rulesVersion:RULES_VERSION,game:result.game,undo:[before]}));
   let wrapper=setup(t,false);
-  assert.match(wrapper.get('.ranking-card').text(),/第3名.*曹操/);
+  assert.match(wrapper.get('.ranking-card').text(),/曹操.*失败/);
   assert.equal(wrapper.get('.player-card.active h2').text(),'孙权');
   wrapper=remount(t,wrapper);
-  assert.match(wrapper.get('.ranking-card').text(),/第3名.*曹操/);
+  assert.match(wrapper.get('.ranking-card').text(),/曹操.*失败/);
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'2');
   await wrapper.findAll('button').find(b=>b.text().includes('悔棋'))!.trigger('click');
-  assert.equal(wrapper.find('.ranking-card p').exists(),false);
+  assert.match(wrapper.get('.ranking-card').text(),/曹操.*对局中/);
   assert.ok(wrapper.find(piece('魏','曹操',5,10)).exists());
   assert.equal(wrapper.get('.player-card.active h2').text(),'刘备');
 });

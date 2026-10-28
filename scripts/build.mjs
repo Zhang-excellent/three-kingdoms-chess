@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { Script } from 'node:vm';
@@ -27,4 +27,9 @@ new Script(inlineModule, { filename: 'preview/试玩.html' });
 if ((html.match(/<!doctype html>/gi) ?? []).length !== 1) throw new Error('Offline preview unexpectedly contains nested HTML.');
 mkdirSync(resolve(root, 'preview'), { recursive: true });
 writeFileSync(resolve(root, 'preview/试玩.html'), html);
+const music = resolve(root, 'public/audio/background.mp3');
+if (existsSync(music)) {
+  mkdirSync(resolve(root, 'preview/audio'), { recursive: true });
+  copyFileSync(music, resolve(root, 'preview/audio/background.mp3'));
+}
 console.log('已生成 preview/试玩.html，可直接用浏览器打开。');

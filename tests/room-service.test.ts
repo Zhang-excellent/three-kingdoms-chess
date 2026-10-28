@@ -166,24 +166,24 @@ test('one socket has one seat; consecutive leave and create gets a new canonical
   assert.equal(service.getRoom(a.roomCode), undefined);
 });
 
-test('resignation and active exit rank players once, while finished game rejects moves', async () => {
+test('resignation and active exit mark losses once, while finished game rejects moves', async () => {
   const { service, code, players, room } = startedRoom();
   const first = await service.resignRoom(code, players[0].reconnectToken, 'socket-wei');
   assert.equal(first.ack.ok, true);
-  assert.equal(room.game?.placements.wei, 3);
+  assert.equal(room.game?.results.wei, 'lost');
   assert.equal(room.game?.turn, 'shu');
   assert.equal(room.game?.pieces.some(piece => piece.faction === 'wei'), false);
   assert.equal((await service.resignRoom(code, players[0].reconnectToken, 'socket-wei')).ack.ok, false);
   const second = await service.leaveRoom(code, players[1].reconnectToken, 'socket-shu');
   assert.equal(second.ack.ok, true);
-  assert.equal(room.game?.placements.shu, 2);
-  assert.equal(room.game?.placements.wu, 1);
+  assert.equal(room.game?.results.shu, 'lost');
+  assert.equal(room.game?.results.wu, 'won');
   assert.equal(room.game?.winner, 'wu');
   assert.equal(room.players.length, 2);
   assert.equal((await service.submitMove(code, players[2].reconnectToken,
     intent('afterend01', room.version, 'wu-pawn-6-3', 6, 4), 'socket-wu')).ack.ok, false);
   assert.equal((await service.leaveRoom(code, players[0].reconnectToken, 'socket-wei')).ack.ok, true);
-  assert.equal(room.game?.placements.wei, 3);
+  assert.equal(room.game?.results.wei, 'lost');
 });
 
 test('new rooms use exact six-digit codes, preserve zeros, reject collisions, and keep one seat per socket', async () => {
@@ -238,7 +238,7 @@ test('finished game enters same-room next lobby, keeps old result until three on
   assert.equal(room.phase, 'playing'); assert.equal(room.round, 2);
   assert.equal(room.game?.history.length, 0); assert.equal(room.game?.lastMove, null);
   assert.equal(room.game?.turn, 'wei'); assert.equal(room.game?.pieces.length, 29);
-  assert.deepEqual(room.game?.placements, {});
+  assert.deepEqual(room.game?.results, { wei: 'playing', shu: 'playing', wu: 'playing' });
   failure(await service.rematchRoom(code, players[0].reconnectToken, room.version, 'socket-wei'), 'GAME_NOT_FINISHED');
 });
 

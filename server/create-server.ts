@@ -32,6 +32,7 @@ export function createOnlineServer() {
     response.sendFile(resolve(root, 'dist/index.html'));
   };
   app.get(['/three-chess', '/three-chess/'], sendIndex);
+  app.use('/three-chess/audio', express.static(resolve(root, 'dist/audio'), { index: false, maxAge: '1h' }));
   app.use('/three-chess', express.static(resolve(root, 'dist'), { index: false, immutable: true, maxAge: '1y' }));
   app.get('/three-chess/{*path}', sendIndex);
 

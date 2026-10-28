@@ -180,7 +180,7 @@ test('Wei, Shu and Wu restore their own fixed view and a turn change never rotat
         assert.equal(wrapper.get('.last-trail line').attributes('x1'), '490');
         await wrapper.findAll('button').find(button => button.text() === '观战')!.trigger('click');
         assert.equal(wrapper.findAll('dialog').some(dialog => dialog.element.open && dialog.text().includes('确认退出房间')), true);
-        assert.equal(server.rooms.getRoom(a.roomCode)!.game?.placements.shu, undefined);
+        assert.equal(server.rooms.getRoom(a.roomCode)!.game?.results.shu, 'playing');
         await wrapper.findAll('button').find(button => button.text() === '继续对局')!.trigger('click');
         assert.equal(wrapper.find('.board-panel').exists(), true);
       }

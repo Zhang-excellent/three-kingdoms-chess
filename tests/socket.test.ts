@@ -65,7 +65,7 @@ test('three independent Socket.IO clients create, join, start, move, and reconne
   const resumed = success(await emit<SessionReceipt>(resumedClient, 'room:resume', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
   assert.equal(resumed.state.players.length, 3); assert.equal(resumed.state.game?.history.length, 1);
   assert.equal(resumed.state.players.find(player => player.id === b.playerId)?.online, true);
-  // Put this room at a legal near-end position to verify the actual server broadcast and ranking protocol.
+  // Put this room at a legal near-end position to verify the actual server broadcast and result protocol.
   const stored = server.rooms.getRoom(a.roomCode)!;
   const nearEnd = newGame();
   nearEnd.pieces = nearEnd.pieces.filter(piece => piece.kind === 'king');
@@ -76,12 +76,12 @@ test('three independent Socket.IO clients create, join, start, move, and reconne
   success(await emit(resumedClient, 'game:move', { roomCode: a.roomCode, reconnectToken: b.reconnectToken,
     intent: { requestId: 'caoout0001', version: stored.version, pieceId: 'shu-attacker', to: { x: 4, y: 9 } } }));
   await pause();
-  assert.equal(latest.every(state => state?.game?.status === 'playing' && state.game.placements.wei === 3 && state.game.turn === 'wu'), true);
+  assert.equal(latest.every(state => state?.game?.status === 'playing' && state.game.results.wei === 'lost' && state.game.results.wu === 'playing' && state.game.turn === 'wu'), true);
   success(await emit(wu, 'game:move', { roomCode: a.roomCode, reconnectToken: c.reconnectToken,
     intent: { requestId: 'shuout0001', version: stored.version, pieceId: 'wu-attacker', to: { x: 2, y: 0 } } }));
   await pause();
   assert.equal(latest.every(state => state?.phase === 'finished' && state.game?.winner === 'wu'
-    && state.game.placements.wei === 3 && state.game.placements.shu === 2 && state.game.placements.wu === 1), true);
+    && state.game.results.wei === 'lost' && state.game.results.shu === 'lost' && state.game.results.wu === 'won'), true);
 });
 
 test('socket lobby exit and manual offline release let newcomers join without leaking rooms', async () => {
@@ -130,13 +130,13 @@ test('three sockets receive resignation and in-game exit; departed connection ca
   }));
   success(await emit(wei, 'game:resign', { roomCode: a.roomCode, reconnectToken: a.reconnectToken }));
   await pause();
-  assert.equal(latest.every(state => state?.game?.placements.wei === 3 && state.game?.turn === 'shu'), true);
+  assert.equal(latest.every(state => state?.game?.results.wei === 'lost' && state.game?.turn === 'shu'), true);
   assert.equal(latest.every(state => state?.game?.pieces.every(piece => piece.faction !== 'wei')), true);
   success(await emit(shu, 'room:leave', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
   await pause();
   assert.equal(latest[0]?.game?.winner, 'wu');
-  assert.equal(latest[2]?.game?.placements.shu, 2);
-  assert.equal(latest[2]?.game?.placements.wu, 1);
+  assert.equal(latest[2]?.game?.results.shu, 'lost');
+  assert.equal(latest[2]?.game?.results.wu, 'won');
   const departed = await emit(shu, 'game:move', { roomCode: a.roomCode, reconnectToken: b.reconnectToken,
     intent: { requestId: 'departed01', version: latest[2]!.version, pieceId: 'shu-pawn-2-3', to: { x: 2, y: 4 } } });
   assert.equal(departed.ok, false);
@@ -183,7 +183,7 @@ test('fourth socket watches a full room, stays read-only, reconnects, switches r
   assert.equal(latest.at(-1)?.game?.turn, 'shu');
   success(await emit(wei, 'game:resign', { roomCode: a.roomCode, reconnectToken: a.reconnectToken }));
   await pause();
-  assert.equal(latest.at(-1)?.game?.placements.wei, 3);
+  assert.equal(latest.at(-1)?.game?.results.wei, 'lost');
   assert.equal(latest.at(-1)?.game?.status, 'playing');
   const playersBefore = server.rooms.getRoom(a.roomCode)!.players.length;
   viewer.disconnect(); await pause();

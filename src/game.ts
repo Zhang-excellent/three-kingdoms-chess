@@ -1,7 +1,7 @@
 export type Faction = 'wei' | 'shu' | 'wu';
 export type Kind = 'king' | 'rook' | 'horse' | 'elephant' | 'advisor' | 'cannon' | 'pawn' | 'feng';
 export type TurnSlot = 0 | 1 | 2;
-export type Place = 1 | 2 | 3;
+export type FactionResult = 'playing' | 'lost' | 'won';
 export interface Point { x: number; y: number }
 export interface Piece extends Point { id: string; faction: Faction; kind: Kind }
 export interface MoveRecord {
@@ -10,7 +10,7 @@ export interface MoveRecord {
 }
 export interface Game {
   schema: 3; rulesVersion: string; pieces: Piece[]; turn: Faction | null; turnSlot: TurnSlot | null; eliminated: Faction[];
-  placements: Partial<Record<Faction, Place>>;
+  results: Record<Faction, FactionResult>;
   history: MoveRecord[]; lastMove: MoveRecord | null;
   winner: Faction | null; status: 'playing' | 'finished';
 }
@@ -18,7 +18,7 @@ export type MoveResult = { ok: true; game: Game; notices: string[] } | { ok: fal
 
 export const ORDER: Faction[] = ['wei', 'shu', 'wu'];
 export const TURN_CYCLE: readonly Faction[] = ['wei', 'shu', 'wu'];
-export const RULES_VERSION = 'independent-three-way-ranking-v1';
+export const RULES_VERSION = 'independent-win-loss-v1';
 export const PLAYERS = {
   wei: { nation: '魏', name: '曹操', color: '#ac493b', initial: '曹', team: '独立阵营' },
   shu: { nation: '蜀', name: '刘备', color: '#303943', initial: '刘', team: '独立阵营' },
@@ -46,7 +46,7 @@ export function newGame(): Game {
   add('wu', 'rook', 8, 0); add('wu', 'king', 6, 0);
   add('wu', 'cannon', 7, 2); add('wu', 'feng', 5, 2);
   [6, 8].forEach(x => add('wu', 'pawn', x, 3));
-  return { schema: 3, rulesVersion: RULES_VERSION, pieces, turn: 'wei', turnSlot: 0, eliminated: [], placements: {}, history: [], lastMove: null, winner: null, status: 'playing' };
+  return { schema: 3, rulesVersion: RULES_VERSION, pieces, turn: 'wei', turnSlot: 0, eliminated: [], results: { wei: 'playing', shu: 'playing', wu: 'playing' }, history: [], lastMove: null, winner: null, status: 'playing' };
 }
 
 export const at = (pieces: Piece[], p: Point): Piece | undefined => pieces.find(q => q.x === p.x && q.y === p.y);
@@ -117,16 +117,16 @@ export function legalMoves(pieces: Piece[], piece: Piece): Point[] {
 
 function eliminate(game: Game, faction: Faction): void {
   if (game.eliminated.includes(faction)) return;
-  game.placements[faction] = game.eliminated.length === 0 ? 3 : 2;
+  game.results[faction] = 'lost';
   game.eliminated.push(faction);
   game.pieces = game.pieces.filter(piece => piece.faction !== faction);
 }
 
-function finishIfChampion(game: Game): boolean {
+function finishIfWinner(game: Game): boolean {
   if (game.eliminated.length !== 2) return false;
-  const champion = ORDER.find(faction => !game.eliminated.includes(faction))!;
-  game.placements[champion] = 1;
-  game.winner = champion; game.status = 'finished'; game.turn = null; game.turnSlot = null;
+  const winner = ORDER.find(faction => !game.eliminated.includes(faction))!;
+  game.results[winner] = 'won';
+  game.winner = winner; game.status = 'finished'; game.turn = null; game.turnSlot = null;
   return true;
 }
 
@@ -140,14 +140,14 @@ function nextTurn(game: Game, previousSlot: TurnSlot): { faction: Faction; slot:
 }
 
 function settleNextTurn(game: Game, previousSlot: TurnSlot, notices: string[]): void {
-  if (finishIfChampion(game)) return;
+  if (finishIfWinner(game)) return;
   while (game.status === 'playing') {
     const candidate = nextTurn(game, previousSlot);
     const hasMove = game.pieces.some(p => p.faction === candidate.faction && legalMoves(game.pieces, p).length > 0);
     if (hasMove) { game.turn = candidate.faction; game.turnSlot = candidate.slot; return; }
     eliminate(game, candidate.faction);
-    notices.push(`${PLAYERS[candidate.faction].name}无棋可走，困毙出局，全军撤出，获得第${game.placements[candidate.faction]}名。`);
-    if (finishIfChampion(game)) return;
+    notices.push(`${PLAYERS[candidate.faction].name}无棋可走，困毙失败，全军撤出。`);
+    if (finishIfWinner(game)) return;
     previousSlot = candidate.slot;
   }
 }
@@ -159,10 +159,10 @@ export function resignFaction(current: Game, faction: Faction): MoveResult {
   const game: Game = structuredClone(current);
   const notices: string[] = [];
   eliminate(game, faction);
-  notices.push(`${PLAYERS[faction].name}认输，${PLAYERS[faction].nation}军全部撤出，获得第${game.placements[faction]}名。`);
+  notices.push(`${PLAYERS[faction].name}认输失败，${PLAYERS[faction].nation}军全部撤出。`);
   if (game.turn === faction) settleNextTurn(game, current.turnSlot!, notices);
-  else finishIfChampion(game);
-  if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获得冠军。`);
+  else finishIfWinner(game);
+  if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获胜。`);
   else notices.push(`轮到${PLAYERS[game.turn!].name}行棋。`);
   return { ok: true, game, notices };
 }
@@ -180,7 +180,7 @@ export function playMove(current: Game, pieceId: string, to: Point): MoveResult 
     .map(p => p.id === pieceId ? { ...p, x: to.x, y: to.y } : p);
   if (captured?.kind === 'king') {
     eliminate(game, captured.faction);
-    notices.push(`${PLAYERS[captured.faction].name}被吃，${PLAYERS[captured.faction].nation}军全部撤出，获得第${game.placements[captured.faction]}名。`);
+    notices.push(`${PLAYERS[captured.faction].name}被吃，${PLAYERS[captured.faction].nation}军全部撤出，判为失败。`);
   }
   const movedSlot = current.turnSlot;
   const record: MoveRecord = { number: game.history.length + 1, faction: piece.faction, turnSlot: movedSlot, pieceId, kind: piece.kind,
@@ -188,7 +188,7 @@ export function playMove(current: Game, pieceId: string, to: Point): MoveResult 
   settleNextTurn(game, movedSlot, notices);
   record.eliminated = game.eliminated.filter(f => !current.eliminated.includes(f));
   game.history.push(record); game.lastMove = record;
-  if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获得冠军。`);
+  if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获胜。`);
   else notices.push(`轮到${PLAYERS[game.turn!].name}行棋。`);
   return { ok: true, game, notices };
 }
@@ -200,15 +200,12 @@ export function validGame(value: unknown): value is Game {
   if (game.schema !== 3 || game.rulesVersion !== RULES_VERSION || !Array.isArray(game.pieces) || !Array.isArray(game.history) || !Array.isArray(game.eliminated)) return false;
   if (!['playing', 'finished'].includes(game.status) || (game.winner !== null && !ORDER.includes(game.winner))) return false;
   if (game.eliminated.some(f => !ORDER.includes(f)) || new Set(game.eliminated).size !== game.eliminated.length) return false;
-  if (!game.placements || typeof game.placements !== 'object' || Array.isArray(game.placements)) return false;
-  const expectedPlacements: Partial<Record<Faction, Place>> = {};
-  game.eliminated.forEach((faction, index) => { expectedPlacements[faction] = index === 0 ? 3 : 2; });
+  if (!game.results || typeof game.results !== 'object' || Array.isArray(game.results)
+    || Object.keys(game.results).length !== ORDER.length) return false;
   if (game.status === 'finished') {
     if (game.eliminated.length !== 2 || game.winner !== ORDER.find(faction => !game.eliminated.includes(faction))) return false;
-    expectedPlacements[game.winner] = 1;
   } else if (game.eliminated.length > 1) return false;
-  if (Object.keys(game.placements).length !== Object.keys(expectedPlacements).length
-    || ORDER.some(faction => game.placements[faction] !== expectedPlacements[faction])) return false;
+  if (ORDER.some(faction => game.results[faction] !== (game.eliminated.includes(faction) ? 'lost' : game.winner === faction ? 'won' : 'playing'))) return false;
   const isTurnSlot = (slot: unknown): slot is TurnSlot => Number.isInteger(slot) && Number(slot) >= 0 && Number(slot) < TURN_CYCLE.length;
   if (game.status === 'playing' && (!game.turn || !ORDER.includes(game.turn) || game.eliminated.includes(game.turn) || game.winner !== null
     || !isTurnSlot(game.turnSlot) || TURN_CYCLE[game.turnSlot] !== game.turn)) return false;
