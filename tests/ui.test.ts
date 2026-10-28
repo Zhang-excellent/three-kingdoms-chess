@@ -220,3 +220,33 @@ test('piece and destination are playable with the Enter key', async t => {
   await wrapper.get(target(5,6)).trigger('keydown',{key:'Enter'});
   assert.equal(wrapper.get('.player-card.active h2').text(),'刘备');
 });
+test('record export stays disabled until a move and creates a Markdown download', async t => {
+  const wrapper = setup(t);
+  const exportButton = () => wrapper.get('.record-export-button');
+  assert.equal(exportButton().attributes('disabled'), '');
+  await wrapper.get(piece('魏','兵',1,7)).trigger('click');
+  await wrapper.get(target(1,6)).trigger('click');
+  assert.equal(exportButton().attributes('disabled'), undefined);
+  const blobs: Blob[] = [];
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const originalClick = HTMLAnchorElement.prototype.click;
+  let download = '';
+  URL.createObjectURL = blob => {
+    assert.ok(blob instanceof Blob);
+    blobs.push(blob);
+    return 'blob:game-record';
+  };
+  URL.revokeObjectURL = () => {};
+  HTMLAnchorElement.prototype.click = function () { download = this.download; };
+  try {
+    await exportButton().trigger('click');
+    assert.match(download, /^三国象棋棋谱-\d{8}-\d{6}\.md$/);
+    assert.equal(blobs.length, 1);
+    assert.match(await blobs[0].text(), /1\. 曹操 · 兵 \(1, 7\) → \(1, 6\)/);
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+    HTMLAnchorElement.prototype.click = originalClick;
+  }
+});

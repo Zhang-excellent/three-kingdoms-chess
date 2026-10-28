@@ -15,10 +15,11 @@ writeFileSync(output, result.content
   .replaceAll("'./board-view.ts'", "'../src/board-view.ts'")
   .replaceAll("'./audio.ts'", "'../src/audio.ts'")
   .replaceAll("'./music-catalog.ts'", "'../src/music-catalog.ts'")
+  .replaceAll("'./game-record.ts'", "'../src/game-record.ts'")
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/board-view.test.ts', 'tests/game.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], { cwd: root, stdio: 'inherit' });
+  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/board-view.test.ts', 'tests/game.test.ts', 'tests/game-record.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], { cwd: root, stdio: 'inherit' });
   status = run.status ?? 1;
 } finally { unlinkSync(output); }
 process.exit(status);

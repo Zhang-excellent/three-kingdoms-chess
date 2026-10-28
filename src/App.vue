@@ -6,6 +6,7 @@ import { screenPoint } from './board-view.ts';
 import { useOnlineRoom } from './useOnlineRoom.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
 import { MUSIC_PLAYLISTS, musicTrack, tracksInPlaylist } from './music-catalog.ts';
+import { buildGameRecord, gameRecordFileName } from './game-record.ts';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
 const legacyStorageKeys = ['three-kingdoms-chess:independent-v1', 'three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
@@ -199,6 +200,18 @@ function resetRequest() {
 function pieceLabel(piece: Piece) { return `${PLAYERS[piece.faction].nation}方${pieceName(piece)}，第${piece.x + 1}路第${piece.y + 1}线`; }
 function onEscape() { selectedId.value = null; notify(active.value ? `轮到${active.value.name}行棋。` : message.value); }
 async function copyInvite() { notify(await online.copyInvite() ? '邀请链接已复制，发给另外两位朋友即可。' : '复制失败，请手动复制浏览器地址。', false); }
+function exportGameRecord(current: Game) {
+  if (!current.history.length) return;
+  try {
+    const exportedAt = new Date(), filename = gameRecordFileName(exportedAt);
+    const url = URL.createObjectURL(new Blob([buildGameRecord(current, exportedAt)], { type: 'text/markdown;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = filename; link.hidden = true;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    notify(`棋谱已导出：${filename}`);
+  } catch { notify('浏览器无法导出棋谱。', true); }
+}
 function chooseMode(mode: 'local' | 'online' | 'spectate') {
   selectedId.value = null;
   if (mode === 'spectate') {
@@ -264,7 +277,7 @@ async function requestRematch() {
         <div v-else class="join-row watch-join"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" :disabled="onlineBusy || connection !== 'online'" @click="online.startWatching()">进入观战</button></div>
         <button v-if="!room" class="tool-button" @click="chooseMode('online')">返回联机大厅</button>
         <p v-if="connection !== 'online' || onlineError" class="connection-note" :class="{error: onlineError}">{{ onlineError || '连接中断，正在重连…' }}</p>
-        <div v-if="previousGame" class="previous-game"><strong>上一局结果</strong><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
+        <div v-if="previousGame" class="previous-game"><div class="previous-game-heading"><strong>上一局结果</strong><button class="record-export-button" @click="exportGameRecord(previousGame)">导出棋谱</button></div><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
       </section>
       <section v-else-if="!room" class="online-entry">
         <span class="eyebrow">联机对弈</span><h2>和两位朋友进入同一房间</h2><p>每人选择魏、蜀、吴中的一个阵营。</p>
@@ -280,7 +293,7 @@ async function requestRematch() {
         <button class="primary-button ready-button" :disabled="!self?.faction || connection !== 'online'" @click="online.setReady(!self?.ready)">{{ self?.ready ? '取消准备' : '我已准备' }}</button>
         <p class="lobby-tip">三人全部在线、阵营不同且准备完毕后自动开局。</p>
         <p v-if="onlineError" class="connection-note error">{{ onlineError }}</p>
-        <div v-if="previousGame" class="previous-game"><strong>上一局结果</strong><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
+        <div v-if="previousGame" class="previous-game"><div class="previous-game-heading"><strong>上一局结果</strong><button class="record-export-button" @click="exportGameRecord(previousGame)">导出棋谱</button></div><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
       </section>
     </main>
     <main v-else class="play-layout">
@@ -338,7 +351,7 @@ async function requestRematch() {
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">
-        <div class="section-label"><span>行棋记录</span><span>{{ game.history.length }} 步</span></div>
+        <div class="section-label history-heading"><span>行棋记录 · {{ game.history.length }} 步</span><button class="record-export-button" :disabled="!game.history.length" @click="exportGameRecord(game)">导出棋谱</button></div>
         <div class="last-move-card"><span class="eyebrow">上一步</span><template v-if="latest"><h3 :style="{color: PLAYERS[latest.faction].color}">{{ PLAYERS[latest.faction].name }} · {{ pieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} <b>→</b> {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${PLAYERS[latest.captured.faction].name}的${pieceName(latest.captured)}` : '已标记起点和落点' }}</small></template><template v-else><h3>棋局已就绪</h3><p>曹操先行</p><small>走子后保留起点与落点痕迹</small></template></div>
         <ol v-if="records.length" class="move-list"><li v-for="record in records" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局，判为失败</small></div></li></ol>
         <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>第一步，开启新棋局。</p></div>
