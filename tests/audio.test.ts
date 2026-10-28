@@ -96,3 +96,54 @@ test('failed music load reports once and does not affect legal moves', async () 
     GlobalRegistrator.unregister();
   }
 });
+
+test('a confirmed move is louder than before and briefly lowers music without changing its saved level', async () => {
+  GlobalRegistrator.register({ url: 'https://example.test/three-chess/' });
+  const originalAudio = globalThis.Audio, originalContext = globalThis.AudioContext;
+  const gains: number[] = [];
+  class FakeAudio {
+    loop = false;
+    volume = 1;
+    paused = true;
+    constructor(_src: string) {}
+    async play() { this.paused = false; }
+    pause() { this.paused = true; }
+  }
+  class FakeContext {
+    sampleRate = 1000;
+    currentTime = 1;
+    destination = {};
+    async resume() {}
+    async close() {}
+    createBuffer() { return { getChannelData: () => new Float32Array(120) }; }
+    createBufferSource() { return { buffer: null, connect() {}, start() {}, stop() {} }; }
+    createBiquadFilter() { return { type: '', frequency: { value: 0 }, connect() {} }; }
+    createGain() { return { gain: { setValueAtTime: (value: number) => gains.push(value), exponentialRampToValueAtTime() {} }, connect() {} }; }
+  }
+  Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
+  Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: FakeContext });
+  try {
+    const sound = new GameAudio();
+    const settings = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true, musicVolume: 0.8, effectsEnabled: true };
+    assert.equal(await sound.setMusic(settings, true), null);
+    const player = (sound as unknown as { music: FakeAudio }).music;
+    sound.playEffect('move', settings);
+    assert.ok(gains[0] > 0.4);
+    assert.equal(player.volume, 0.8 * 0.22);
+    sound.setMusicVolume(0.6);
+    assert.equal(player.volume, 0.6 * 0.22);
+    sound.playEffect('capture', settings);
+    assert.ok(gains[1] > gains[0]);
+    assert.equal(gains.length, 3); // capture has two layers, not an extra normal move sound
+    await new Promise(resolve => setTimeout(resolve, 320));
+    assert.equal(player.volume, 0.6);
+    sound.playEffect('move', { ...settings, effectsEnabled: false });
+    assert.equal(player.volume, 0.6);
+    assert.equal(gains.length, 3);
+    sound.dispose();
+  } finally {
+    Object.defineProperty(globalThis, 'Audio', { configurable: true, value: originalAudio });
+    Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: originalContext });
+    GlobalRegistrator.unregister();
+  }
+});

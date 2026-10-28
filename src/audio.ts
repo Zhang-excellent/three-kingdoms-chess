@@ -11,6 +11,8 @@ export const AUDIO_SETTINGS_KEY = 'three-kingdoms-chess:audio-v1';
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   musicEnabled: false, musicVolume: 0.35, effectsEnabled: false, effectsVolume: 0.7,
 };
+const MUSIC_DUCK_FACTOR = 0.22;
+const MUSIC_DUCK_MS = 280;
 
 const volume = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
@@ -47,15 +49,42 @@ export class GameAudio {
   private context: AudioContext | null = null;
   private noise: AudioBuffer | null = null;
   private blocked = false;
+  private musicLevel = DEFAULT_AUDIO_SETTINGS.musicVolume;
+  private ducked = false;
+  private duckTimer: ReturnType<typeof setTimeout> | null = null;
   readonly musicUrl = new URL(`${import.meta.env?.BASE_URL ?? './'}audio/background.mp3`, window.location.href).href;
 
+  private updateMusicVolume(): void {
+    if (this.music) this.music.volume = this.musicLevel * (this.ducked ? MUSIC_DUCK_FACTOR : 1);
+  }
+
+  private duckMusic(): void {
+    if (!this.music || this.music.paused) return;
+    this.ducked = true;
+    this.updateMusicVolume();
+    if (this.duckTimer) clearTimeout(this.duckTimer);
+    this.duckTimer = setTimeout(() => {
+      this.duckTimer = null;
+      this.ducked = false;
+      this.updateMusicVolume();
+    }, MUSIC_DUCK_MS);
+  }
+
+  private clearDucking(): void {
+    if (this.duckTimer) clearTimeout(this.duckTimer);
+    this.duckTimer = null;
+    this.ducked = false;
+    this.updateMusicVolume();
+  }
+
   async setMusic(settings: AudioSettings, fromGesture = false): Promise<string | null> {
-    if (!settings.musicEnabled) { this.music?.pause(); this.blocked = false; return null; }
+    this.musicLevel = settings.musicVolume;
+    if (!settings.musicEnabled) { this.music?.pause(); this.clearDucking(); this.blocked = false; return null; }
     if (!fromGesture || this.blocked) return null;
     try {
       this.music ??= new Audio(this.musicUrl);
       this.music.loop = true;
-      this.music.volume = settings.musicVolume;
+      this.updateMusicVolume();
       await this.music.play();
       return null;
     } catch {
@@ -64,9 +93,10 @@ export class GameAudio {
     }
   }
 
-  setMusicVolume(value: number) { if (this.music) this.music.volume = value; }
+  setMusicVolume(value: number) { this.musicLevel = value; this.updateMusicVolume(); }
 
   dispose(): void {
+    this.clearDucking();
     this.music?.pause();
     this.music = null;
     if (this.context) void this.context.close().catch(() => {});
@@ -94,8 +124,9 @@ export class GameAudio {
         source.connect(filter); filter.connect(gain); gain.connect(context.destination);
         source.start(start); source.stop(start + 0.1);
       };
-      strike(0, kind === 'capture' ? 0.5 : 0.24, kind === 'capture' ? 1050 : 750);
-      if (kind === 'capture') strike(0.045, 0.32, 500);
+      strike(0, kind === 'capture' ? 0.9 : 0.68, kind === 'capture' ? 1050 : 750);
+      if (kind === 'capture') strike(0.045, 0.5, 500);
+      this.duckMusic();
     } catch { /* Audio failures never block a move. */ }
   }
 }
