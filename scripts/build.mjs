@@ -27,9 +27,10 @@ new Script(inlineModule, { filename: 'preview/试玩.html' });
 if ((html.match(/<!doctype html>/gi) ?? []).length !== 1) throw new Error('Offline preview unexpectedly contains nested HTML.');
 mkdirSync(resolve(root, 'preview'), { recursive: true });
 writeFileSync(resolve(root, 'preview/试玩.html'), html);
-const music = resolve(root, 'public/audio/background.mp3');
-if (existsSync(music)) {
+const audio = resolve(root, 'public/audio');
+if (existsSync(audio)) {
   mkdirSync(resolve(root, 'preview/audio'), { recursive: true });
-  copyFileSync(music, resolve(root, 'preview/audio/background.mp3'));
+  for (const name of readdirSync(audio).filter(name => name.endsWith('.mp3')))
+    copyFileSync(resolve(audio, name), resolve(root, 'preview/audio', name));
 }
 console.log('已生成 preview/试玩.html，可直接用浏览器打开。');

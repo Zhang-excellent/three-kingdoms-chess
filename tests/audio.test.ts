@@ -97,53 +97,53 @@ test('failed music load reports once and does not affect legal moves', async () 
   }
 });
 
-test('a confirmed move is louder than before and briefly lowers music without changing its saved level', async () => {
+test('recorded move and capture sounds play separately at the chosen level while music stays constant', async () => {
   GlobalRegistrator.register({ url: 'https://example.test/three-chess/' });
-  const originalAudio = globalThis.Audio, originalContext = globalThis.AudioContext;
-  const gains: number[] = [];
+  const originalAudio = globalThis.Audio;
+  const players: FakeAudio[] = [];
   class FakeAudio {
+    readonly src: string;
     loop = false;
     volume = 1;
     paused = true;
-    constructor(_src: string) {}
-    async play() { this.paused = false; }
+    currentTime = 0;
+    plays = 0;
+    constructor(src: string) { this.src = src; players.push(this); }
+    async play() { this.paused = false; this.plays++; }
     pause() { this.paused = true; }
   }
-  class FakeContext {
-    sampleRate = 1000;
-    currentTime = 1;
-    destination = {};
-    async resume() {}
-    async close() {}
-    createBuffer() { return { getChannelData: () => new Float32Array(120) }; }
-    createBufferSource() { return { buffer: null, connect() {}, start() {}, stop() {} }; }
-    createBiquadFilter() { return { type: '', frequency: { value: 0 }, connect() {} }; }
-    createGain() { return { gain: { setValueAtTime: (value: number) => gains.push(value), exponentialRampToValueAtTime() {} }, connect() {} }; }
-  }
   Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
-  Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: FakeContext });
   try {
     const sound = new GameAudio();
     const settings = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true, musicVolume: 0.8, effectsEnabled: true };
     assert.equal(await sound.setMusic(settings, true), null);
-    const player = (sound as unknown as { music: FakeAudio }).music;
+    const music = players[0];
     sound.playEffect('move', settings);
-    assert.ok(gains[0] > 0.4);
-    assert.equal(player.volume, 0.8 * 0.22);
-    sound.setMusicVolume(0.6);
-    assert.equal(player.volume, 0.6 * 0.22);
+    assert.equal(players.length, 2);
+    assert.equal(players[1].src, sound.moveUrl);
+    assert.equal(players[1].plays, 1);
+    assert.equal(players[1].volume, settings.effectsVolume);
+    assert.equal(music.volume, 0.8);
     sound.playEffect('capture', settings);
-    assert.ok(gains[1] > gains[0]);
-    assert.equal(gains.length, 3); // capture has two layers, not an extra normal move sound
-    await new Promise(resolve => setTimeout(resolve, 320));
-    assert.equal(player.volume, 0.6);
+    assert.equal(players.length, 3);
+    assert.equal(players[2].src, sound.captureUrl);
+    assert.equal(players[2].plays, 1);
+    assert.equal(players[1].plays, 1); // capture does not also play the normal move
+    assert.equal(music.volume, 0.8); // no music ducking or interruption
+    assert.equal(music.plays, 1);
+    sound.setMusicVolume(0.6);
+    assert.equal(music.volume, 0.6);
+    sound.playEffect('move', settings);
+    assert.equal(players.length, 3); // reuses the same short sample
+    assert.equal(players[1].plays, 2);
+    assert.equal(music.volume, 0.6);
     sound.playEffect('move', { ...settings, effectsEnabled: false });
-    assert.equal(player.volume, 0.6);
-    assert.equal(gains.length, 3);
+    assert.equal(players[1].plays, 2);
+    sound.playEffect('move', { ...settings, effectsVolume: 0 });
+    assert.equal(players[1].plays, 2);
     sound.dispose();
   } finally {
     Object.defineProperty(globalThis, 'Audio', { configurable: true, value: originalAudio });
-    Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: originalContext });
     GlobalRegistrator.unregister();
   }
 });
