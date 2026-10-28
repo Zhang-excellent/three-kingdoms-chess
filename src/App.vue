@@ -5,6 +5,7 @@ import type { Faction, Game, MoveRecord, Piece, Point } from './game.ts';
 import { screenPoint } from './board-view.ts';
 import { useOnlineRoom } from './useOnlineRoom.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
+import { MUSIC_PLAYLISTS, musicTrack, tracksInPlaylist } from './music-catalog.ts';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
 const legacyStorageKeys = ['three-kingdoms-chess:independent-v1', 'three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
@@ -35,10 +36,18 @@ const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLD
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const audioSettings = ref(loadAudioSettings()), audioMessage = ref('');
+const availableTracks = computed(() => tracksInPlaylist(audioSettings.value.musicPlaylistId));
+const selectedTrackName = computed(() => musicTrack(audioSettings.value.musicTrackId)?.name ?? '暂无歌曲');
 const gameAudio = new GameAudio(), moveSoundTracker = new MoveSoundTracker();
+let musicUiRequest = 0;
+async function playSelectedMusic(choose = false) {
+  const request = ++musicUiRequest;
+  const problem = choose ? await gameAudio.chooseMusic(audioSettings.value) : await gameAudio.setMusic(audioSettings.value, true);
+  if (request === musicUiRequest) audioMessage.value = problem ?? '';
+}
 const resumeRememberedMusic = () => {
   if (audioSettings.value.musicEnabled)
-    void gameAudio.setMusic(audioSettings.value, true).then(problem => { if (problem) audioMessage.value = problem; });
+    void playSelectedMusic();
 };
 onMounted(() => { if (audioSettings.value.musicEnabled) document.addEventListener('pointerdown', resumeRememberedMusic, { once: true }); });
 onUnmounted(() => { document.removeEventListener('pointerdown', resumeRememberedMusic); gameAudio.dispose(); });
@@ -105,7 +114,29 @@ watch(() => online.room.value?.version, () => {
 function notify(text: string, error = false) { message.value = text; feedbackError.value = error; }
 async function toggleMusic() {
   audioSettings.value.musicEnabled = !audioSettings.value.musicEnabled;
-  audioMessage.value = audioSettings.value.musicEnabled ? await gameAudio.setMusic(audioSettings.value, true) ?? '' : '';
+  if (audioSettings.value.musicEnabled) await playSelectedMusic(true);
+  else { musicUiRequest++; audioMessage.value = ''; await gameAudio.setMusic(audioSettings.value); }
+}
+function choosePlaylist(event: Event) {
+  const playlistId = (event.target as HTMLSelectElement).value;
+  const first = tracksInPlaylist(playlistId)[0];
+  if (!first) return;
+  audioSettings.value.musicPlaylistId = playlistId;
+  audioSettings.value.musicTrackId = first.id;
+  audioMessage.value = '';
+  void playSelectedMusic(true);
+}
+function chooseTrack(event: Event) {
+  const trackId = (event.target as HTMLSelectElement).value;
+  if (!availableTracks.value.some(track => track.id === trackId)) return;
+  audioSettings.value.musicTrackId = trackId;
+  audioMessage.value = '';
+  void playSelectedMusic(true);
+}
+async function previewSelectedMusic() {
+  const request = ++musicUiRequest;
+  const problem = await gameAudio.previewMusic(audioSettings.value);
+  if (request === musicUiRequest) audioMessage.value = problem ?? '';
 }
 async function cellClick(x: number, y: number) {
   if (spectating.value) { notify('正在观战，不能操作棋子。', true); return; }
@@ -316,7 +347,12 @@ async function requestRematch() {
     </main>
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="mode === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。魏方默认标准视角，蜀吴默认翻转视角；“翻转棋盘”只改变个人看到的画面。输入房间号可只读观战。</p><ul><li>三方独立竞争。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
-    <dialog ref="settingsDialog" class="settings-dialog"><div class="dialog-heading"><h2>声音设置</h2><button class="dialog-close" aria-label="关闭设置" @click="settingsDialog?.close()">×</button></div><div class="audio-control"><label for="music-toggle">背景音乐</label><button id="music-toggle" class="tool-button" :aria-pressed="audioSettings.musicEnabled" @click="toggleMusic">{{ audioSettings.musicEnabled ? '开启' : '关闭' }}</button><label for="music-volume">音乐音量 {{ Math.round(audioSettings.musicVolume * 100) }}%</label><input id="music-volume" v-model.number="audioSettings.musicVolume" type="range" min="0" max="1" step="0.01" aria-label="音乐音量"></div><div class="audio-control"><label for="effects-toggle">落子音效</label><button id="effects-toggle" class="tool-button" :aria-pressed="audioSettings.effectsEnabled" @click="audioSettings.effectsEnabled = !audioSettings.effectsEnabled">{{ audioSettings.effectsEnabled ? '开启' : '关闭' }}</button><label for="effects-volume">音效音量 {{ Math.round(audioSettings.effectsVolume * 100) }}%</label><input id="effects-volume" v-model.number="audioSettings.effectsVolume" type="range" min="0" max="1" step="0.01" aria-label="音效音量"></div><p v-if="audioMessage" class="connection-note error" role="status">{{ audioMessage }}</p><p v-if="audioSettings.musicEnabled && !audioMessage" class="audio-hint">浏览器限制自动播放时，请在此关闭后重新开启音乐。</p></dialog>
+    <dialog ref="settingsDialog" class="settings-dialog">
+      <div class="dialog-heading"><h2>声音设置</h2><button class="dialog-close" aria-label="关闭设置" @click="settingsDialog?.close()">×</button></div>
+      <div class="audio-control"><label for="music-toggle">背景音乐</label><button id="music-toggle" class="tool-button" :aria-pressed="audioSettings.musicEnabled" @click="toggleMusic">{{ audioSettings.musicEnabled ? '开启' : '关闭' }}</button><label for="music-volume">音乐音量 {{ Math.round(audioSettings.musicVolume * 100) }}%</label><input id="music-volume" v-model.number="audioSettings.musicVolume" type="range" min="0" max="1" step="0.01" aria-label="音乐音量"></div>
+      <div class="music-choice"><label for="music-playlist">歌单</label><select id="music-playlist" :value="audioSettings.musicPlaylistId" @change="choosePlaylist"><option v-for="playlist in MUSIC_PLAYLISTS" :key="playlist.id" :value="playlist.id">{{ playlist.name }}</option></select><label for="music-track">歌曲</label><select id="music-track" :value="audioSettings.musicTrackId" @change="chooseTrack"><option v-for="track in availableTracks" :key="track.id" :value="track.id">{{ track.name }}</option></select><div class="music-choice-footer"><p>当前选择：{{ selectedTrackName }}</p><button id="music-preview" class="tool-button" @click="previewSelectedMusic">试听</button></div></div>
+      <div class="audio-control"><label for="effects-toggle">落子音效</label><button id="effects-toggle" class="tool-button" :aria-pressed="audioSettings.effectsEnabled" @click="audioSettings.effectsEnabled = !audioSettings.effectsEnabled">{{ audioSettings.effectsEnabled ? '开启' : '关闭' }}</button><label for="effects-volume">音效音量 {{ Math.round(audioSettings.effectsVolume * 100) }}%</label><input id="effects-volume" v-model.number="audioSettings.effectsVolume" type="range" min="0" max="1" step="0.01" aria-label="音效音量"></div><p v-if="audioMessage" class="connection-note error" role="status">{{ audioMessage }}</p><p v-if="audioSettings.musicEnabled && !audioMessage" class="audio-hint">若浏览器暂停播放，请关闭后重新开启音乐。</p>
+    </dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
     <dialog ref="resignDialog" class="reset-dialog"><h2>确认认输？</h2><p>本国立即失败并清空棋子；你仍可留在房间查看。</p><div class="dialog-actions"><button class="tool-button" @click="resignDialog?.close()">继续对局</button><button class="primary-button" @click="confirmResign">确认认输</button></div></dialog>
     <dialog ref="exitDialog" class="reset-dialog"><h2>确认退出房间？</h2><p>你仍在对局中，退出将先按认输出局，再返回大厅。断网时本机立即退出，服务器恢复连接后补发通知。</p><div class="dialog-actions"><button class="tool-button" @click="exitDialog?.close()">继续对局</button><button class="primary-button" @click="confirmLeave">确认退出</button></div></dialog>

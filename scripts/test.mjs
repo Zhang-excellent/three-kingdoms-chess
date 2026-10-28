@@ -14,6 +14,7 @@ writeFileSync(output, result.content
   .replaceAll("'./game.ts'", "'../src/game.ts'")
   .replaceAll("'./board-view.ts'", "'../src/board-view.ts'")
   .replaceAll("'./audio.ts'", "'../src/audio.ts'")
+  .replaceAll("'./music-catalog.ts'", "'../src/music-catalog.ts'")
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {

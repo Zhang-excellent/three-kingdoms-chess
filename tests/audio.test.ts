@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 import { AUDIO_SETTINGS_KEY, DEFAULT_AUDIO_SETTINGS, GameAudio, MoveSoundTracker, loadAudioSettings } from '../src/audio.ts';
+import { MUSIC_PLAYLISTS, MUSIC_TRACKS, availablePlaylists, resolveMusicSelection, tracksInPlaylist } from '../src/music-catalog.ts';
 import { newGame, playMove } from '../src/game.ts';
 
 test('sound settings default off, persist independent levels and reject malformed values', () => {
@@ -10,10 +11,25 @@ test('sound settings default off, persist independent levels and reject malforme
     localStorage.clear();
     assert.deepEqual(loadAudioSettings(), DEFAULT_AUDIO_SETTINGS);
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicEnabled: true, musicVolume: 0.2, effectsEnabled: false, effectsVolume: 0.8 }));
-    assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 0.2, effectsEnabled: false, effectsVolume: 0.8 });
+    assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 0.2, musicPlaylistId: 'default', musicTrackId: 'liushang-qushui', effectsEnabled: false, effectsVolume: 0.8 });
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicEnabled: true, musicVolume: 30, effectsEnabled: true, effectsVolume: -5 }));
-    assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 1, effectsEnabled: true, effectsVolume: 0 });
+    assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 1, musicPlaylistId: 'default', musicTrackId: 'liushang-qushui', effectsEnabled: true, effectsVolume: 0 });
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'guitar', musicTrackId: 'lebang-zhanshi-guitar' }));
+    assert.equal(loadAudioSettings().musicTrackId, 'lebang-zhanshi-guitar');
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'guitar', musicTrackId: 'removed-song' }));
+    assert.equal(loadAudioSettings().musicTrackId, 'lebang-zhanshi-guitar');
   } finally { GlobalRegistrator.unregister(); }
+});
+
+test('catalogue supports several playlists and songs and falls back from deleted IDs', () => {
+  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default', 'guitar']);
+  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水', '乐邦詹士（吉他）']);
+  const tracks = [...MUSIC_TRACKS, { id: 'another', name: '另一首', file: 'another.mp3', cacheVersion: 'abc', playlistId: 'guitar' }];
+  assert.deepEqual(tracksInPlaylist('guitar', tracks).map(item => item.id), ['lebang-zhanshi-guitar', 'another']);
+  assert.equal(availablePlaylists(MUSIC_PLAYLISTS, tracks).length, 2);
+  assert.deepEqual(resolveMusicSelection('default', 'another', MUSIC_PLAYLISTS, tracks), { playlistId: 'guitar', trackId: 'another' });
+  assert.deepEqual(resolveMusicSelection('guitar', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'guitar', trackId: 'lebang-zhanshi-guitar' });
+  assert.deepEqual(resolveMusicSelection('removed', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'default', trackId: 'liushang-qushui' });
 });
 
 test('sound tracker plays only one new authoritative move per live round', () => {
@@ -40,19 +56,21 @@ test('music uses one looping player, independent volume and a path relative to t
   const original = globalThis.Audio;
   const created: FakeAudio[] = [];
   class FakeAudio {
-    src: string;
+    src = '';
     loop = false;
     volume = 1;
+    paused = true;
     plays = 0;
     pauses = 0;
-    constructor(src: string) { this.src = src; created.push(this); }
-    async play() { this.plays++; }
-    pause() { this.pauses++; }
+    constructor(src = '') { this.src = src; created.push(this); }
+    load() {}
+    async play() { this.plays++; this.paused = false; }
+    pause() { this.pauses++; this.paused = true; }
   }
   Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
   try {
     const sound = new GameAudio();
-    assert.match(sound.musicUrl, /^https:\/\/example\.test\/three-chess\/audio\/background\.mp3$/);
+    assert.match(sound.musicUrl(), /^https:\/\/example\.test\/three-chess\/audio\/background\.mp3\?v=e1ad20273c92$/);
     const settings = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true, musicVolume: 0.22 };
     await sound.setMusic(settings); // no autoplay before a gesture
     assert.equal(created.length, 0);
@@ -64,8 +82,51 @@ test('music uses one looping player, independent volume and a path relative to t
     assert.equal(created[0].volume, 0.6);
     await sound.setMusic(settings, true);
     assert.equal(created.length, 1);
+    assert.equal(created[0].plays, 1); // room and turn changes do not restart the current song
     await sound.setMusic({ ...settings, musicEnabled: false });
-    assert.equal(created[0].pauses, 1);
+    assert.ok(created[0].pauses >= 1);
+    sound.dispose();
+  } finally {
+    Object.defineProperty(globalThis, 'Audio', { configurable: true, value: original });
+    GlobalRegistrator.unregister();
+  }
+});
+
+test('rapid track changes reuse one player and ignore a late error from the old song', async () => {
+  GlobalRegistrator.register({ url: 'https://example.test/three-chess/' });
+  const original = globalThis.Audio;
+  const pending: { resolve: () => void; reject: (reason: Error) => void }[] = [];
+  const created: FakeAudio[] = [];
+  class FakeAudio {
+    src = '';
+    loop = false;
+    volume = 1;
+    paused = true;
+    plays = 0;
+    constructor() { created.push(this); }
+    load() {}
+    pause() { this.paused = true; }
+    play() {
+      this.plays++;
+      return new Promise<void>((resolve, reject) => pending.push({ resolve: () => { this.paused = false; resolve(); }, reject }));
+    }
+  }
+  Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
+  try {
+    const sound = new GameAudio();
+    const first = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true };
+    const oldRequest = sound.chooseMusic(first);
+    const latest = { ...first, musicPlaylistId: 'guitar', musicTrackId: 'lebang-zhanshi-guitar' };
+    const newRequest = sound.chooseMusic(latest);
+    assert.equal(created.length, 1);
+    assert.match(created[0].src, /lebang-zhanshi-guitar\.mp3\?v=bb95cbf27ff1$/);
+    pending[1].resolve();
+    pending[0].reject(new Error('old playback aborted'));
+    assert.equal(await newRequest, null);
+    assert.equal(await oldRequest, null);
+    assert.equal(created[0].plays, 2);
+    await sound.setMusic({ ...latest, musicEnabled: false });
+    assert.equal(created[0].paused, true);
     sound.dispose();
   } finally {
     Object.defineProperty(globalThis, 'Audio', { configurable: true, value: original });
@@ -78,8 +139,11 @@ test('failed music load reports once and does not affect legal moves', async () 
   const original = globalThis.Audio;
   let attempts = 0;
   class FailedAudio {
+    src = '';
     loop = false;
     volume = 1;
+    paused = true;
+    load() {}
     async play() { attempts++; throw new Error('missing file'); }
     pause() {}
   }
@@ -102,13 +166,14 @@ test('recorded move and capture sounds play separately at the chosen level while
   const originalAudio = globalThis.Audio;
   const players: FakeAudio[] = [];
   class FakeAudio {
-    readonly src: string;
+    src: string;
     loop = false;
     volume = 1;
     paused = true;
     currentTime = 0;
     plays = 0;
-    constructor(src: string) { this.src = src; players.push(this); }
+    constructor(src = '') { this.src = src; players.push(this); }
+    load() {}
     async play() { this.paused = false; this.plays++; }
     pause() { this.paused = true; }
   }
