@@ -120,9 +120,11 @@ npm run build
 
 ## 当前部署
 
+2026-10-28：服务器当前应用发布目录为 `/opt/three-kingdoms-chess/releases/870fc58`，对应源码提交 `870fc5866eed0ae1ea7e0b4130d227d8733e73b9`。已为公网 IP 配置浏览器信任的 HTTPS：[https://47.95.251.153/three-chess/](https://47.95.251.153/three-chess/)。旧 HTTP 游戏路径已临时跳转到 HTTPS；原首页因旧 API 问题仍保留 HTTP。本次只更新 Nginx 与证书，没有重新构建、切换或重启三国象棋应用。证书自动续期、站点兼容性和回退步骤见 [HTTPS 部署与回退](docs/HTTPS部署与回退.md)。
+
 2026-10-13 历史静态版：曾部署到 `47.95.251.153` 的 `/three-chess`，原站点配置备份保留在 `/etc/nginx/sites-available/zhongchuliang.bak.codex-20261013`。
 
-截至上一轮部署验证，[http://47.95.251.153/three-chess/](http://47.95.251.153/three-chess/) 运行的源码提交为 `3d037219463d7e3d5589fece6ad1d6367c207c70`，包含公网 HTTP 走棋修复。Node.js 服务由 systemd 守护，Nginx 将 `/three-chess/` 转发给本机服务。前一联机版及切换前配置已保留；回退步骤见 [联机试玩与部署](docs/联机试玩与部署.md)。本次棋盘视角与观战版本只在本地开发，尚未部署服务器。
+上一轮 HTTP 部署曾运行源码提交 `3d037219463d7e3d5589fece6ad1d6367c207c70`，包含公网 HTTP 走棋修复；之后已更新到上述 `870fc58`。Node.js 服务由 systemd 守护，Nginx 将 `/three-chess/` 转发给本机服务。前一联机版及切换前配置已保留；应用回退步骤见 [联机试玩与部署](docs/联机试玩与部署.md)。
 
 ## 后续范围
 
