@@ -41,6 +41,7 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     await wrapper.findAll('button').find(button => button.text() === '联机对弈')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button => button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
     await wrapper.get('input[autocomplete="nickname"]').setValue('界面魏');
+    await wrapper.get('input[aria-label="创建房间号"]').setValue('001234');
     await wrapper.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
     await waitUntil(() => wrapper.find('.room-lobby').exists(), 'Room creation did not reach lobby');
     const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:online-session-v1')!);
@@ -55,8 +56,8 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     }
     await wrapper.findAll('button').find(button => button.text() === '魏 · 曹操')!.trigger('click');
     for (const [index, faction] of ['shu', 'wu'].entries()) {
-      success(await send(otherClients[index], 'room:choose-faction', { roomCode: code, reconnectToken: others[index].reconnectToken, faction }));
-      success(await send(otherClients[index], 'room:ready', { roomCode: code, reconnectToken: others[index].reconnectToken, ready: true }));
+      success(await send(otherClients[index], 'room:choose-faction', { roomCode: code, reconnectToken: others[index].reconnectToken, faction, round: 1 }));
+      success(await send(otherClients[index], 'room:ready', { roomCode: code, reconnectToken: others[index].reconnectToken, ready: true, round: 1 }));
     }
     await wrapper.findAll('button').find(button => button.text() === '我已准备')!.trigger('click');
     await waitUntil(() => wrapper.find('.board-panel').exists(), 'Three players did not start the game');
@@ -64,7 +65,7 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     await wrapper.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');
     assert.equal(wrapper.findAll('g.legal-point').length, 1);
     await wrapper.get('g.legal-point[aria-label="走到第1路第6线"]').trigger('click');
-    await waitUntil(() => server.rooms.getRoom(code)?.game?.history.length === 1, `UI move failed: ${wrapper.find('.feedback').text()}`);
+    await waitUntil(() => server.rooms.getRoom(code)?.game?.history.length === 1, 'UI move failed');
     assert.equal(server.rooms.getRoom(code)?.game?.turn, 'shu');
     await waitUntil(() => wrapper.findAll('.move-list li').length === 1, 'Move did not render on the client');
   } finally {
@@ -85,7 +86,7 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
       players.push(socket);
       await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
     }
-    const a = success(await send<SessionReceipt>(players[0], 'room:create', { nickname: '观战测试魏' }));
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '400002', nickname: '观战测试魏' }));
     const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '观战测试蜀' }));
     const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '观战测试吴' }));
     const receipts = [a, b, c];
@@ -99,9 +100,9 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     assert.match(wrapper.get('.watch-entry').text(), /正在观战/);
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
     for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
-      success(await send(players[index], 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction }));
+      success(await send(players[index], 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1 }));
     for (let index = 0; index < 3; index++)
-      success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true }));
+      success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1 }));
     await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Watcher did not follow game start');
     assert.match(wrapper.get('.board-heading').text(), /正在观战/);
     assert.equal(wrapper.findAll('.board-tools button').some(button => button.text() === '认输'), false);
@@ -147,14 +148,14 @@ test('Wei, Shu and Wu restore their own fixed view and a turn change never rotat
       players.push(socket);
       await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
     }
-    const a = success(await send<SessionReceipt>(players[0], 'room:create', { nickname: '视角魏' }));
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '400003', nickname: '视角魏' }));
     const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '视角蜀' }));
     const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '视角吴' }));
     const receipts = [a, b, c];
     for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
-      success(await send(players[index], 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction }));
+      success(await send(players[index], 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1 }));
     for (let index = 0; index < 3; index++)
-      success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true }));
+      success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1 }));
     for (const [index, king, expectedX] of [
       [1, '蜀方刘备，第3路第1线', '380px'],
       [2, '吴方孙权，第7路第1线', '160px'],

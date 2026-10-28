@@ -50,8 +50,8 @@ export function createOnlineServer() {
       if (code) socket.leave(code);
       done({ ok: true, data: undefined });
     });
-    socket.on('room:create', (payload: { nickname?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
-      const result = rooms.createRoom(payload?.nickname, socket.id);
+    socket.on('room:create', (payload: { roomCode?: unknown; nickname?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
+      const result = rooms.createRoom(payload?.roomCode, payload?.nickname, socket.id);
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
       done(result.ack); broadcast(result.room);
     });
@@ -69,12 +69,17 @@ export function createOnlineServer() {
       }
       done(result.ack); broadcast(result.room);
     });
-    socket.on('room:choose-faction', (payload: { roomCode?: unknown; reconnectToken?: unknown; faction?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
-      const result = rooms.chooseFaction(payload?.roomCode, payload?.reconnectToken, payload?.faction, socket.id);
+    socket.on('room:choose-faction', (payload: { roomCode?: unknown; reconnectToken?: unknown; faction?: unknown; round?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = rooms.chooseFaction(payload?.roomCode, payload?.reconnectToken, payload?.faction, payload?.round, socket.id);
       done(result.ack); broadcast(result.room);
     });
-    socket.on('room:ready', (payload: { roomCode?: unknown; reconnectToken?: unknown; ready?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
-      const result = rooms.setReady(payload?.roomCode, payload?.reconnectToken, payload?.ready, socket.id);
+    socket.on('room:ready', (payload: { roomCode?: unknown; reconnectToken?: unknown; ready?: unknown; round?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = rooms.setReady(payload?.roomCode, payload?.reconnectToken, payload?.ready, payload?.round, socket.id);
+      done(result.ack); broadcast(result.room);
+    });
+    socket.on('room:rematch', async (payload: { roomCode?: unknown; reconnectToken?: unknown; version?: unknown },
+      done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = await rooms.rematchRoom(payload?.roomCode, payload?.reconnectToken, payload?.version, socket.id);
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:release-offline', (payload: { roomCode?: unknown; reconnectToken?: unknown; playerId?: unknown },

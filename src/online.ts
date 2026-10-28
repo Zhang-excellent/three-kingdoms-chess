@@ -15,6 +15,7 @@ export interface RoomView {
   code: string;
   phase: RoomPhase;
   version: number;
+  round: number;
   players: RoomPlayerView[];
   game: Game | null;
   selfId: string | null;
