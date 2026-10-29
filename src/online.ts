@@ -11,6 +11,15 @@ export interface RoomPlayerView {
   offlineUntil: number | null;
 }
 
+export type DrawVote = 'accept' | 'reject';
+
+export interface DrawOfferView {
+  id: string;
+  proposer: Faction;
+  eligible: Faction[];
+  votes: Partial<Record<Faction, DrawVote>>;
+}
+
 export interface RoomView {
   code: string;
   phase: RoomPhase;
@@ -18,6 +27,7 @@ export interface RoomView {
   round: number;
   players: RoomPlayerView[];
   game: Game | null;
+  drawOffer: DrawOfferView | null;
   selfId: string | null;
 }
 

@@ -6,10 +6,12 @@ export const DEFAULT_PLAYLIST_ID = 'default';
 export const MUSIC_PLAYLISTS: MusicPlaylist[] = [
   { id: DEFAULT_PLAYLIST_ID, name: '默认歌单' },
   { id: 'guitar', name: '吉他' },
+  { id: 'classical', name: '古典' },
 ];
 export const MUSIC_TRACKS: MusicTrack[] = [
   { id: 'liushang-qushui', name: '流觞曲水', file: 'background.mp3', cacheVersion: 'e1ad20273c92' },
   { id: 'lebang-zhanshi-guitar', name: '乐邦詹士（吉他）', file: 'lebang-zhanshi-guitar.mp3', cacheVersion: 'bb95cbf27ff1', playlistId: 'guitar' },
+  { id: 'mozart-symphony-40', name: '莫扎特《G小调第40交响曲》', file: 'mozart-symphony-40.mp3', cacheVersion: '1bcc472eee7c', playlistId: 'classical' },
 ];
 
 export function trackPlaylistId(track: MusicTrack): string { return track.playlistId ?? DEFAULT_PLAYLIST_ID; }

@@ -1,7 +1,7 @@
 export type Faction = 'wei' | 'shu' | 'wu';
 export type Kind = 'king' | 'rook' | 'horse' | 'elephant' | 'advisor' | 'cannon' | 'pawn' | 'feng';
 export type TurnSlot = 0 | 1 | 2;
-export type FactionResult = 'playing' | 'lost' | 'won';
+export type FactionResult = 'playing' | 'lost' | 'won' | 'draw';
 export interface Point { x: number; y: number }
 export interface Piece extends Point { id: string; faction: Faction; kind: Kind }
 export interface MoveRecord {
@@ -18,7 +18,7 @@ export type MoveResult = { ok: true; game: Game; notices: string[] } | { ok: fal
 
 export const ORDER: Faction[] = ['wei', 'shu', 'wu'];
 export const TURN_CYCLE: readonly Faction[] = ['wei', 'shu', 'wu'];
-export const RULES_VERSION = 'independent-win-loss-v1';
+export const RULES_VERSION = 'independent-win-loss-draw-v1';
 export const PLAYERS = {
   wei: { nation: '魏', name: '曹操', color: '#ac493b', initial: '曹', team: '独立阵营' },
   shu: { nation: '蜀', name: '刘备', color: '#303943', initial: '刘', team: '独立阵营' },
@@ -193,6 +193,17 @@ export function playMove(current: Game, pieceId: string, to: Point): MoveResult 
   return { ok: true, game, notices };
 }
 
+/** Finish an active game as a draw after the remaining factions agree. */
+export function drawGame(current: Game): MoveResult {
+  if (current.status !== 'playing') return { ok: false, error: '对局已经结束。' };
+  const active = ORDER.filter(faction => !current.eliminated.includes(faction));
+  if (active.length < 2) return { ok: false, error: '至少需要两个存活阵营才能和棋。' };
+  const game: Game = structuredClone(current);
+  for (const faction of active) game.results[faction] = 'draw';
+  game.winner = null; game.status = 'finished'; game.turn = null; game.turnSlot = null;
+  return { ok: true, game, notices: [`${active.map(faction => PLAYERS[faction].name).join('、')}同意和棋。`] };
+}
+
 /** Reject malformed local snapshots rather than letting coordinates or status corrupt the board. */
 export function validGame(value: unknown): value is Game {
   if (!value || typeof value !== 'object') return false;
@@ -203,13 +214,20 @@ export function validGame(value: unknown): value is Game {
   if (!game.results || typeof game.results !== 'object' || Array.isArray(game.results)
     || Object.keys(game.results).length !== ORDER.length) return false;
   if (game.status === 'finished') {
-    if (game.eliminated.length !== 2 || game.winner !== ORDER.find(faction => !game.eliminated.includes(faction))) return false;
+    if (game.winner !== null) {
+      if (game.eliminated.length !== 2 || game.winner !== ORDER.find(faction => !game.eliminated.includes(faction))) return false;
+    } else {
+      const active = ORDER.filter(faction => !game.eliminated.includes(faction));
+      if (active.length < 2 || active.some(faction => game.results[faction] !== 'draw')) return false;
+    }
   } else if (game.eliminated.length > 1) return false;
-  if (ORDER.some(faction => game.results[faction] !== (game.eliminated.includes(faction) ? 'lost' : game.winner === faction ? 'won' : 'playing'))) return false;
+  if (ORDER.some(faction => game.results[faction] !== (game.eliminated.includes(faction) ? 'lost'
+    : game.status === 'finished' ? game.winner === faction ? 'won' : 'draw'
+    : game.winner === faction ? 'won' : 'playing'))) return false;
   const isTurnSlot = (slot: unknown): slot is TurnSlot => Number.isInteger(slot) && Number(slot) >= 0 && Number(slot) < TURN_CYCLE.length;
   if (game.status === 'playing' && (!game.turn || !ORDER.includes(game.turn) || game.eliminated.includes(game.turn) || game.winner !== null
     || !isTurnSlot(game.turnSlot) || TURN_CYCLE[game.turnSlot] !== game.turn)) return false;
-  if (game.status === 'finished' && (game.turn !== null || game.turnSlot !== null || game.winner === null)) return false;
+  if (game.status === 'finished' && (game.turn !== null || game.turnSlot !== null)) return false;
   const ids = new Set<string>(), positions = new Set<string>();
   const kinds: Kind[] = ['king', 'rook', 'horse', 'elephant', 'advisor', 'cannon', 'pawn', 'feng'];
   for (const piece of game.pieces) {

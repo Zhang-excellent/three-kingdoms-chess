@@ -22,13 +22,15 @@ test('sound settings default off, persist independent levels and reject malforme
 });
 
 test('catalogue supports several playlists and songs and falls back from deleted IDs', () => {
-  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default', 'guitar']);
-  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水', '乐邦詹士（吉他）']);
+  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default', 'guitar', 'classical']);
+  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水', '乐邦詹士（吉他）', '莫扎特《G小调第40交响曲》']);
   const tracks = [...MUSIC_TRACKS, { id: 'another', name: '另一首', file: 'another.mp3', cacheVersion: 'abc', playlistId: 'guitar' }];
   assert.deepEqual(tracksInPlaylist('guitar', tracks).map(item => item.id), ['lebang-zhanshi-guitar', 'another']);
-  assert.equal(availablePlaylists(MUSIC_PLAYLISTS, tracks).length, 2);
+  assert.deepEqual(tracksInPlaylist('classical').map(item => item.id), ['mozart-symphony-40']);
+  assert.equal(availablePlaylists(MUSIC_PLAYLISTS, tracks).length, 3);
   assert.deepEqual(resolveMusicSelection('default', 'another', MUSIC_PLAYLISTS, tracks), { playlistId: 'guitar', trackId: 'another' });
   assert.deepEqual(resolveMusicSelection('guitar', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'guitar', trackId: 'lebang-zhanshi-guitar' });
+  assert.deepEqual(resolveMusicSelection('classical', 'mozart-symphony-40', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'mozart-symphony-40' });
   assert.deepEqual(resolveMusicSelection('removed', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'default', trackId: 'liushang-qushui' });
 });
 

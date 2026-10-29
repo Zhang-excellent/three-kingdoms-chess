@@ -103,6 +103,55 @@ test('serial processing, versions, and request ids prevent double moves', async 
     intent('stale0001', version, 'shu-pawn-2-3', 2, 4)), 'STALE_VERSION');
 });
 
+test('only the current faction may offer a draw and all surviving factions must accept', async () => {
+  const { service, code, players, room } = startedRoom();
+  failure(await service.offerDraw(code, players[1].reconnectToken, 'socket-shu'), 'NOT_YOUR_TURN');
+  const offered = await service.offerDraw(code, players[0].reconnectToken, 'socket-wei');
+  assert.equal(offered.ack.ok, true);
+  assert.equal(room.drawOffer?.proposer, 'wei');
+  assert.deepEqual(room.drawOffer?.eligible, ['wei', 'shu', 'wu']);
+  assert.deepEqual(room.drawOffer?.votes, { wei: 'accept' });
+  failure(await service.offerDraw(code, players[0].reconnectToken, 'socket-wei'), 'DRAW_OFFER_PENDING');
+  failure(await service.submitMove(code, players[0].reconnectToken,
+    intent('drawpause1', room.version, 'wei-pawn-0-6', 0, 5), 'socket-wei'), 'DRAW_OFFER_PENDING');
+
+  const offerId = room.drawOffer!.id;
+  failure(await service.respondDraw(code, players[0].reconnectToken, offerId, 'accept', 'socket-wei'), 'DRAW_ALREADY_ACCEPTED');
+  const acceptedByShu = await service.respondDraw(code, players[1].reconnectToken, offerId, 'accept', 'socket-shu');
+  assert.equal(acceptedByShu.ack.ok, true);
+  assert.equal(room.phase, 'playing');
+  assert.deepEqual(room.drawOffer?.votes, { wei: 'accept', shu: 'accept' });
+  const rejectedByWu = await service.respondDraw(code, players[2].reconnectToken, offerId, 'reject', 'socket-wu');
+  assert.equal(rejectedByWu.ack.ok, true);
+  assert.equal(room.drawOffer, null);
+  assert.equal(room.phase, 'playing');
+
+  assert.equal((await service.offerDraw(code, players[0].reconnectToken, 'socket-wei')).ack.ok, true);
+  const secondOfferId = service.getRoom(code)!.drawOffer!.id;
+  failure(await service.respondDraw(code, players[1].reconnectToken, offerId, 'accept', 'socket-shu'), 'STALE_DRAW_OFFER');
+  assert.equal((await service.respondDraw(code, players[1].reconnectToken, secondOfferId, 'accept', 'socket-shu')).ack.ok, true);
+  assert.equal((await service.respondDraw(code, players[2].reconnectToken, secondOfferId, 'accept', 'socket-wu')).ack.ok, true);
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.game?.status, 'finished');
+  assert.equal(room.game?.winner, null);
+  assert.deepEqual(room.game?.results, { wei: 'draw', shu: 'draw', wu: 'draw' });
+  assert.equal(room.drawOffer, null);
+});
+
+test('draw voting uses only the two surviving factions and keeps the eliminated faction defeated', async () => {
+  const { service, code, players, room } = startedRoom();
+  assert.equal((await service.resignRoom(code, players[2].reconnectToken, 'socket-wu')).ack.ok, true);
+  assert.equal(room.game?.results.wu, 'lost');
+  assert.equal(room.game?.turn, 'wei');
+  assert.equal((await service.offerDraw(code, players[0].reconnectToken, 'socket-wei')).ack.ok, true);
+  assert.deepEqual(room.drawOffer?.eligible, ['wei', 'shu']);
+  const offerId = room.drawOffer!.id;
+  assert.equal((await service.respondDraw(code, players[1].reconnectToken, offerId, 'accept', 'socket-shu')).ack.ok, true);
+  assert.equal(room.phase, 'finished');
+  assert.deepEqual(room.game?.results, { wei: 'draw', shu: 'draw', wu: 'lost' });
+  assert.equal(room.game?.winner, null);
+});
+
 test('disconnect keeps the seat and a secret token resumes without duplicating it', () => {
   const { service, code, players, room } = startedRoom();
   service.disconnect('socket-shu');

@@ -68,6 +68,14 @@ const flipped = computed(() => (ownFaction.value === 'shu' || ownFaction.value =
 watch([ownFaction, mode], () => { flipOverride.value = false; });
 const roomPlayer = (faction: Faction) => online.room.value?.players.find(player => player.faction === faction);
 const factionTaken = (faction: Faction) => !!online.room.value?.players.some(player => player.id !== online.room.value?.selfId && player.faction === faction);
+const drawOffer = computed(() => online.mode.value === 'online' ? online.room.value?.drawOffer ?? null : null);
+const canOfferDraw = computed(() => !spectating.value && !!ownFaction.value && game.value.status === 'playing'
+  && game.value.turn === ownFaction.value && !game.value.eliminated.includes(ownFaction.value) && !drawOffer.value);
+const canRespondDraw = computed(() => !!drawOffer.value && !!ownFaction.value && ownFaction.value !== drawOffer.value.proposer
+  && drawOffer.value.eligible.includes(ownFaction.value) && !drawOffer.value.votes[ownFaction.value]);
+const ownDrawVote = computed(() => ownFaction.value && drawOffer.value ? drawOffer.value.votes[ownFaction.value] : undefined);
+const drawAcceptedCount = computed(() => drawOffer.value?.eligible.filter(faction => drawOffer.value?.votes[faction] === 'accept').length ?? 0);
+const drawEligibleNames = computed(() => drawOffer.value?.eligible.map(faction => PLAYERS[faction].name).join('、') ?? '');
 const selected = computed(() => game.value.pieces.find(p => p.id === selectedId.value) ?? null);
 const moves = computed(() => selected.value ? legalMoves(game.value.pieces, selected.value) : []);
 const active = computed(() => game.value.turn ? PLAYERS[game.value.turn] : null);
@@ -75,8 +83,10 @@ const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
 const turnPosition = computed(() => game.value.turnSlot === null ? '' : game.value.eliminated.length
   ? `双人交替 · 当前${PLAYERS[game.value.turn!].nation}方` : `三拍循环 · 第 ${game.value.turnSlot + 1} 位`);
-const resultLabel = (current: Game, faction: Faction) => current.results[faction] === 'won' ? '胜利' : current.results[faction] === 'lost' ? '失败' : '对局中';
+const resultLabel = (current: Game, faction: Faction) => current.results[faction] === 'won' ? '胜利'
+  : current.results[faction] === 'lost' ? '失败' : current.results[faction] === 'draw' ? '和棋' : '对局中';
 const losersText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'lost').map(faction => PLAYERS[faction].name).join('、'));
+const drawingText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'draw').map(faction => PLAYERS[faction].name).join('、'));
 const px = (x: number) => 50 + x * 55;
 const py = (y: number) => 50 + y * 55;
 const viewX = (x: number) => px(flipped.value ? 8 - x : x);
@@ -111,6 +121,9 @@ watch(() => online.room.value?.version, () => {
   selectedId.value = null;
   feedbackError.value = false;
 });
+watch(() => online.room.value?.drawOffer, (offer, previous) => {
+  if (previous && !offer && online.room.value?.phase === 'playing') notify('和棋申请未通过，对局继续。');
+});
 
 function notify(text: string, error = false) { message.value = text; feedbackError.value = error; }
 async function toggleMusic() {
@@ -141,6 +154,7 @@ async function previewSelectedMusic() {
 }
 async function cellClick(x: number, y: number) {
   if (spectating.value) { notify('正在观战，不能操作棋子。', true); return; }
+  if (drawOffer.value) { notify('请先处理和棋申请，再继续行棋。', true); return; }
   if (online.mode.value === 'local' && compatibilityWarning.value) { notify('旧规则存档不能按三方独立规则续局，请另开一局。', true); return; }
   if (game.value.status !== 'playing') { notify(online.mode.value === 'online' ? '本局已结束，可以点击“再来一局”。' : '本局已经结束，可以悔棋复盘或重新开局。'); return; }
   const piece = at(game.value.pieces, { x, y });
@@ -247,6 +261,17 @@ async function confirmResign() {
   const result = await online.resign();
   notify(result.ok ? '已认输出局，可以留在房间查看后续对局。' : result.error, !result.ok);
 }
+async function requestDraw() {
+  const result = await online.offerDraw();
+  notify(result.ok ? '已提出和棋申请，请等待其他存活阵营回应。' : result.error, !result.ok);
+}
+async function respondToDraw(vote: 'accept' | 'reject') {
+  const result = await online.respondDraw(vote);
+  if (!result.ok) { notify(result.error, true); return; }
+  if (vote === 'reject') notify('已拒绝和棋申请，对局继续。');
+  else if (result.data.state.phase === 'finished') notify('全部存活阵营同意，本局和棋。');
+  else notify('已同意和棋，等待其他阵营回应。');
+}
 async function releaseOffline(playerId: string) {
   const result = await online.releaseOffline(playerId);
   if (!result.ok) notify(result.error, true);
@@ -311,13 +336,19 @@ async function requestRematch() {
         </div>
         <div class="turn-order"><span>行棋顺序</span><p><template v-for="(faction, slot) in TURN_CYCLE" :key="slot"><b v-if="slot">›</b><strong :class="{current: game.turnSlot === slot, eliminated: game.eliminated.includes(faction)}">{{ PLAYERS[faction].name }}</strong></template></p><small>出局方跳过，剩余两国严格交替</small></div>
         <div class="alliance-note"><span class="tiny-seal">竞</span><p>三方独立竞争<br><strong>最后存活的一方获胜</strong></p></div>
-        <div class="ranking-card"><strong>本局胜负</strong><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(game, faction) }}</p></div>
+        <div class="ranking-card"><strong>本局结果</strong><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(game, faction) }}</p></div>
       </aside>
 
       <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · {{ mode === 'online' ? `${spectating ? '正在观战' : '联机房间'} ${room?.code}` : '本地试玩' }}</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else>{{ PLAYERS[game.winner!].name }}获胜</h2><small v-if="turnPosition" class="turn-position">{{ turnPosition }}</small></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · {{ mode === 'online' ? `${spectating ? '正在观战' : '联机房间'} ${room?.code}` : '本地试玩' }}</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else-if="game.winner">{{ PLAYERS[game.winner].name }}获胜</h2><h2 v-else>本局和棋</h2><small v-if="turnPosition" class="turn-position">{{ turnPosition }}</small></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
         <div v-if="mode === 'online' && connection !== 'online'" class="network-banner" role="alert">连接中断，正在重连…</div>
         <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则或名次存档不能按当前胜负规则安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
+        <div v-if="drawOffer" class="draw-offer-card" role="status" aria-live="polite">
+          <div><span class="eyebrow">和棋申请</span><strong>{{ PLAYERS[drawOffer.proposer].name }}发起和棋</strong><p>{{ drawEligibleNames }}须全部同意；已同意 {{ drawAcceptedCount }}/{{ drawOffer.eligible.length }}</p></div>
+          <div v-if="canRespondDraw" class="draw-offer-actions"><button class="tool-button" :disabled="connection !== 'online'" @click="respondToDraw('reject')">拒绝</button><button class="primary-button" :disabled="connection !== 'online'" @click="respondToDraw('accept')">同意和棋</button></div>
+          <span v-else-if="ownDrawVote === 'accept'" class="draw-waiting">已同意，等待其他阵营</span>
+          <span v-else-if="drawOffer.proposer === ownFaction" class="draw-waiting">等待其他阵营回应</span>
+        </div>
         <div class="board-frame">
           <svg class="board-svg" viewBox="0 0 540 595" role="group" :aria-label="`九路十横线棋盘，${flipped ? '已翻转' : '标准'}视角；坐标标识为标准坐标`" @click="boardClick" @touchend="boardTouch">
             <defs>
@@ -345,9 +376,9 @@ async function requestRematch() {
             </g>
           </svg>
         </div>
-        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button class="tool-button sound-button" @click="settingsDialog?.showModal()">设置</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="online.exitWatching()">退出观战</button></div>
+        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button class="tool-button sound-button" @click="settingsDialog?.showModal()">设置</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="online.exitWatching()">退出观战</button></div>
         <p v-if="mode === 'local' || feedbackError" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
-        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ PLAYERS[game.winner!].name }}获胜</strong><span>{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span></div>
+        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${PLAYERS[game.winner].name}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">
@@ -359,7 +390,7 @@ async function requestRematch() {
       </aside>
     </main>
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="mode === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
-    <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。魏方默认标准视角，蜀吴默认翻转视角；“翻转棋盘”只改变个人看到的画面。输入房间号可只读观战。</p><ul><li>三方独立竞争。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的判和次数尚待确认，本版不自动判重复和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
+    <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。魏方默认标准视角，蜀吴默认翻转视角；“翻转棋盘”只改变个人看到的画面。输入房间号可只读观战。</p><ul><li>三方独立竞争。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>联机对弈中，只有轮到自己行棋时才能提和；所有存活阵营同意后本局和棋。已有一方出局时，剩余两方均同意即可。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的自动判和次数尚待确认；本版仅采用全部存活阵营同意的手动和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="settingsDialog" class="settings-dialog">
       <div class="dialog-heading"><h2>声音设置</h2><button class="dialog-close" aria-label="关闭设置" @click="settingsDialog?.close()">×</button></div>
       <div class="audio-control"><label for="music-toggle">背景音乐</label><button id="music-toggle" class="tool-button" :aria-pressed="audioSettings.musicEnabled" @click="toggleMusic">{{ audioSettings.musicEnabled ? '开启' : '关闭' }}</button><label for="music-volume">音乐音量 {{ Math.round(audioSettings.musicVolume * 100) }}%</label><input id="music-volume" v-model.number="audioSettings.musicVolume" type="range" min="0" max="1" step="0.01" aria-label="音乐音量"></div>

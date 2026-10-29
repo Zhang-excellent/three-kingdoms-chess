@@ -98,6 +98,16 @@ export function createOnlineServer() {
       const result = await rooms.resignRoom(payload?.roomCode, payload?.reconnectToken, socket.id);
       done(result.ack); broadcast(result.room);
     });
+    socket.on('game:offer-draw', async (payload: { roomCode?: unknown; reconnectToken?: unknown },
+      done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = await rooms.offerDraw(payload?.roomCode, payload?.reconnectToken, socket.id);
+      done(result.ack); broadcast(result.room);
+    });
+    socket.on('game:respond-draw', async (payload: { roomCode?: unknown; reconnectToken?: unknown; offerId?: unknown; vote?: unknown },
+      done: (ack: ClientAck<{ state: RoomView }>) => void) => {
+      const result = await rooms.respondDraw(payload?.roomCode, payload?.reconnectToken, payload?.offerId, payload?.vote, socket.id);
+      done(result.ack); broadcast(result.room);
+    });
     socket.on('game:move', async (payload: { roomCode?: unknown; reconnectToken?: unknown; intent?: MoveIntent }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       const result = await rooms.submitMove(payload?.roomCode, payload?.reconnectToken, payload?.intent, socket.id);
       done(result.ack); broadcast(result.room);

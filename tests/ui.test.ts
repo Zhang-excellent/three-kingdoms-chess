@@ -164,6 +164,9 @@ test('settings keep music and effect switches and volumes independently on this 
   assert.equal(wrapper.get('#effects-toggle').text(), '关闭');
   assert.equal(wrapper.get('#music-preview').text(), '试听');
   assert.match(wrapper.get('#music-track').text(), /流觞曲水/);
+  assert.match(wrapper.get('#music-playlist').text(), /古典/);
+  await wrapper.get('#music-playlist').setValue('classical');
+  assert.match(wrapper.get('#music-track').text(), /莫扎特《G小调第40交响曲》/);
   await wrapper.get('#music-playlist').setValue('guitar');
   assert.match(wrapper.get('#music-track').text(), /乐邦詹士（吉他）/);
   await wrapper.get('#effects-toggle').trigger('click');

@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { io, type Socket } from 'socket.io-client';
 import { ONLINE_SESSION_KEY, PENDING_LEAVES_KEY, createMoveRequestId } from './online.ts';
-import type { ClientAck, MoveIntent, RoomView, SessionReceipt } from './online.ts';
+import type { ClientAck, DrawVote, MoveIntent, RoomView, SessionReceipt } from './online.ts';
 import type { Faction, Point } from './game.ts';
 
 interface SavedSession { roomCode: string; reconnectToken: string; playerId?: string; nickname: string }
@@ -292,6 +292,12 @@ export function useOnlineRoom() {
   const rematch = () => action<{ state: RoomView }>('room:rematch', { version: room.value?.version });
   const releaseOffline = (playerId: string) => action<{ state: RoomView }>('room:release-offline', { playerId });
   const resign = () => action<{ state: RoomView }>('game:resign');
+  const offerDraw = () => action<{ state: RoomView }>('game:offer-draw');
+  const respondDraw = (vote: DrawVote) => {
+    const offerId = room.value?.drawOffer?.id;
+    if (!offerId) return Promise.resolve<ClientAck<{ state: RoomView }>>({ ok: false, code: 'NO_DRAW_OFFER', error: '当前没有待处理的和棋申请。' });
+    return action<{ state: RoomView }>('game:respond-draw', { offerId, vote });
+  };
   async function move(pieceId: string, to: Point): Promise<ClientAck<{ state: RoomView }>> {
     if (!room.value) return { ok: false, code: 'NO_ROOM', error: '尚未进入房间。' };
     const intent: MoveIntent = { requestId: createMoveRequestId(), version: room.value.version, pieceId, to };
@@ -309,5 +315,6 @@ export function useOnlineRoom() {
   if (mode.value === 'online' || pending().length) openSocket();
   return { mode, nickname, createCode, joinCode, room, self, faction, connection, error, exitNotice, busy, inRoom,
     spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
-    connect, useLocal, createRoom, joinRoom, chooseFaction, setReady, rematch, move, resign, releaseOffline, leaveRoom, copyInvite, forgetSession };
+    connect, useLocal, createRoom, joinRoom, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
+    releaseOffline, leaveRoom, copyInvite, forgetSession };
 }

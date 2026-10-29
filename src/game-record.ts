@@ -3,7 +3,8 @@ import type { Faction, Game, Piece } from './game.ts';
 
 const coordinate = (point: { x: number; y: number }) => `(${point.x + 1}, ${point.y + 1})`;
 const resultLabel = (game: Game, faction: Faction) =>
-  game.results[faction] === 'won' ? '胜利' : game.results[faction] === 'lost' ? '失败' : '对局中';
+  game.results[faction] === 'won' ? '胜利' : game.results[faction] === 'lost' ? '失败'
+    : game.results[faction] === 'draw' ? '和棋' : '对局中';
 const pieceDescription = (piece: Piece) =>
   `${PLAYERS[piece.faction].nation}方${pieceName(piece)} ${coordinate(piece)}`;
 
@@ -16,6 +17,7 @@ function piecesByFaction(pieces: readonly Piece[]): string {
 
 function gameStatus(game: Game): string {
   if (game.status === 'finished' && game.winner) return `${PLAYERS[game.winner].name}获胜`;
+  if (game.status === 'finished') return '和棋';
   if (!game.turn) return '对局已结束';
   return `对局进行中，轮到${PLAYERS[game.turn].name}`;
 }

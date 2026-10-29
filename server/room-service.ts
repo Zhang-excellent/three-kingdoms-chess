@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { ORDER, newGame, playMove, resignFaction } from '../src/game.ts';
+import { ORDER, drawGame, newGame, playMove, resignFaction } from '../src/game.ts';
 import type { Faction, Game, Point } from '../src/game.ts';
-import type { ClientAck, MoveIntent, RoomPhase, RoomPlayerView, RoomView, SessionReceipt } from '../src/online.ts';
+import type { ClientAck, DrawOfferView, DrawVote, MoveIntent, RoomPhase, RoomPlayerView, RoomView, SessionReceipt } from '../src/online.ts';
 
 interface Player {
   id: string;
@@ -27,6 +27,7 @@ interface Room {
   players: Player[];
   spectators: Set<string>;
   game: Game | null;
+  drawOffer: DrawOfferView | null;
   requests: Map<string, Map<string, StoredAck>>;
 }
 
@@ -72,7 +73,7 @@ export class RoomService {
     if (!nickname) return { ack: { ok: false, code: 'INVALID_NICKNAME', error: '请输入 1～16 个字符的昵称。' } };
     if (this.rooms.has(code)) return { ack: { ok: false, code: 'ROOM_CODE_TAKEN', error: '这个房间号已被使用，请换一个号码。' } };
     const player = this.newPlayer(nickname, socketId);
-    const room: Room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(), game: null, requests: new Map() };
+    const room: Room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(), game: null, drawOffer: null, requests: new Map() };
     this.rooms.set(code, room); this.tokenRoom.set(player.token, code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
     return { room, ack: { ok: true, data: this.receipt(room, player) } };
@@ -141,7 +142,7 @@ export class RoomService {
     player.ready = readyValue; room.version++;
     if (room.players.length === 3 && room.players.every(item => item.online && item.faction && item.ready)
       && new Set(room.players.map(item => item.faction)).size === 3) {
-      room.game = newGame(); room.phase = 'playing'; room.version++;
+      room.game = newGame(); room.phase = 'playing'; room.drawOffer = null; room.version++;
       room.requests.clear();
     }
     return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
@@ -176,7 +177,65 @@ export class RoomService {
       const result = resignFaction(room.game, player.faction);
       if (!result.ok) return { ack: { ok: false, code: 'CANNOT_RESIGN', error: result.error, state: this.view(room, player) } };
       room.game = result.game;
+      room.drawOffer = null;
       room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
+      room.version++;
+      return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
+    });
+  }
+
+  offerDraw(codeValue: unknown, tokenValue: unknown, socketId: string): Promise<RoomActionResult<{ state: RoomView }>> {
+    const code = cleanCode(codeValue);
+    return this.serial(code, () => {
+      const found = this.findPlayer(code, tokenValue, socketId);
+      if (!found.ok) return { ack: found.ack };
+      const { room, player } = found;
+      if (room.phase !== 'playing' || !room.game || !player.faction || room.game.eliminated.includes(player.faction))
+        return { ack: { ok: false, code: 'CANNOT_OFFER_DRAW', error: '当前不能发起和棋。', state: this.view(room, player) } };
+      if (room.game.turn !== player.faction)
+        return { ack: { ok: false, code: 'NOT_YOUR_TURN', error: '只有轮到自己行棋时才能提和。', state: this.view(room, player) } };
+      if (room.drawOffer)
+        return { ack: { ok: false, code: 'DRAW_OFFER_PENDING', error: '已有和棋申请等待处理。', state: this.view(room, player) } };
+      const eligible = ORDER.filter(faction => !room.game!.eliminated.includes(faction));
+      room.drawOffer = { id: randomUUID(), proposer: player.faction, eligible, votes: { [player.faction]: 'accept' } };
+      room.version++;
+      return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
+    });
+  }
+
+  respondDraw(codeValue: unknown, tokenValue: unknown, offerIdValue: unknown, voteValue: unknown,
+    socketId: string): Promise<RoomActionResult<{ state: RoomView }>> {
+    const code = cleanCode(codeValue);
+    return this.serial(code, () => {
+      const found = this.findPlayer(code, tokenValue, socketId);
+      if (!found.ok) return { ack: found.ack };
+      const { room, player } = found;
+      const vote = voteValue as DrawVote;
+      if (!room.drawOffer || !room.game || room.phase !== 'playing')
+        return { ack: { ok: false, code: 'NO_DRAW_OFFER', error: '当前没有待处理的和棋申请。', state: this.view(room, player) } };
+      if (typeof offerIdValue !== 'string' || offerIdValue !== room.drawOffer.id)
+        return { ack: { ok: false, code: 'STALE_DRAW_OFFER', error: '和棋申请已更新，请重新查看。', state: this.view(room, player) } };
+      if (!player.faction || !room.drawOffer.eligible.includes(player.faction))
+        return { ack: { ok: false, code: 'NOT_ELIGIBLE_FOR_DRAW', error: '已出局阵营不能参与和棋表决。', state: this.view(room, player) } };
+      if (player.faction === room.drawOffer.proposer)
+        return { ack: { ok: false, code: 'DRAW_ALREADY_ACCEPTED', error: '提和方已自动同意和棋。', state: this.view(room, player) } };
+      if (vote !== 'accept' && vote !== 'reject')
+        return { ack: { ok: false, code: 'INVALID_DRAW_VOTE', error: '和棋选择无效。', state: this.view(room, player) } };
+      const previousVote = room.drawOffer.votes[player.faction];
+      if (previousVote) {
+        if (previousVote === vote) return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
+        return { ack: { ok: false, code: 'DRAW_ALREADY_RESPONDED', error: '已经提交过和棋选择。', state: this.view(room, player) } };
+      }
+      if (vote === 'reject') {
+        room.drawOffer = null; room.version++;
+        return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
+      }
+      room.drawOffer.votes[player.faction] = 'accept';
+      if (room.drawOffer.eligible.every(faction => room.drawOffer?.votes[faction] === 'accept')) {
+        const result = drawGame(room.game);
+        if (!result.ok) return { ack: { ok: false, code: 'CANNOT_DRAW', error: result.error, state: this.view(room, player) } };
+        room.game = result.game; room.phase = 'finished'; room.drawOffer = null;
+      }
       room.version++;
       return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
     });
@@ -195,6 +254,7 @@ export class RoomService {
         const result = resignFaction(room.game, player.faction);
         if (result.ok) {
           room.game = result.game;
+          room.drawOffer = null;
           room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
         }
       }
@@ -287,13 +347,15 @@ export class RoomService {
       ack: { ok: false, code: codeName, error, state: this.view(room, player) }, room,
     });
     if (room.phase !== 'playing' || !room.game) return reject('GAME_NOT_PLAYING', '棋局尚未开始或已经结束。');
+    if (room.drawOffer) return reject('DRAW_OFFER_PENDING', '请先处理和棋申请，再继续行棋。');
     if (intent.version !== room.version) return reject('STALE_VERSION', '局面已更新，本端正在重新同步，请再试一次。');
     if (!player.faction || player.faction !== room.game.turn) return reject('NOT_YOUR_TURN', '当前不是你的阵营行棋。');
     const piece = room.game.pieces.find(item => item.id === intent.pieceId);
     if (!piece || piece.faction !== player.faction) return reject('NOT_YOUR_PIECE', '只能操作你所选择阵营的棋子。');
     const result = playMove(room.game, intent.pieceId, intent.to);
     if (!result.ok) return reject('ILLEGAL_MOVE', result.error);
-    room.game = result.game; room.phase = room.game.status === 'finished' ? 'finished' : 'playing'; room.version++;
+    room.game = result.game; room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
+    room.drawOffer = null; room.version++;
     const ack: ClientAck<{ state: RoomView }> = { ok: true, data: { state: this.view(room, player) } };
     playerRequests.set(intent.requestId, { fingerprint, ack });
     if (playerRequests.size > 200) playerRequests.delete(playerRequests.keys().next().value!);
@@ -349,7 +411,7 @@ export class RoomService {
   }
 
   private nextLobby(room: Room): void {
-    room.phase = 'lobby'; room.round++; room.version++;
+    room.phase = 'lobby'; room.round++; room.drawOffer = null; room.version++;
     room.requests.clear();
     for (const player of room.players) {
       player.ready = false;
@@ -371,14 +433,15 @@ export class RoomService {
   private view(room: Room, self: Player): RoomView {
     const players: RoomPlayerView[] = room.players.map(({ id, nickname, faction, ready, online, offlineUntil }) =>
       ({ id, nickname, faction, ready, online, offlineUntil }));
-    return { code: room.code, phase: room.phase, version: room.version, round: room.round, players, game: room.game ? structuredClone(room.game) : null, selfId: self.id };
+    return { code: room.code, phase: room.phase, version: room.version, round: room.round, players, game: room.game ? structuredClone(room.game) : null,
+      drawOffer: room.drawOffer ? structuredClone(room.drawOffer) : null, selfId: self.id };
   }
 
   private publicView(room: Room): RoomView {
     const players: RoomPlayerView[] = room.players.map(({ id, nickname, faction, ready, online, offlineUntil }) =>
       ({ id, nickname, faction, ready, online, offlineUntil }));
     return { code: room.code, phase: room.phase, version: room.version, round: room.round, players,
-      game: room.game ? structuredClone(room.game) : null, selfId: null };
+      game: room.game ? structuredClone(room.game) : null, drawOffer: room.drawOffer ? structuredClone(room.drawOffer) : null, selfId: null };
   }
 
   private serial<T>(code: string, action: () => T | Promise<T>): Promise<T> {

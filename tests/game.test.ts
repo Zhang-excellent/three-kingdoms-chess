@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reactive, toRaw } from 'vue';
-import { TURN_CYCLE, at, legalMoves, moveError, newGame, playMove, resignFaction, validGame } from '../src/game.ts';
+import { TURN_CYCLE, at, drawGame, legalMoves, moveError, newGame, playMove, resignFaction, validGame } from '../src/game.ts';
 import type { Faction, Game, Kind, MoveResult, Piece, TurnSlot } from '../src/game.ts';
 
 const p = (faction: Faction, kind: Kind, x: number, y: number, id = `${faction}-${kind}-${x}-${y}`): Piece => ({ faction, kind, x, y, id });
@@ -32,6 +32,28 @@ test('old ranking snapshots and inconsistent win-loss states are rejected', () =
   const current = newGame();
   assert.equal(validGame({ ...current, rulesVersion: 'independent-three-way-ranking-v1', placements: {} }), false);
   assert.equal(validGame({ ...current, results: { ...current.results, shu: 'won' } }), false);
+});
+
+test('unanimous draws finish active factions while preserving earlier eliminations', () => {
+  const initial = newGame();
+  const result = drawGame(initial);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.game.status, 'finished');
+  assert.equal(result.game.winner, null);
+  assert.equal(result.game.turn, null);
+  assert.equal(result.game.turnSlot, null);
+  assert.deepEqual(result.game.results, { wei: 'draw', shu: 'draw', wu: 'draw' });
+  assert.equal(result.game.history.length, 0);
+  assert.equal(validGame(result.game), true);
+
+  const afterWu = success(resignFaction(initial, 'wu'));
+  const twoPlayerDraw = drawGame(afterWu);
+  assert.equal(twoPlayerDraw.ok, true);
+  if (!twoPlayerDraw.ok) return;
+  assert.deepEqual(twoPlayerDraw.game.results, { wei: 'draw', shu: 'draw', wu: 'lost' });
+  assert.equal(validGame(twoPlayerDraw.game), true);
+  assert.equal(drawGame(twoPlayerDraw.game).ok, false);
 });
 
 test('initial board has 29 unique pieces and the central pawn belongs to Shu', () => {

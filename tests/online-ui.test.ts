@@ -188,3 +188,57 @@ test('Wei, Shu and Wu restore their own fixed view and a turn change never rotat
     }
   } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
 });
+
+test('online draw prompt only enables for the current player and both opponents can approve', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    for (let index = 0; index < 3; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '400004', nickname: '提和魏' }));
+    const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '提和蜀' }));
+    const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '提和吴' }));
+    const receipts = [a, b, c];
+    for (let index = 0; index < 3; index++) {
+      success(await send(players[index], 'room:choose-faction', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction: ['wei', 'shu', 'wu'][index], round: 1,
+      }));
+      success(await send(players[index], 'room:ready', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1,
+      }));
+    }
+    success(await send(players[0], 'game:offer-draw', { roomCode: a.roomCode, reconnectToken: a.reconnectToken }));
+    const room = server.rooms.getRoom(a.roomCode)!;
+    const offerId = room.drawOffer!.id;
+
+    localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+      roomCode: a.roomCode, reconnectToken: b.reconnectToken, playerId: b.playerId, nickname: '提和蜀',
+    }));
+    history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${a.roomCode}`);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.draw-offer-card').exists(), 'Shu did not receive draw prompt');
+    assert.match(wrapper.get('.draw-offer-card').text(), /曹操发起和棋.*曹操、刘备、孙权须全部同意/);
+    assert.equal(wrapper.findAll('.board-tools button').find(button => button.text() === '提和')?.attributes('disabled'), '');
+    await wrapper.findAll('button').find(button => button.text() === '同意和棋')!.trigger('click');
+    await waitUntil(() => room.drawOffer?.votes.shu === 'accept', 'Shu approval was not recorded');
+    assert.match(wrapper.get('.draw-offer-card').text(), /已同意 2\/3/);
+    wrapper.unmount(); wrapper = null;
+
+    localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+      roomCode: a.roomCode, reconnectToken: c.reconnectToken, playerId: c.playerId, nickname: '提和吴',
+    }));
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.draw-offer-card').exists(), 'Wu did not receive draw prompt');
+    await wrapper.findAll('button').find(button => button.text() === '同意和棋')!.trigger('click');
+    await waitUntil(() => room.phase === 'finished', 'Unanimous draw did not finish the game');
+    await waitUntil(() => wrapper!.find('.result-banner').exists(), 'Draw result did not render');
+    assert.match(wrapper.get('.result-banner').text(), /和棋.*曹操、刘备、孙权同意和棋/);
+    assert.match(wrapper.get('.ranking-card').text(), /曹操.*和棋.*刘备.*和棋.*孙权.*和棋/);
+    assert.equal(room.game?.winner, null);
+    assert.equal(room.game?.status, 'finished');
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
+});
