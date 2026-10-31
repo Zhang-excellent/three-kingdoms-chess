@@ -279,6 +279,7 @@ test('all three factions use their default orientation and make a legal move', a
 
     let current = await mountFaction(a, '默认魏');
     assert.equal(current.get('.board-svg').attributes('aria-label')?.includes('已翻转'), false);
+    assert.deepEqual(current.findAll('.river').map(river => river.text()), ['淮 河', '秦 岭']);
     assert.match(current.get('g.piece[aria-label="魏方曹操，第5路第10线"]').attributes('style')!, /translate\(270px, 545px\)/);
     await current.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');
     await current.get('g.legal-point[aria-label="走到第1路第6线"]').trigger('click');
@@ -288,6 +289,7 @@ test('all three factions use their default orientation and make a legal move', a
 
     current = await mountFaction(b, '默认蜀');
     assert.equal(current.get('.board-svg').attributes('aria-label')?.includes('已翻转'), true);
+    assert.deepEqual(current.findAll('.river').map(river => river.text()), ['秦 岭', '淮 河']);
     assert.match(current.get('g.piece[aria-label="蜀方刘备，第7路第1线"]').attributes('style')!, /translate\(160px, 545px\)/);
     assert.match(current.get('g.piece[aria-label="吴方孙权，第3路第1线"]').attributes('style')!, /translate\(380px, 545px\)/);
     await current.get('g.piece[aria-label="蜀方卒，第9路第4线"]').trigger('click');
@@ -303,6 +305,7 @@ test('all three factions use their default orientation and make a legal move', a
 
     current = await mountFaction(c, '默认吴');
     assert.equal(current.get('.board-svg').attributes('aria-label')?.includes('已翻转'), true);
+    assert.deepEqual(current.findAll('.river').map(river => river.text()), ['秦 岭', '淮 河']);
     assert.match(current.get('g.piece[aria-label="蜀方刘备，第7路第1线"]').attributes('style')!, /translate\(160px, 545px\)/);
     assert.match(current.get('g.piece[aria-label="吴方孙权，第3路第1线"]').attributes('style')!, /translate\(380px, 545px\)/);
     await current.get('g.piece[aria-label="吴方卒，第5路第4线"]').trigger('click');

@@ -8,7 +8,7 @@ export const MUSIC_PLAYLISTS: MusicPlaylist[] = [
   { id: 'classical', name: '古典' },
 ];
 export const MUSIC_TRACKS: MusicTrack[] = [
-  { id: 'liushang-qushui', name: '流觞曲水', file: 'background.mp3', cacheVersion: 'e1ad20273c92' },
+  { id: 'liushang-qushui', name: '流觞曲水', file: 'background.mp3', cacheVersion: '2fbbe9ade9ae' },
   { id: 'mozart-symphony-40', name: '莫扎特《G小调第40交响曲》', file: 'mozart-symphony-40.mp3', cacheVersion: '1bcc472eee7c', playlistId: 'classical' },
 ];
 

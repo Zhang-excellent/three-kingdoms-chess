@@ -73,7 +73,7 @@ test('music uses one looping player, independent volume and a path relative to t
   Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
   try {
     const sound = new GameAudio();
-    assert.match(sound.musicUrl(), /^https:\/\/example\.test\/three-chess\/audio\/background\.mp3\?v=e1ad20273c92$/);
+    assert.match(sound.musicUrl(), /^https:\/\/example\.test\/three-chess\/audio\/background\.mp3\?v=2fbbe9ade9ae$/);
     const settings = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true, musicVolume: 0.22 };
     await sound.setMusic(settings); // no autoplay before a gesture
     assert.equal(created.length, 0);

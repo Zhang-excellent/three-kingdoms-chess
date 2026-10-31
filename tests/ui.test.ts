@@ -36,8 +36,10 @@ test('screen starts with 29 pieces, Cao Cao highlighted and undo disabled', t =>
 test('local flip moves pieces, legal targets and last trail without changing canonical history', async t => {
   const wrapper = setup(t);
   const soldier = piece('魏','兵',1,7);
+  assert.deepEqual(wrapper.findAll('.river').map(river => river.text()), ['淮 河', '秦 岭']);
   assert.match(wrapper.get(soldier).attributes('style')!, /translate\(50px, 380px\)/);
   await wrapper.findAll('button').find(button => button.text() === '翻转棋盘')!.trigger('click');
+  assert.deepEqual(wrapper.findAll('.river').map(river => river.text()), ['秦 岭', '淮 河']);
   assert.match(wrapper.get(soldier).attributes('style')!, /translate\(490px, 215px\)/);
   assert.equal(wrapper.get('.coordinates text').text(), '9');
   await wrapper.get(soldier).trigger('click');
