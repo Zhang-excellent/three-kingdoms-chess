@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { Script } from 'node:vm';
@@ -44,8 +44,12 @@ mkdirSync(resolve(root, 'preview'), { recursive: true });
 writeFileSync(resolve(root, 'preview/试玩.html'), html);
 const audio = resolve(root, 'public/audio');
 if (existsSync(audio)) {
-  mkdirSync(resolve(root, 'preview/audio'), { recursive: true });
-  for (const name of readdirSync(audio).filter(name => name.endsWith('.mp3'))) {
+  const previewAudio = resolve(root, 'preview/audio');
+  mkdirSync(previewAudio, { recursive: true });
+  const names = readdirSync(audio).filter(name => name.endsWith('.mp3'));
+  for (const name of readdirSync(previewAudio).filter(name => name.endsWith('.mp3') && !names.includes(name)))
+    unlinkSync(resolve(previewAudio, name));
+  for (const name of names) {
     const destination = resolve(root, 'preview/audio', name);
     if (existsSync(destination)) chmodSync(destination, 0o666); // supplied files may carry Windows read-only attributes
     copyFileSync(resolve(audio, name), destination);

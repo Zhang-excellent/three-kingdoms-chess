@@ -14,22 +14,23 @@ test('sound settings default off, persist independent levels and reject malforme
     assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 0.2, musicPlaylistId: 'default', musicTrackId: 'liushang-qushui', effectsEnabled: false, effectsVolume: 0.8 });
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicEnabled: true, musicVolume: 30, effectsEnabled: true, effectsVolume: -5 }));
     assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 1, musicPlaylistId: 'default', musicTrackId: 'liushang-qushui', effectsEnabled: true, effectsVolume: 0 });
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'classical', musicTrackId: 'mozart-symphony-40' }));
+    assert.equal(loadAudioSettings().musicTrackId, 'mozart-symphony-40');
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'classical', musicTrackId: 'removed-song' }));
+    assert.equal(loadAudioSettings().musicTrackId, 'mozart-symphony-40');
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'guitar', musicTrackId: 'lebang-zhanshi-guitar' }));
-    assert.equal(loadAudioSettings().musicTrackId, 'lebang-zhanshi-guitar');
-    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'guitar', musicTrackId: 'removed-song' }));
-    assert.equal(loadAudioSettings().musicTrackId, 'lebang-zhanshi-guitar');
+    assert.deepEqual(loadAudioSettings(), { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: false, musicVolume: 0.35 });
   } finally { GlobalRegistrator.unregister(); }
 });
 
 test('catalogue supports several playlists and songs and falls back from deleted IDs', () => {
-  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default', 'guitar', 'classical']);
-  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水', '乐邦詹士（吉他）', '莫扎特《G小调第40交响曲》']);
-  const tracks = [...MUSIC_TRACKS, { id: 'another', name: '另一首', file: 'another.mp3', cacheVersion: 'abc', playlistId: 'guitar' }];
-  assert.deepEqual(tracksInPlaylist('guitar', tracks).map(item => item.id), ['lebang-zhanshi-guitar', 'another']);
-  assert.deepEqual(tracksInPlaylist('classical').map(item => item.id), ['mozart-symphony-40']);
-  assert.equal(availablePlaylists(MUSIC_PLAYLISTS, tracks).length, 3);
-  assert.deepEqual(resolveMusicSelection('default', 'another', MUSIC_PLAYLISTS, tracks), { playlistId: 'guitar', trackId: 'another' });
-  assert.deepEqual(resolveMusicSelection('guitar', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'guitar', trackId: 'lebang-zhanshi-guitar' });
+  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default', 'classical']);
+  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水', '莫扎特《G小调第40交响曲》']);
+  const tracks = [...MUSIC_TRACKS, { id: 'another', name: '另一首', file: 'another.mp3', cacheVersion: 'abc', playlistId: 'classical' }];
+  assert.deepEqual(tracksInPlaylist('classical', tracks).map(item => item.id), ['mozart-symphony-40', 'another']);
+  assert.equal(availablePlaylists(MUSIC_PLAYLISTS, tracks).length, 2);
+  assert.deepEqual(resolveMusicSelection('default', 'another', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'another' });
+  assert.deepEqual(resolveMusicSelection('classical', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'mozart-symphony-40' });
   assert.deepEqual(resolveMusicSelection('classical', 'mozart-symphony-40', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'mozart-symphony-40' });
   assert.deepEqual(resolveMusicSelection('removed', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'default', trackId: 'liushang-qushui' });
 });
@@ -118,10 +119,10 @@ test('rapid track changes reuse one player and ignore a late error from the old 
     const sound = new GameAudio();
     const first = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true };
     const oldRequest = sound.chooseMusic(first);
-    const latest = { ...first, musicPlaylistId: 'guitar', musicTrackId: 'lebang-zhanshi-guitar' };
+    const latest = { ...first, musicPlaylistId: 'classical', musicTrackId: 'mozart-symphony-40' };
     const newRequest = sound.chooseMusic(latest);
     assert.equal(created.length, 1);
-    assert.match(created[0].src, /lebang-zhanshi-guitar\.mp3\?v=bb95cbf27ff1$/);
+    assert.match(created[0].src, /mozart-symphony-40\.mp3\?v=1bcc472eee7c$/);
     pending[1].resolve();
     pending[0].reject(new Error('old playback aborted'));
     assert.equal(await newRequest, null);

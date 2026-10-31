@@ -167,8 +167,6 @@ test('settings keep music and effect switches and volumes independently on this 
   assert.match(wrapper.get('#music-playlist').text(), /古典/);
   await wrapper.get('#music-playlist').setValue('classical');
   assert.match(wrapper.get('#music-track').text(), /莫扎特《G小调第40交响曲》/);
-  await wrapper.get('#music-playlist').setValue('guitar');
-  assert.match(wrapper.get('#music-track').text(), /乐邦詹士（吉他）/);
   await wrapper.get('#effects-toggle').trigger('click');
   await wrapper.get('#effects-volume').setValue('0.42');
   await wrapper.get('#music-volume').setValue('0.18');
@@ -177,13 +175,13 @@ test('settings keep music and effect switches and volumes independently on this 
   assert.equal(saved.musicEnabled, false);
   assert.equal(saved.effectsVolume, 0.42);
   assert.equal(saved.musicVolume, 0.18);
-  assert.equal(saved.musicPlaylistId, 'guitar');
-  assert.equal(saved.musicTrackId, 'lebang-zhanshi-guitar');
+  assert.equal(saved.musicPlaylistId, 'classical');
+  assert.equal(saved.musicTrackId, 'mozart-symphony-40');
   wrapper = remount(t, wrapper);
   assert.equal(wrapper.get('#effects-toggle').text(), '开启');
   assert.equal(wrapper.get('#music-toggle').text(), '关闭');
   assert.equal((wrapper.get('#effects-volume').element as HTMLInputElement).value, '0.42');
-  assert.equal((wrapper.get('#music-track').element as HTMLSelectElement).value, 'lebang-zhanshi-guitar');
+  assert.equal((wrapper.get('#music-track').element as HTMLSelectElement).value, 'mozart-symphony-40');
 });
 test('finished local game presents one winner and two losses without placement labels', t => {
   localStorage.clear();
