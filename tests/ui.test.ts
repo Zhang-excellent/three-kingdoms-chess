@@ -73,7 +73,7 @@ test('clicking a piece reveals legal positions; moving lights Liu Bei and record
 });
 test('six consecutive UI moves rotate Cao Cao, Liu Bei and Sun Quan twice', async t => {
   const wrapper = setup(t);
-  for (const move of [{f:'魏',n:'兵',x:1,y:7,to:6,next:'刘备',slot:'1'},{f:'蜀',n:'卒',x:3,y:4,to:5,next:'孙权',slot:'2'},{f:'吴',n:'卒',x:7,y:4,to:5,next:'曹操',slot:'0'},{f:'魏',n:'兵',x:5,y:7,to:6,next:'刘备',slot:'1'},{f:'蜀',n:'卒',x:1,y:4,to:5,next:'孙权',slot:'2'},{f:'吴',n:'卒',x:9,y:4,to:5,next:'曹操',slot:'0'}]) {
+  for (const move of [{f:'魏',n:'兵',x:1,y:7,to:6,next:'刘备',slot:'1'},{f:'蜀',n:'卒',x:9,y:4,to:5,next:'孙权',slot:'2'},{f:'吴',n:'卒',x:1,y:4,to:5,next:'曹操',slot:'0'},{f:'魏',n:'兵',x:5,y:7,to:6,next:'刘备',slot:'1'},{f:'蜀',n:'卒',x:7,y:4,to:5,next:'孙权',slot:'2'},{f:'吴',n:'卒',x:3,y:4,to:5,next:'曹操',slot:'0'}]) {
     await wrapper.get(piece(move.f,move.n,move.x,move.y)).trigger('click');
     await wrapper.get(target(move.x,move.to)).trigger('click');
     assert.equal(wrapper.get('.player-card.active h2').text(),move.next);
@@ -83,10 +83,10 @@ test('six consecutive UI moves rotate Cao Cao, Liu Bei and Sun Quan twice', asyn
 });
 test('wrong-turn and illegal clicks show feedback without advancing the turn', async t => {
   const wrapper = setup(t);
-  await wrapper.get(piece('吴','卒',7,4)).trigger('click');
+  await wrapper.get(piece('吴','卒',5,4)).trigger('click');
   assert.equal(wrapper.findAll('g.legal-point').length,0); assert.match(wrapper.get('.feedback').text(),/曹操/);
   await wrapper.get(piece('魏','兵',1,7)).trigger('click');
-  await wrapper.get(piece('蜀','刘备',3,1)).trigger('click');
+  await wrapper.get(piece('蜀','刘备',7,1)).trigger('click');
   assert.ok(wrapper.find('.feedback.error').exists()); assert.equal(wrapper.get('.player-card.active h2').text(),'曹操');
   assert.equal(wrapper.findAll('.move-list li').length,0);
 });
@@ -102,23 +102,23 @@ test('undo restores piece position, previous avatar and last-move state', async 
 test('undo restores the exact Shu or Wu turn and move history', async t => {
   const wrapper = setup(t);
   await wrapper.get(piece('魏','兵',1,7)).trigger('click'); await wrapper.get(target(1,6)).trigger('click');
-  await wrapper.get(piece('蜀','卒',3,4)).trigger('click'); await wrapper.get(target(3,5)).trigger('click');
+  await wrapper.get(piece('蜀','卒',9,4)).trigger('click'); await wrapper.get(target(9,5)).trigger('click');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'2');
-  await wrapper.get(piece('吴','卒',7,4)).trigger('click'); await wrapper.get(target(7,5)).trigger('click');
+  await wrapper.get(piece('吴','卒',1,4)).trigger('click'); await wrapper.get(target(1,5)).trigger('click');
   await wrapper.findAll('button').find(b=>b.text().includes('悔棋'))!.trigger('click');
   assert.equal(wrapper.get('.player-card.active h2').text(),'孙权');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'2');
-  assert.ok(wrapper.find(piece('吴','卒',7,4)).exists());
+  assert.ok(wrapper.find(piece('吴','卒',1,4)).exists());
   assert.equal(wrapper.findAll('.move-list li').length,2);
 });
 test('refresh restores the three-slot position from versioned saves', async t => {
   let wrapper = setup(t);
   await wrapper.get(piece('魏','兵',1,7)).trigger('click'); await wrapper.get(target(1,6)).trigger('click');
-  await wrapper.get(piece('蜀','卒',3,4)).trigger('click'); await wrapper.get(target(3,5)).trigger('click');
+  await wrapper.get(piece('蜀','卒',9,4)).trigger('click'); await wrapper.get(target(9,5)).trigger('click');
   wrapper = remount(t,wrapper);
   assert.equal(wrapper.get('.player-card.active h2').text(),'孙权');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'2');
-  await wrapper.get(piece('吴','卒',7,4)).trigger('click'); await wrapper.get(target(7,5)).trigger('click');
+  await wrapper.get(piece('吴','卒',1,4)).trigger('click'); await wrapper.get(target(1,5)).trigger('click');
   wrapper = remount(t,wrapper);
   assert.equal(wrapper.get('.player-card.active h2').text(),'曹操');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'0');
@@ -162,16 +162,21 @@ test('old ranking save remains untouched and cannot silently resume under win-lo
 test('previous initial layout remains untouched and requires a new game', async t => {
   localStorage.clear();
   const previous = newGame();
-  previous.rulesVersion = 'independent-win-loss-draw-v1';
-  const center = previous.pieces.find(piece => piece.x === 4 && piece.y === 3)!;
-  center.faction = 'shu'; center.id = 'shu-pawn-4-3';
+  previous.rulesVersion = 'independent-win-loss-draw-layout-v2';
+  for (const piece of previous.pieces) {
+    if (piece.faction === 'wei') continue;
+    piece.x = 8 - piece.x;
+    piece.id = `${piece.faction}-${piece.kind}-${piece.x}-${piece.y}`;
+  }
   const saved = JSON.stringify({ rulesVersion: previous.rulesVersion, game: previous, undo: [] });
   localStorage.setItem('three-kingdoms-chess:win-loss-v1', saved);
   const wrapper = setup(t, false);
   assert.ok(wrapper.find('.legacy-save-banner').exists());
   assert.match(wrapper.get('.feedback').text(), /另开一局/);
   assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'), saved);
-  assert.equal(JSON.parse(saved).game.pieces.find((piece: { x: number; y: number }) => piece.x === 4 && piece.y === 3).faction, 'shu');
+  const storedPieces = JSON.parse(saved).game.pieces as Array<{ id: string; faction: string; x: number; y: number }>;
+  assert.equal(storedPieces.find(piece => piece.x === 4 && piece.y === 3)?.faction, 'wu');
+  assert.equal(storedPieces.find(piece => piece.faction === 'shu' && piece.x === 0 && piece.y === 0)?.id, 'shu-rook-0-0');
   await wrapper.get('.legacy-save-banner .primary-button').trigger('click');
   assert.ok(wrapper.find(piece('吴','卒',5,4)).exists());
 });

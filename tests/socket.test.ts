@@ -77,7 +77,7 @@ test('three independent Socket.IO clients create, join, start, move, and reconne
   const nearEnd = newGame();
   nearEnd.pieces = nearEnd.pieces.filter(piece => piece.kind === 'king');
   nearEnd.pieces.push({ id: 'shu-attacker', faction: 'shu', kind: 'rook', x: 4, y: 7 },
-    { id: 'wu-attacker', faction: 'wu', kind: 'rook', x: 2, y: 1 });
+    { id: 'wu-attacker', faction: 'wu', kind: 'rook', x: 6, y: 1 });
   nearEnd.turn = 'shu'; nearEnd.turnSlot = 1;
   stored.game = nearEnd; stored.version++;
   success(await emit(resumedClient, 'game:move', { roomCode: a.roomCode, reconnectToken: b.reconnectToken,
@@ -85,7 +85,7 @@ test('three independent Socket.IO clients create, join, start, move, and reconne
   await pause();
   assert.equal(latest.every(state => state?.game?.status === 'playing' && state.game.results.wei === 'lost' && state.game.results.wu === 'playing' && state.game.turn === 'wu'), true);
   success(await emit(wu, 'game:move', { roomCode: a.roomCode, reconnectToken: c.reconnectToken,
-    intent: { requestId: 'shuout0001', version: stored.version, pieceId: 'wu-attacker', to: { x: 2, y: 0 } } }));
+    intent: { requestId: 'shuout0001', version: stored.version, pieceId: 'wu-attacker', to: { x: 6, y: 0 } } }));
   await pause();
   assert.equal(latest.every(state => state?.phase === 'finished' && state.game?.winner === 'wu'
     && state.game.results.wei === 'lost' && state.game.results.shu === 'lost' && state.game.results.wu === 'won'), true);
@@ -179,7 +179,7 @@ test('three sockets receive resignation and in-game exit; departed connection ca
   assert.equal(latest[2]?.game?.results.shu, 'lost');
   assert.equal(latest[2]?.game?.results.wu, 'won');
   const departed = await emit(shu, 'game:move', { roomCode: a.roomCode, reconnectToken: b.reconnectToken,
-    intent: { requestId: 'departed01', version: latest[2]!.version, pieceId: 'shu-pawn-2-3', to: { x: 2, y: 4 } } });
+    intent: { requestId: 'departed01', version: latest[2]!.version, pieceId: 'shu-pawn-6-3', to: { x: 6, y: 4 } } });
   assert.equal(departed.ok, false);
 });
 

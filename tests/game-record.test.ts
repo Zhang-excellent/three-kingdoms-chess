@@ -9,12 +9,13 @@ test('game record exports readable moves, versioned rules and both board states'
   if (!moved.ok) return;
   const record = buildGameRecord(moved.game, new Date(2026, 9, 28, 23, 7, 9));
   assert.match(record, /^# 三国象棋棋谱/);
-  assert.match(record, /规则版本：`independent-win-loss-draw-layout-v2`/);
+  assert.match(record, /规则版本：`independent-win-loss-draw-mirrored-layout-v3`/);
   assert.match(record, /导出时间：2026-10-28 23:07:09/);
   assert.match(record, /对局状态：对局进行中，轮到刘备/);
   assert.match(record, /1\. 曹操 · 兵 \(1, 7\) → \(1, 6\)/);
   assert.match(record, /## 初始子力[\s\S]*- 魏方（16 枚）：[\s\S]*- 蜀方（6 枚）：[\s\S]*- 吴方（7 枚）：/);
-  assert.match(record, /吴方（7 枚）：.*吴方卒 \(5, 4\)/);
+  assert.match(record, /吴方（7 枚）：吴方车 \(1, 1\)、吴方孙权 \(3, 1\)、吴方炮 \(2, 3\)、吴方锋 \(4, 3\)、吴方卒 \(1, 4\)、吴方卒 \(3, 4\)、吴方卒 \(5, 4\)/);
+  assert.match(record, /蜀方（6 枚）：蜀方车 \(9, 1\)、蜀方刘备 \(7, 1\)、蜀方炮 \(8, 3\)、蜀方锋 \(6, 3\)、蜀方卒 \(7, 4\)、蜀方卒 \(9, 4\)/);
   assert.match(record, /## 导出时子力[\s\S]*魏方兵 \(1, 6\)/);
   assert.equal(gameRecordFileName(new Date(2026, 9, 28, 23, 7, 9)), '三国象棋棋谱-20261028-230709.md');
 });
@@ -46,13 +47,16 @@ test('game record rejects an invalid snapshot instead of exporting misleading da
   assert.throws(() => buildGameRecord({ ...newGame(), turn: null }), /无法导出无效棋局/);
 });
 
-test('game record rejects the previous central-pawn layout without mutating it', () => {
+test('game record rejects the previous right-Shu layout without mutating it', () => {
   const previous = newGame();
-  previous.rulesVersion = 'independent-win-loss-draw-v1';
-  const center = previous.pieces.find(piece => piece.x === 4 && piece.y === 3)!;
-  center.faction = 'shu'; center.id = 'shu-pawn-4-3';
+  previous.rulesVersion = 'independent-win-loss-draw-layout-v2';
+  for (const piece of previous.pieces) {
+    if (piece.faction === 'wei') continue;
+    piece.x = 8 - piece.x;
+    piece.id = `${piece.faction}-${piece.kind}-${piece.x}-${piece.y}`;
+  }
   const before = JSON.stringify(previous);
   assert.throws(() => buildGameRecord(previous), /无法导出无效棋局/);
   assert.equal(JSON.stringify(previous), before);
-  assert.equal(center.faction, 'shu');
+  assert.equal(previous.pieces.find(piece => piece.faction === 'shu' && piece.x === 0 && piece.y === 0)?.kind, 'rook');
 });

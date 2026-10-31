@@ -68,19 +68,19 @@ test('a room rejects a fourth player and separate rooms never share state', asyn
 test('server enforces faction ownership, turn, legal moves, and three-slot order', async () => {
   const { service, code, players, room } = startedRoom();
   failure(await service.submitMove(code, players[1].reconnectToken, intent('wrongturn1', room.version, 'wei-pawn-0-6', 0, 5)), 'NOT_YOUR_TURN');
-  failure(await service.submitMove(code, players[0].reconnectToken, intent('wrongpiece', room.version, 'shu-pawn-2-3', 2, 4)), 'NOT_YOUR_PIECE');
+  failure(await service.submitMove(code, players[0].reconnectToken, intent('wrongpiece', room.version, 'shu-pawn-6-3', 6, 4)), 'NOT_YOUR_PIECE');
   failure(await service.submitMove(code, players[0].reconnectToken, intent('illegal001', room.version, 'wei-pawn-0-6', 1, 6)), 'ILLEGAL_MOVE');
   const sequence = [
-    [0, 'wei-pawn-0-6', 0, 5], [1, 'shu-pawn-2-3', 2, 4], [2, 'wu-pawn-6-3', 6, 4],
-    [0, 'wei-pawn-4-6', 4, 5], [1, 'shu-pawn-0-3', 0, 4], [2, 'wu-pawn-8-3', 8, 4],
-    [0, 'wei-pawn-2-6', 2, 5], [1, 'shu-pawn-2-3', 2, 5], [2, 'wu-pawn-4-3', 4, 4],
+    [0, 'wei-pawn-0-6', 0, 5], [1, 'shu-pawn-6-3', 6, 4], [2, 'wu-pawn-0-3', 0, 4],
+    [0, 'wei-pawn-4-6', 4, 5], [1, 'shu-pawn-8-3', 8, 4], [2, 'wu-pawn-2-3', 2, 4],
+    [0, 'wei-pawn-2-6', 2, 5], [1, 'shu-pawn-6-3', 6, 5], [2, 'wu-pawn-4-3', 4, 4],
   ] as const;
   for (const [index, [playerIndex, piece, x, y]] of sequence.entries()) {
     const result = await service.submitMove(code, players[playerIndex].reconnectToken,
       intent(`sequence${index}`, room.version, piece, x, y));
     assert.equal(result.ack.ok, true);
     if (index === 0) failure(await service.submitMove(code, players[1].reconnectToken,
-      intent('allypiece1', room.version, 'wu-pawn-6-3', 6, 4)), 'NOT_YOUR_PIECE');
+    intent('allypiece1', room.version, 'wu-pawn-0-3', 0, 4)), 'NOT_YOUR_PIECE');
   }
   assert.deepEqual(room.game?.history.map(move => move.turnSlot), [0, 1, 2, 0, 1, 2, 0, 1, 2]);
   assert.equal(room.game?.turn, 'wei'); assert.equal(room.game?.turnSlot, 0);
@@ -101,7 +101,7 @@ test('serial processing, versions, and request ids prevent double moves', async 
   failure(await service.submitMove(code, players[0].reconnectToken,
     intent('duplicate1', version, 'wei-pawn-4-6', 4, 5)), 'REQUEST_ID_REUSED');
   failure(await service.submitMove(code, players[1].reconnectToken,
-    intent('stale0001', version, 'shu-pawn-2-3', 2, 4)), 'STALE_VERSION');
+    intent('stale0001', version, 'shu-pawn-6-3', 6, 4)), 'STALE_VERSION');
 });
 
 test('only the current faction may offer a draw and all surviving factions must accept', async () => {
@@ -231,7 +231,7 @@ test('resignation and active exit mark losses once, while finished game rejects 
   assert.equal(room.game?.winner, 'wu');
   assert.equal(room.players.length, 2);
   assert.equal((await service.submitMove(code, players[2].reconnectToken,
-    intent('afterend01', room.version, 'wu-pawn-6-3', 6, 4), 'socket-wu')).ack.ok, false);
+    intent('afterend01', room.version, 'wu-pawn-0-3', 0, 4), 'socket-wu')).ack.ok, false);
   assert.equal((await service.leaveRoom(code, players[0].reconnectToken, 'socket-wei')).ack.ok, true);
   assert.equal(room.game?.results.wei, 'lost');
 });

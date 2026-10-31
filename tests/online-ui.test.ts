@@ -157,8 +157,8 @@ test('Wei, Shu and Wu restore their own fixed view and a turn change never rotat
     for (let index = 0; index < 3; index++)
       success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1 }));
     for (const [index, king, expectedX] of [
-      [1, '蜀方刘备，第3路第1线', '380px'],
-      [2, '吴方孙权，第7路第1线', '160px'],
+      [1, '蜀方刘备，第7路第1线', '160px'],
+      [2, '吴方孙权，第3路第1线', '380px'],
       [0, '魏方曹操，第5路第10线', '270px'],
     ] as const) {
       localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
@@ -241,4 +241,81 @@ test('online draw prompt only enables for the current player and both opponents 
     assert.equal(room.game?.winner, null);
     assert.equal(room.game?.status, 'finished');
   } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
+});
+
+test('all three factions use their default orientation and make a legal move', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
+  const players: Socket[] = [];
+  const mountedWrappers: Array<ReturnType<typeof mount>> = [];
+  try {
+    for (let index = 0; index < 3; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '400005', nickname: '默认魏' }));
+    const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '默认蜀' }));
+    const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '默认吴' }));
+    const receipts = [a, b, c];
+    for (let index = 0; index < 3; index++) {
+      success(await send(players[index], 'room:choose-faction', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction: ['wei', 'shu', 'wu'][index], round: 1,
+      }));
+      success(await send(players[index], 'room:ready', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1,
+      }));
+    }
+    const room = server.rooms.getRoom(a.roomCode)!;
+    const mountFaction = async (receipt: SessionReceipt, nickname: string): Promise<ReturnType<typeof mount>> => {
+      localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+        roomCode: a.roomCode, reconnectToken: receipt.reconnectToken, playerId: receipt.playerId, nickname,
+      }));
+      history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${a.roomCode}`);
+      const mounted = mount(App, { attachTo: document.body });
+      mountedWrappers.push(mounted);
+      await waitUntil(() => mounted.find('.board-panel').exists(), `${nickname} board did not open`);
+      return mounted;
+    };
+
+    let current = await mountFaction(a, '默认魏');
+    assert.equal(current.get('.board-svg').attributes('aria-label')?.includes('已翻转'), false);
+    assert.match(current.get('g.piece[aria-label="魏方曹操，第5路第10线"]').attributes('style')!, /translate\(270px, 545px\)/);
+    await current.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');
+    await current.get('g.legal-point[aria-label="走到第1路第6线"]').trigger('click');
+    await waitUntil(() => room.game?.history.length === 1 && room.game.turn === 'shu', 'Wei UI move failed');
+    assert.match(current.get('.last-move-card').text(), /\(1, 7\).*\(1, 6\)/);
+    current.unmount(); mountedWrappers.pop();
+
+    current = await mountFaction(b, '默认蜀');
+    assert.equal(current.get('.board-svg').attributes('aria-label')?.includes('已翻转'), true);
+    assert.match(current.get('g.piece[aria-label="蜀方刘备，第7路第1线"]').attributes('style')!, /translate\(160px, 545px\)/);
+    assert.match(current.get('g.piece[aria-label="吴方孙权，第3路第1线"]').attributes('style')!, /translate\(380px, 545px\)/);
+    await current.get('g.piece[aria-label="蜀方卒，第9路第4线"]').trigger('click');
+    const shuTarget = current.get('g.legal-point[aria-label="走到第9路第5线"]');
+    assert.equal(shuTarget.find('circle').attributes('cx'), '50');
+    assert.equal(shuTarget.find('circle').attributes('cy'), '325');
+    await shuTarget.trigger('click');
+    await waitUntil(() => room.game?.history.length === 2 && room.game.turn === 'wu', 'Shu UI move failed');
+    assert.equal(current.get('.last-trail line').attributes('x1'), '50');
+    assert.equal(current.get('.last-trail line').attributes('y1'), '380');
+    assert.match(current.get('.last-move-card').text(), /\(9, 4\).*\(9, 5\)/);
+    current.unmount(); mountedWrappers.pop();
+
+    current = await mountFaction(c, '默认吴');
+    assert.equal(current.get('.board-svg').attributes('aria-label')?.includes('已翻转'), true);
+    assert.match(current.get('g.piece[aria-label="蜀方刘备，第7路第1线"]').attributes('style')!, /translate\(160px, 545px\)/);
+    assert.match(current.get('g.piece[aria-label="吴方孙权，第3路第1线"]').attributes('style')!, /translate\(380px, 545px\)/);
+    await current.get('g.piece[aria-label="吴方卒，第5路第4线"]').trigger('click');
+    const wuTarget = current.get('g.legal-point[aria-label="走到第5路第5线"]');
+    assert.equal(wuTarget.find('circle').attributes('cx'), '270');
+    assert.equal(wuTarget.find('circle').attributes('cy'), '325');
+    await wuTarget.trigger('click');
+    await waitUntil(() => room.game?.history.length === 3 && room.game.turn === 'wei', 'Wu UI move failed');
+    assert.equal(current.get('.last-trail line').attributes('x1'), '270');
+    assert.equal(current.get('.last-trail line').attributes('y1'), '380');
+    assert.match(current.get('.last-move-card').text(), /\(5, 4\).*\(5, 5\)/);
+  } finally {
+    for (const mounted of mountedWrappers) mounted.unmount();
+    players.forEach(socket => socket.disconnect());
+  }
 });

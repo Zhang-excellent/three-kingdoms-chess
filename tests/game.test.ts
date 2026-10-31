@@ -61,15 +61,23 @@ test('initial board has 29 unique pieces and the central pawn belongs to Wu', ()
   assert.equal(g.pieces.length,29); assert.equal(new Set(g.pieces.map(q=>`${q.x},${q.y}`)).size,29);
   assert.deepEqual(['wei','shu','wu'].map(f=>g.pieces.filter(q=>q.faction===f).length),[16,6,7]);
   assert.equal(at(g.pieces,{x:4,y:3})?.faction,'wu'); assert.equal(at(g.pieces,{x:4,y:3})?.id,'wu-pawn-4-3');
+  assert.deepEqual(g.pieces.filter(piece => piece.faction === 'wu').map(piece => [piece.kind, piece.x, piece.y]), [
+    ['rook', 0, 0], ['king', 2, 0], ['cannon', 1, 2], ['feng', 3, 2],
+    ['pawn', 0, 3], ['pawn', 2, 3], ['pawn', 4, 3],
+  ]);
+  assert.deepEqual(g.pieces.filter(piece => piece.faction === 'shu').map(piece => [piece.kind, piece.x, piece.y]), [
+    ['rook', 8, 0], ['king', 6, 0], ['cannon', 7, 2], ['feng', 5, 2],
+    ['pawn', 6, 3], ['pawn', 8, 3],
+  ]);
   assert.deepEqual(legalMoves(g.pieces, at(g.pieces,{x:4,y:3})!), [{ x: 4, y: 4 }]);
   assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0); assert.equal(validGame(g),true);
 });
 test('the first nine moves follow Wei, Shu, Wu three times and record every cycle slot', () => {
   let g = newGame();
   const moves = [
-    ['wei-pawn-0-6',{x:0,y:5}], ['shu-pawn-2-3',{x:2,y:4}], ['wu-pawn-6-3',{x:6,y:4}],
-    ['wei-pawn-4-6',{x:4,y:5}], ['shu-pawn-0-3',{x:0,y:4}], ['wu-pawn-8-3',{x:8,y:4}],
-    ['wei-pawn-2-6',{x:2,y:5}], ['shu-pawn-2-3',{x:2,y:5}], ['wu-pawn-4-3',{x:4,y:4}],
+    ['wei-pawn-0-6',{x:0,y:5}], ['shu-pawn-6-3',{x:6,y:4}], ['wu-pawn-0-3',{x:0,y:4}],
+    ['wei-pawn-4-6',{x:4,y:5}], ['shu-pawn-8-3',{x:8,y:4}], ['wu-pawn-2-3',{x:2,y:4}],
+    ['wei-pawn-2-6',{x:2,y:5}], ['shu-pawn-6-3',{x:6,y:5}], ['wu-pawn-4-3',{x:4,y:4}],
   ] as const;
   const expected = ['wei','shu','wu','wei','shu','wu','wei','shu','wu'] as const;
   for (let index=0; index<moves.length; index++) {
@@ -85,7 +93,7 @@ test('the first nine moves follow Wei, Shu, Wu three times and record every cycl
 });
 test('wrong player and illegal moves neither change turn nor add history', () => {
   const g = newGame(), before = JSON.stringify(g);
-  assert.equal(playMove(g,'shu-rook-0-0',{x:0,y:1}).ok,false);
+  assert.equal(playMove(g,'shu-rook-8-0',{x:8,y:1}).ok,false);
   assert.equal(playMove(g,'wei-pawn-0-6',{x:1,y:6}).ok,false);
   assert.equal(g.turnSlot,0);
   assert.equal(JSON.stringify(g),before);
