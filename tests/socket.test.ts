@@ -36,6 +36,13 @@ function success<T>(ack: ClientAck<T>): T {
 
 const pause = () => new Promise(resolve => setTimeout(resolve, 30));
 
+test('missing or retired audio paths return 404 instead of the application HTML', async () => {
+  const response = await fetch(`${origin}/three-chess/audio/lebang-zhanshi-guitar.mp3`);
+  assert.equal(response.status, 404);
+  assert.match(response.headers.get('content-type') ?? '', /^text\/plain/);
+  assert.equal(await response.text(), 'Audio not found');
+});
+
 test('three independent Socket.IO clients create, join, start, move, and reconnect in sync', async () => {
   const [wei, shu, wu] = await Promise.all([client(), client(), client()]);
   const latest: Array<RoomView | null> = [null, null, null];
