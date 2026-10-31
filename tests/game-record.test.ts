@@ -9,11 +9,12 @@ test('game record exports readable moves, versioned rules and both board states'
   if (!moved.ok) return;
   const record = buildGameRecord(moved.game, new Date(2026, 9, 28, 23, 7, 9));
   assert.match(record, /^# 三国象棋棋谱/);
-  assert.match(record, /规则版本：`independent-win-loss-draw-v1`/);
+  assert.match(record, /规则版本：`independent-win-loss-draw-layout-v2`/);
   assert.match(record, /导出时间：2026-10-28 23:07:09/);
   assert.match(record, /对局状态：对局进行中，轮到刘备/);
   assert.match(record, /1\. 曹操 · 兵 \(1, 7\) → \(1, 6\)/);
-  assert.match(record, /## 初始子力[\s\S]*- 魏方（16 枚）：[\s\S]*- 蜀方（7 枚）：[\s\S]*- 吴方（6 枚）：/);
+  assert.match(record, /## 初始子力[\s\S]*- 魏方（16 枚）：[\s\S]*- 蜀方（6 枚）：[\s\S]*- 吴方（7 枚）：/);
+  assert.match(record, /吴方（7 枚）：.*吴方卒 \(5, 4\)/);
   assert.match(record, /## 导出时子力[\s\S]*魏方兵 \(1, 6\)/);
   assert.equal(gameRecordFileName(new Date(2026, 9, 28, 23, 7, 9)), '三国象棋棋谱-20261028-230709.md');
 });
@@ -43,4 +44,15 @@ test('game record labels unanimous draw results', () => {
 
 test('game record rejects an invalid snapshot instead of exporting misleading data', () => {
   assert.throws(() => buildGameRecord({ ...newGame(), turn: null }), /无法导出无效棋局/);
+});
+
+test('game record rejects the previous central-pawn layout without mutating it', () => {
+  const previous = newGame();
+  previous.rulesVersion = 'independent-win-loss-draw-v1';
+  const center = previous.pieces.find(piece => piece.x === 4 && piece.y === 3)!;
+  center.faction = 'shu'; center.id = 'shu-pawn-4-3';
+  const before = JSON.stringify(previous);
+  assert.throws(() => buildGameRecord(previous), /无法导出无效棋局/);
+  assert.equal(JSON.stringify(previous), before);
+  assert.equal(center.faction, 'shu');
 });

@@ -23,6 +23,9 @@ const target = (x: number, y: number) => `g.legal-point[aria-label="走到第${x
 test('screen starts with 29 pieces, Cao Cao highlighted and undo disabled', t => {
   const wrapper = setup(t);
   assert.equal(wrapper.findAll('g.piece').length,29);
+  const center = wrapper.get(piece('吴','卒',5,4));
+  assert.ok(center.classes().includes('wu'));
+  assert.equal(wrapper.find(piece('蜀','卒',5,4)).exists(),false);
   assert.equal(wrapper.get('.player-card.active h2').text(),'曹操');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'0');
   assert.match(wrapper.get('.turn-order').text(),/曹操.*刘备.*孙权/);
@@ -155,6 +158,22 @@ test('old ranking save remains untouched and cannot silently resume under win-lo
   assert.ok(wrapper.find('.legacy-save-banner').exists());
   assert.equal(localStorage.getItem('three-kingdoms-chess:independent-v1'), previous);
   assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'), null);
+});
+test('previous initial layout remains untouched and requires a new game', async t => {
+  localStorage.clear();
+  const previous = newGame();
+  previous.rulesVersion = 'independent-win-loss-draw-v1';
+  const center = previous.pieces.find(piece => piece.x === 4 && piece.y === 3)!;
+  center.faction = 'shu'; center.id = 'shu-pawn-4-3';
+  const saved = JSON.stringify({ rulesVersion: previous.rulesVersion, game: previous, undo: [] });
+  localStorage.setItem('three-kingdoms-chess:win-loss-v1', saved);
+  const wrapper = setup(t, false);
+  assert.ok(wrapper.find('.legacy-save-banner').exists());
+  assert.match(wrapper.get('.feedback').text(), /另开一局/);
+  assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'), saved);
+  assert.equal(JSON.parse(saved).game.pieces.find((piece: { x: number; y: number }) => piece.x === 4 && piece.y === 3).faction, 'shu');
+  await wrapper.get('.legacy-save-banner .primary-button').trigger('click');
+  assert.ok(wrapper.find(piece('吴','卒',5,4)).exists());
 });
 test('settings keep music and effect switches and volumes independently on this browser', async t => {
   localStorage.clear();

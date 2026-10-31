@@ -18,7 +18,7 @@ export type MoveResult = { ok: true; game: Game; notices: string[] } | { ok: fal
 
 export const ORDER: Faction[] = ['wei', 'shu', 'wu'];
 export const TURN_CYCLE: readonly Faction[] = ['wei', 'shu', 'wu'];
-export const RULES_VERSION = 'independent-win-loss-draw-v1';
+export const RULES_VERSION = 'independent-win-loss-draw-layout-v2';
 export const PLAYERS = {
   wei: { nation: '魏', name: '曹操', color: '#ac493b', initial: '曹', team: '独立阵营' },
   shu: { nation: '蜀', name: '刘备', color: '#303943', initial: '刘', team: '独立阵营' },
@@ -42,10 +42,10 @@ export function newGame(): Game {
   [0, 2, 4, 6, 8].forEach(x => add('wei', 'pawn', x, 6));
   add('shu', 'rook', 0, 0); add('shu', 'king', 2, 0);
   add('shu', 'cannon', 1, 2); add('shu', 'feng', 3, 2);
-  [0, 2, 4].forEach(x => add('shu', 'pawn', x, 3));
+  [0, 2].forEach(x => add('shu', 'pawn', x, 3));
   add('wu', 'rook', 8, 0); add('wu', 'king', 6, 0);
   add('wu', 'cannon', 7, 2); add('wu', 'feng', 5, 2);
-  [6, 8].forEach(x => add('wu', 'pawn', x, 3));
+  [4, 6, 8].forEach(x => add('wu', 'pawn', x, 3));
   return { schema: 3, rulesVersion: RULES_VERSION, pieces, turn: 'wei', turnSlot: 0, eliminated: [], results: { wei: 'playing', shu: 'playing', wu: 'playing' }, history: [], lastMove: null, winner: null, status: 'playing' };
 }
 

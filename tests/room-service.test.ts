@@ -36,6 +36,7 @@ function startedRoom() {
   }
   const room = service.getRoom(first.roomCode)!;
   assert.equal(room.phase, 'playing'); assert.equal(room.game?.pieces.length, 29);
+  assert.equal(room.game?.pieces.find(piece => piece.x === 4 && piece.y === 3)?.faction, 'wu');
   return { service, code: first.roomCode, players, room };
 }
 
@@ -72,7 +73,7 @@ test('server enforces faction ownership, turn, legal moves, and three-slot order
   const sequence = [
     [0, 'wei-pawn-0-6', 0, 5], [1, 'shu-pawn-2-3', 2, 4], [2, 'wu-pawn-6-3', 6, 4],
     [0, 'wei-pawn-4-6', 4, 5], [1, 'shu-pawn-0-3', 0, 4], [2, 'wu-pawn-8-3', 8, 4],
-    [0, 'wei-pawn-2-6', 2, 5], [1, 'shu-pawn-4-3', 4, 4], [2, 'wu-feng-5-2', 5, 3],
+    [0, 'wei-pawn-2-6', 2, 5], [1, 'shu-pawn-2-3', 2, 5], [2, 'wu-pawn-4-3', 4, 4],
   ] as const;
   for (const [index, [playerIndex, piece, x, y]] of sequence.entries()) {
     const result = await service.submitMove(code, players[playerIndex].reconnectToken,
@@ -287,6 +288,7 @@ test('finished game enters same-room next lobby, keeps old result until three on
   assert.equal(room.phase, 'playing'); assert.equal(room.round, 2);
   assert.equal(room.game?.history.length, 0); assert.equal(room.game?.lastMove, null);
   assert.equal(room.game?.turn, 'wei'); assert.equal(room.game?.pieces.length, 29);
+  assert.equal(room.game?.pieces.find(piece => piece.x === 4 && piece.y === 3)?.faction, 'wu');
   assert.deepEqual(room.game?.results, { wei: 'playing', shu: 'playing', wu: 'playing' });
   failure(await service.rematchRoom(code, players[0].reconnectToken, room.version, 'socket-wei'), 'GAME_NOT_FINISHED');
 });

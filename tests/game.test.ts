@@ -56,18 +56,20 @@ test('unanimous draws finish active factions while preserving earlier eliminatio
   assert.equal(drawGame(twoPlayerDraw.game).ok, false);
 });
 
-test('initial board has 29 unique pieces and the central pawn belongs to Shu', () => {
+test('initial board has 29 unique pieces and the central pawn belongs to Wu', () => {
   const g = newGame();
   assert.equal(g.pieces.length,29); assert.equal(new Set(g.pieces.map(q=>`${q.x},${q.y}`)).size,29);
-  assert.deepEqual(['wei','shu','wu'].map(f=>g.pieces.filter(q=>q.faction===f).length),[16,7,6]);
-  assert.equal(at(g.pieces,{x:4,y:3})?.faction,'shu'); assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0); assert.equal(validGame(g),true);
+  assert.deepEqual(['wei','shu','wu'].map(f=>g.pieces.filter(q=>q.faction===f).length),[16,6,7]);
+  assert.equal(at(g.pieces,{x:4,y:3})?.faction,'wu'); assert.equal(at(g.pieces,{x:4,y:3})?.id,'wu-pawn-4-3');
+  assert.deepEqual(legalMoves(g.pieces, at(g.pieces,{x:4,y:3})!), [{ x: 4, y: 4 }]);
+  assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0); assert.equal(validGame(g),true);
 });
 test('the first nine moves follow Wei, Shu, Wu three times and record every cycle slot', () => {
   let g = newGame();
   const moves = [
     ['wei-pawn-0-6',{x:0,y:5}], ['shu-pawn-2-3',{x:2,y:4}], ['wu-pawn-6-3',{x:6,y:4}],
     ['wei-pawn-4-6',{x:4,y:5}], ['shu-pawn-0-3',{x:0,y:4}], ['wu-pawn-8-3',{x:8,y:4}],
-    ['wei-pawn-2-6',{x:2,y:5}], ['shu-pawn-4-3',{x:4,y:4}], ['wu-feng-5-2',{x:5,y:3}],
+    ['wei-pawn-2-6',{x:2,y:5}], ['shu-pawn-2-3',{x:2,y:5}], ['wu-pawn-4-3',{x:4,y:4}],
   ] as const;
   const expected = ['wei','shu','wu','wei','shu','wu','wei','shu','wu'] as const;
   for (let index=0; index<moves.length; index++) {
@@ -77,7 +79,8 @@ test('the first nine moves follow Wei, Shu, Wu three times and record every cycl
   assert.deepEqual(g.history.map(record=>record.faction),expected);
   assert.deepEqual(g.history.map(record=>record.turnSlot),[0,1,2,0,1,2,0,1,2]);
   assert.equal(g.turn,'wei'); assert.equal(g.turnSlot,0);
-  assert.equal(g.history.length,9); assert.deepEqual(g.lastMove?.from,{x:5,y:2}); assert.deepEqual(g.lastMove?.to,{x:5,y:3});
+  assert.equal(g.history.length,9); assert.deepEqual(g.lastMove?.from,{x:4,y:3}); assert.deepEqual(g.lastMove?.to,{x:4,y:4});
+  assert.equal(g.lastMove?.faction,'wu');
   assert.equal(validGame(g),true);
 });
 test('wrong player and illegal moves neither change turn nor add history', () => {
