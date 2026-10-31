@@ -10,3 +10,5 @@
 - Run browser acceptance where supported and report what was actually verified. Simulated-DOM tests do not prove visual or touch correctness.
 - Preserve existing Git history, user documents and images when integrating this baseline into the existing GitHub repository.
 - After each substantial completed change, run the relevant verification, create a local Git commit, and push the resulting branch to the configured GitHub remote. Never force-push over existing history; report authentication or remote conflicts instead of bypassing them.
+- Whenever a completed source change is ready to deploy, include copy-paste PowerShell deployment commands in the final response even when the user says not to deploy yet. The command block must start with the absolute project `cd` command, followed by the exact `scp` upload command and the exact `ssh` activation command for that commit's generated release archive and update script.
+- Keep the generated archive name, update script name, commit ID, and expected deployment marker in the handoff. Do not deploy production unless the user explicitly asks; providing commands is a documentation handoff, not authorization to run them.
