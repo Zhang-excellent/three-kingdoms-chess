@@ -69,7 +69,7 @@ const saveAvailable = ref(storageUsable), compatibilityWarning = ref(requiresNew
 const online = useOnlineRoom();
 const initialRoute = parseAppRoute(location.href), page = ref<AppPage>(initialRoute.page);
 const requestedRoomCode = ref(initialRoute.roomCode), lobbyListed = ref(true);
-const { mode, nickname, createCode, joinCode, room, self, connection, error: onlineError, exitNotice, busy: onlineBusy,
+const { mode, nickname, createCode, joinCode, room, self, connection, error: onlineError, busy: onlineBusy,
   spectating, watchCode, watchingCode, hasSession, savedRoomCode, lobbyRooms, lobbyLoaded } = online;
 const fallbackGame = newGame();
 const game = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
@@ -401,12 +401,11 @@ async function requestRematch() {
     <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>
 
     <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
-      @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @rules="rulesDialog?.showModal()"
-      @settings="settingsDialog?.showModal()" @resume="openCurrentRoom" />
+      @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @resume="openCurrentRoom" />
 
     <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname"
       :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
-      :error="onlineError || exitNotice || (roomRouteMismatch ? `你仍在房间 ${room?.code}。请先返回原房间并退出，再加入 ${requestedRoomCode}。` : '')"
+      :error="onlineError || (roomRouteMismatch ? `你仍在房间 ${room?.code}。请先返回原房间并退出，再加入 ${requestedRoomCode}。` : '')"
       :loaded="lobbyLoaded" :has-room="hasSession"
       :current-room-code="room?.code ?? savedRoomCode" :current-room-phase="currentRoomPhase"
       @home="openHomePage" @switch-public="openLobbyPage" @switch-friends="openFriendsPage" @resume="openCurrentRoom"

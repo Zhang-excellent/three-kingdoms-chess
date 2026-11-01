@@ -47,6 +47,8 @@ const tableSlots = computed(() => Array.from({ length: 9 }, (_, index) =>
   props.rooms.filter(room => room.code !== PUBLIC_ROOM_CODE)[index] ?? null));
 const playerAt = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) =>
   room?.players.find(player => player.faction === faction) ?? null;
+const unassignedPlayers = (room: PublicRoomSummary | null) =>
+  room?.players.filter(player => !player.faction) ?? [];
 const tableDialog = ref<HTMLDialogElement | null>(null);
 const tableIntent = ref<'join' | 'create'>('join');
 const selectedRoom = ref<PublicRoomSummary | null>(null);
@@ -156,6 +158,9 @@ function submitTableDialog() {
             <span class="club-table-label">常驻棋桌</span>
             <strong>公开房间</strong>
             <small>{{ publicRoom ? `${phaseLabel(publicRoom.phase)} · ${publicRoom.playerCount}/3 席` : '等待开局' }}</small>
+            <small v-if="unassignedPlayers(publicRoom).length" class="club-unassigned">
+              {{ unassignedPlayers(publicRoom).map(player => player.nickname).join('、') }} · 待选阵营
+            </small>
             <div class="club-table-actions">
               <button v-if="publicRoom?.joinable" class="primary-button" :disabled="busy || !online || hasRoom" @click.stop="openTableCenter(publicRoom, 1)">选择席位</button>
               <button class="tool-button" :disabled="busy || !online || hasRoom || !publicRoom" @click.stop="publicRoom && emit('watch', publicRoom.code)">观战</button>
@@ -181,6 +186,9 @@ function submitTableDialog() {
               <span class="club-table-label">第 {{ index + 2 }} 桌</span>
               <strong>{{ room?.code ?? '空桌' }}</strong>
               <small>{{ room ? `${phaseLabel(room.phase)} · ${room.playerCount}/3 席` : '点击空位创建' }}</small>
+              <small v-if="unassignedPlayers(room).length" class="club-unassigned">
+                {{ unassignedPlayers(room).map(player => player.nickname).join('、') }} · 待选阵营
+              </small>
               <div class="club-table-actions">
                 <button v-if="!room" class="primary-button" :disabled="busy || !online || hasRoom" @click.stop="openTableCenter(null, index + 2)">创建</button>
                 <template v-else>
@@ -222,3 +230,7 @@ function submitTableDialog() {
     </dialog>
   </main>
 </template>
+
+<style scoped>
+.club-unassigned{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9c503c!important}
+</style>

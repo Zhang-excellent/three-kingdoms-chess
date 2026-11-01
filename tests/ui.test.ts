@@ -33,25 +33,32 @@ test('new visitors start on the home page and can open local play, rules, friend
   t.after(() => wrapper.unmount());
   assert.ok(wrapper.find('.home-page').exists());
   assert.match(wrapper.get('.home-page').text(), /魏、蜀、吴三方轮流行棋/);
-  assert.deepEqual(wrapper.findAll('.home-action-card strong').map(item => item.text()), ['好友对战', '公开大厅', '本地试玩']);
-  assert.deepEqual(wrapper.findAll('.home-action-card').map(item => item.text()), ['好友对战', '公开大厅', '本地试玩']);
+  assert.doesNotMatch(wrapper.get('.home-hero-copy').text(), /三人同局|独立争胜/);
+  assert.deepEqual(wrapper.findAll('.home-action-card strong').map(item => item.text()), ['公开大厅', '好友对战', '本地试玩']);
+  assert.deepEqual(wrapper.findAll('.home-action-card').map(item => item.text()), ['公开大厅', '好友对战', '本地试玩']);
   assert.doesNotMatch(wrapper.get('.home-actions').text(), /找棋友|查看正在等待|创建或加入|查看 10 张|开始本地/);
+  assert.equal(wrapper.find('.home-secondary-row').exists(), false);
+  assert.equal(wrapper.find('.home-factions').exists(), false);
+  assert.equal(wrapper.find('.home-primary-actions').exists(), false);
+  const navigationLabels = wrapper.get('.header-actions').findAll('button').map(button => button.text());
+  assert.equal(navigationLabels.filter(label => label === '玩法说明').length, 1);
+  assert.equal(navigationLabels.filter(label => label === '设置').length, 1);
   assert.equal(wrapper.find('.board-panel').exists(), false);
 
   await wrapper.findAll('button').find(button => button.text() === '玩法说明')!.trigger('click');
   assert.equal((wrapper.get('.rules-dialog').element as HTMLDialogElement).open, true);
   await wrapper.get('.rules-dialog .dialog-close').trigger('click');
 
-  await wrapper.get('.home-secondary-action').trigger('click');
+  await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
   assert.ok(wrapper.find('.lobby-page').exists());
   assert.match(wrapper.get('.lobby-page-heading h1').text(), /与好友对弈/);
 
   wrapper.unmount(); wrapper = mountHome();
-  await wrapper.get('.home-main-action').trigger('click');
+  await wrapper.findAll('.home-action-card').find(button => button.text() === '公开大厅')!.trigger('click');
   assert.match(wrapper.get('.lobby-page-heading h1').text(), /公开对战大厅/);
 
   wrapper.unmount(); wrapper = mountHome();
-  await wrapper.get('.home-local-card').trigger('click');
+  await wrapper.findAll('.home-action-card').find(button => button.text() === '本地试玩')!.trigger('click');
   assert.ok(wrapper.find('.board-panel').exists());
 });
 

@@ -39,7 +39,6 @@ export function useOnlineRoom() {
   const session = ref<SavedSession | null>(initialSession);
   const connection = ref<'offline' | 'connecting' | 'online' | 'replaced'>('offline');
   const error = ref('');
-  const exitNotice = ref('');
   const busy = ref(false);
   let socket: Socket | null = null;
   let epoch = 0;
@@ -76,7 +75,6 @@ export function useOnlineRoom() {
     room.value = receipt.state;
     joinCode.value = receipt.roomCode;
     error.value = '';
-    exitNotice.value = '';
     return true;
   }
   function acceptState(state: RoomView, expected: SavedSession | null = session.value) {
@@ -121,7 +119,6 @@ export function useOnlineRoom() {
         }
         if (ack.ok || ack.code === 'SESSION_NOT_FOUND') {
           removePending(item.reconnectToken);
-          exitNotice.value = '';
         }
       }
     })().finally(() => { flushing = null; });
@@ -140,7 +137,6 @@ export function useOnlineRoom() {
     else if (ack.code === 'SESSION_NOT_FOUND') {
       localStorage.removeItem(ONLINE_SESSION_KEY);
       session.value = null; room.value = null;
-      error.value = '原房间已失效，请重新创建或加入房间。';
     } else error.value = ack.error;
   }
   function openSocket() {
@@ -203,7 +199,6 @@ export function useOnlineRoom() {
     epoch++; room.value = null; session.value = null; busy.value = false;
     joinCode.value = '';
     localStorage.removeItem(ONLINE_SESSION_KEY);
-    exitNotice.value = saved ? '已返回大厅，正在完成退出。' : '';
     error.value = '';
     if (saved) { queueLeave(saved); if (socket?.connected) void flushPendingLeaves(); else openSocket(); }
   }
@@ -359,7 +354,7 @@ export function useOnlineRoom() {
 
   onBeforeUnmount(() => socket?.disconnect());
   if (initialSession || mode.value === 'online' || pending().length) openSocket();
-  return { mode, nickname, createCode, joinCode, room, self, faction, connection, error, exitNotice, busy, inRoom,
+  return { mode, nickname, createCode, joinCode, room, self, faction, connection, error, busy, inRoom,
     hasSession, savedRoomCode, lobbyRooms, lobbyLoaded, subscribeLobby, unsubscribeLobby,
     spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
     connect, useLocal, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,

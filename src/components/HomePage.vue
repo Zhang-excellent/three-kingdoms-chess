@@ -12,8 +12,6 @@ const emit = defineEmits<{
   lobby: [];
   friends: [];
   local: [];
-  rules: [];
-  settings: [];
   resume: [];
 }>();
 const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' : '返回对局');
@@ -23,13 +21,8 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
   <main class="home-page">
     <section class="home-hero">
       <div class="home-hero-copy">
-        <span class="eyebrow">三人同局 · 独立争胜</span>
         <h1>三国象棋</h1>
         <p class="home-lead">魏、蜀、吴三方轮流行棋，各自争胜。<br>合作与牵制，由你决定。</p>
-        <div class="home-primary-actions">
-          <button class="primary-button home-main-action" @click="emit('lobby')">进入对战大厅 <span aria-hidden="true">→</span></button>
-          <button class="tool-button home-secondary-action" @click="emit('friends')">与好友对弈</button>
-        </div>
         <div v-if="hasRoom" class="home-return-room">
           <div><strong>你的房间还在</strong><span>{{ roomCode ? `房间 ${roomCode}` : '正在恢复房间信息' }}</span></div>
           <button class="primary-button" @click="emit('resume')">{{ resumeLabel }}</button>
@@ -47,33 +40,16 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
       </div>
     </section>
 
-    <section class="home-factions" aria-label="三大阵营">
-      <article v-for="(faction, index) in ORDER" :key="faction" class="home-faction-card" :class="faction">
-        <span class="home-faction-index">0{{ index + 1 }}</span>
-        <div class="home-faction-seal">{{ PLAYERS[faction].initial }}</div>
-        <div>
-          <span>{{ PLAYERS[faction].nation }}国</span>
-          <h2>{{ PLAYERS[faction].name }}</h2>
-          <p>{{ index === 0 ? '坐镇北方，先手开局' : index === 1 ? '据守西方，伺机而动' : '列阵东方，后发制人' }}</p>
-        </div>
-      </article>
-    </section>
-
     <section class="home-actions">
-      <button class="home-action-card" @click="emit('friends')">
-        <strong>好友对战</strong>
-      </button>
       <button class="home-action-card" @click="emit('lobby')">
         <strong>公开大厅</strong>
+      </button>
+      <button class="home-action-card" @click="emit('friends')">
+        <strong>好友对战</strong>
       </button>
       <button class="home-action-card home-local-card" @click="emit('local')">
         <strong>本地试玩</strong>
       </button>
-    </section>
-
-    <section class="home-secondary-row">
-      <button class="plain-button" @click="emit('rules')">查看玩法说明</button>
-      <button class="plain-button" @click="emit('settings')">声音与设置</button>
     </section>
 
     <section class="home-about">

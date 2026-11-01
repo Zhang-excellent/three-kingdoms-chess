@@ -144,7 +144,45 @@ test('a public lobby room updates live and accepts the final player without repl
   } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
 });
 
-test('expired reconnect credentials return to a clear join flow', async () => {
+test('leaving the room page keeps a real seat, while explicit exit clears an empty public table', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  history.replaceState(null, '', `${origin}/three-chess/?mode=online`);
+  const wrapper = mount(App, { attachTo: document.body });
+  let code = '';
+  try {
+    await waitUntil(() => wrapper.findAll('button').some(button =>
+      button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
+    await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('临时房主');
+    await wrapper.get('input[aria-label="创建房间号"]').setValue('401001');
+    await wrapper.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
+    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'Room creation did not open the waiting area');
+    code = JSON.parse(localStorage.getItem('three-kingdoms-chess:online-session-v1')!).roomCode;
+    assert.equal(server.rooms.getRoom(code)?.players.length, 1);
+
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '首页')!.trigger('click');
+    assert.ok(wrapper.find('.home-page').exists());
+    assert.equal(server.rooms.getRoom(code)?.players.length, 1);
+
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '对战大厅')!.trigger('click');
+    await waitUntil(() => wrapper.findAll('.chess-club-table').some(card => card.text().includes(code)),
+      'Room page switch removed the creator from the public table');
+    const occupiedTable = () => wrapper.findAll('.chess-club-table').find(card => card.text().includes(code))!;
+    assert.match(occupiedTable().text(), /临时房主/);
+    assert.match(occupiedTable().text(), /1\/3 席/);
+
+    await wrapper.get('.lobby-current-room .primary-button').trigger('click');
+    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'Return-to-room did not reopen the waiting area');
+    await wrapper.get('.room-lobby .leave-button').trigger('click');
+    await waitUntil(() => wrapper.find('.lobby-page').exists(), 'Explicit exit did not return to the lobby');
+    await waitUntil(() => server.rooms.getRoom(code) === undefined, 'Last player exit did not remove the empty room');
+    await waitUntil(() => !wrapper.findAll('.chess-club-table').some(card => card.text().includes(code)),
+      'Empty custom table remained visible in the lobby');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    assert.doesNotMatch(wrapper.text(), /原房间已失效|正在完成退出|已返回大厅/);
+  } finally { wrapper.unmount(); }
+});
+
+test('expired reconnect credentials are cleared without an obsolete-room error', async () => {
   localStorage.clear(); sessionStorage.clear();
   localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
     roomCode: '987654', reconnectToken: 'expired-token', playerId: 'expired-player', nickname: '过期玩家',
@@ -153,8 +191,9 @@ test('expired reconnect credentials return to a clear join flow', async () => {
   const wrapper = mount(App, { attachTo: document.body });
   try {
     await waitUntil(() => wrapper.find('.lobby-page').exists(), 'Expired room did not return to the join flow');
-    await waitUntil(() => wrapper.find('.connection-note.error').exists(), 'Expired room did not show an error');
-    assert.match(wrapper.get('.connection-note.error').text(), /原房间已失效/);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(wrapper.find('.connection-note.error').exists(), false);
+    assert.doesNotMatch(wrapper.text(), /原房间已失效/);
     assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
     assert.equal(wrapper.find('.room-lobby').exists(), false);
   } finally { wrapper.unmount(); }
