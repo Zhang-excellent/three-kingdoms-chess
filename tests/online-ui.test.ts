@@ -38,7 +38,7 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
   const otherClients: Socket[] = [];
   const oldRandomUUID = Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID');
   try {
-    await wrapper.findAll('button').find(button => button.text() === '联机对弈')!.trigger('click');
+    await wrapper.findAll('button').find(button => button.text() === '好友组局')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button => button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
     await wrapper.get('input[autocomplete="nickname"]').setValue('界面魏');
     await wrapper.get('input[aria-label="创建房间号"]').setValue('001234');
@@ -74,6 +74,82 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     wrapper.unmount();
     otherClients.forEach(socket => socket.disconnect());
   }
+});
+
+test('a public lobby room updates live and accepts the final player without replacing their session on page switches', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/?mode=lobby`);
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    for (let index = 0; index < 2; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', {
+      roomCode: '400006', nickname: '大厅魏', listed: true,
+    }));
+    const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '大厅蜀' }));
+    success(await send(players[0], 'room:choose-faction', {
+      roomCode: a.roomCode, reconnectToken: a.reconnectToken, faction: 'wei', round: 1,
+    }));
+    success(await send(players[1], 'room:choose-faction', {
+      roomCode: a.roomCode, reconnectToken: b.reconnectToken, faction: 'shu', round: 1,
+    }));
+    success(await send(players[0], 'room:ready', { roomCode: a.roomCode, reconnectToken: a.reconnectToken, ready: true, round: 1 }));
+    success(await send(players[1], 'room:ready', { roomCode: a.roomCode, reconnectToken: b.reconnectToken, ready: true, round: 1 }));
+
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.findAll('.public-room-card').some(card => card.text().includes('400006')), 'Public room did not appear');
+    const roomCard = () => wrapper!.findAll('.public-room-card').find(card => card.text().includes('400006'))!;
+    assert.match(roomCard().text(), /2\/3 席/);
+    await wrapper.get('input[autocomplete="nickname"]').setValue('大厅吴');
+    await roomCard().findAll('button').find(button => button.text() === '加入')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Lobby join did not open the waiting room');
+    await wrapper.findAll('button').find(button => button.text() === '吴 · 孙权')!.trigger('click');
+    await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.find(player => player.nickname === '大厅吴')?.faction === 'wu',
+      'Lobby player faction was not recorded');
+    await wrapper.findAll('button').find(button => button.text() === '我已准备')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Three lobby players did not start the game');
+
+    const room = server.rooms.getRoom(a.roomCode)!;
+    const appPlayer = room.players.find(player => player.nickname === '大厅吴')!;
+    const socketId = appPlayer.socketId;
+    const roomVersion = room.version;
+    await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
+    assert.ok(wrapper.find('.home-page').exists());
+    assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
+    await wrapper.findAll('button').find(button => button.text() === '返回对局')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Return-to-room did not reopen the board');
+    assert.equal(appPlayer.socketId, socketId);
+    assert.equal(room.version, roomVersion);
+    await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
+    history.back();
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Browser back did not restore the room page');
+    assert.equal(appPlayer.socketId, socketId);
+    assert.equal(server.rooms.getRoom(a.roomCode)?.game?.results.wei, 'playing');
+    history.forward();
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitUntil(() => wrapper!.find('.home-page').exists(), 'Browser forward did not restore the home page');
+    assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
+});
+
+test('expired reconnect credentials return to a clear join flow', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+    roomCode: '987654', reconnectToken: 'expired-token', playerId: 'expired-player', nickname: '过期玩家',
+  }));
+  history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=987654`);
+  const wrapper = mount(App, { attachTo: document.body });
+  try {
+    await waitUntil(() => wrapper.find('.lobby-page').exists(), 'Expired room did not return to the join flow');
+    await waitUntil(() => wrapper.find('.connection-note.error').exists(), 'Expired room did not show an error');
+    assert.match(wrapper.get('.connection-note.error').text(), /原房间已失效/);
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    assert.equal(wrapper.find('.room-lobby').exists(), false);
+  } finally { wrapper.unmount(); }
 });
 
 test('spectator uses visible entry, sees lobby and live game, remains read-only, and restores after refresh', async () => {
@@ -178,10 +254,11 @@ test('Wei, Shu and Wu restore their own fixed view and a turn change never rotat
         await waitUntil(() => wrapper!.findAll('.move-list li').length === 1, 'Shu view did not sync turn');
         assert.equal(wrapper.get('.board-svg').attributes('aria-label')?.includes('已翻转'), true);
         assert.equal(wrapper.get('.last-trail line').attributes('x1'), '490');
-        await wrapper.findAll('button').find(button => button.text() === '观战')!.trigger('click');
-        assert.equal(wrapper.findAll('dialog').some(dialog => dialog.element.open && dialog.text().includes('确认退出房间')), true);
+        await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
+        assert.ok(wrapper.find('.home-page').exists());
         assert.equal(server.rooms.getRoom(a.roomCode)!.game?.results.shu, 'playing');
-        await wrapper.findAll('button').find(button => button.text() === '继续对局')!.trigger('click');
+        await wrapper.findAll('button').find(button => button.text() === '返回对局')!.trigger('click');
+        await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Player did not return to the active room');
         assert.equal(wrapper.find('.board-panel').exists(), true);
       }
       wrapper.unmount(); wrapper = null;

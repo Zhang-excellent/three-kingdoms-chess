@@ -31,6 +31,27 @@ export interface RoomView {
   selfId: string | null;
 }
 
+export interface PublicRoomPlayer {
+  nickname: string;
+  faction: Faction | null;
+  ready: boolean;
+  online: boolean;
+}
+
+export interface PublicRoomSummary {
+  code: string;
+  phase: RoomPhase;
+  playerCount: number;
+  maxPlayers: 3;
+  players: PublicRoomPlayer[];
+  joinable: boolean;
+  watchable: boolean;
+}
+
+export interface PublicLobbySnapshot {
+  rooms: PublicRoomSummary[];
+}
+
 export interface SessionReceipt {
   roomCode: string;
   playerId: string;

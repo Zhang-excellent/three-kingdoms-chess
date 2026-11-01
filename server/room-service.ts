@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { ORDER, drawGame, newGame, playMove, resignFaction } from '../src/game.ts';
 import type { Faction, Game, Point } from '../src/game.ts';
-import type { ClientAck, DrawOfferView, DrawVote, MoveIntent, RoomPhase, RoomPlayerView, RoomView, SessionReceipt } from '../src/online.ts';
+import type { ClientAck, DrawOfferView, DrawVote, MoveIntent, PublicRoomSummary, RoomPhase, RoomPlayerView, RoomView, SessionReceipt } from '../src/online.ts';
 
 interface Player {
   id: string;
@@ -28,6 +28,7 @@ interface Room {
   spectators: Set<string>;
   game: Game | null;
   drawOffer: DrawOfferView | null;
+  listed: boolean;
   requests: Map<string, Map<string, StoredAck>>;
 }
 
@@ -61,7 +62,7 @@ export class RoomService {
     this.lobbyGraceMs = lobbyGraceMs;
   }
 
-  createRoom(codeValue: unknown, nicknameValue: unknown, socketId: string): RoomActionResult<SessionReceipt> {
+  createRoom(codeValue: unknown, nicknameValue: unknown, socketId: string, listedValue: unknown = true): RoomActionResult<SessionReceipt> {
     if (this.spectatorRoom.has(socketId)) return { ack: { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战，再创建玩家房间。' } };
     const code = cleanCode(codeValue);
     if (!validNewCode(code)) return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '请输入 6 位数字房间号。' } };
@@ -73,7 +74,8 @@ export class RoomService {
     if (!nickname) return { ack: { ok: false, code: 'INVALID_NICKNAME', error: '请输入 1～16 个字符的昵称。' } };
     if (this.rooms.has(code)) return { ack: { ok: false, code: 'ROOM_CODE_TAKEN', error: '这个房间号已被使用，请换一个号码。' } };
     const player = this.newPlayer(nickname, socketId);
-    const room: Room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(), game: null, drawOffer: null, requests: new Map() };
+    const room: Room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(),
+      game: null, drawOffer: null, listed: listedValue !== false, requests: new Map() };
     this.rooms.set(code, room); this.tokenRoom.set(player.token, code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
     return { room, ack: { ok: true, data: this.receipt(room, player) } };
@@ -90,7 +92,7 @@ export class RoomService {
     if (!room) return { ack: { ok: false, code: 'ROOM_NOT_FOUND', error: '没有找到这个房间，请检查房间号。' } };
     if (!nickname) return { ack: { ok: false, code: 'INVALID_NICKNAME', error: '请输入 1～16 个字符的昵称。' } };
     if (room.phase !== 'lobby') return { ack: { ok: false, code: 'GAME_STARTED', error: '该房间已经开局，不能再加入。' } };
-    if (room.players.length >= 3) return { ack: { ok: false, code: 'ROOM_FULL', error: '房间已满，最多三名玩家。' } };
+    if (!this.canJoin(room)) return { ack: { ok: false, code: 'ROOM_FULL', error: '房间已满，最多三名玩家。' } };
     const player = this.newPlayer(nickname, socketId);
     room.players.push(player); room.version++; this.tokenRoom.set(player.token, room.code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
@@ -327,6 +329,17 @@ export class RoomService {
 
   getRoom(code: string): Room | undefined { return this.rooms.get(cleanCode(code)); }
 
+  publicRooms(limit = 50): PublicRoomSummary[] {
+    return Array.from(this.rooms.values())
+      .filter(room => room.listed)
+      .map(room => this.summary(room))
+      .sort((left, right) => {
+        const priority = (room: PublicRoomSummary) => room.joinable ? 0 : room.phase === 'lobby' ? 1 : room.phase === 'playing' ? 2 : 3;
+        return priority(left) - priority(right) || right.playerCount - left.playerCount || left.code.localeCompare(right.code);
+      })
+      .slice(0, Math.max(0, Math.min(50, limit)));
+  }
+
   private processMove(code: string, tokenValue: unknown, intentValue: unknown, socketId?: string): RoomActionResult<{ state: RoomView }> {
     const found = this.findPlayer(code, tokenValue, socketId);
     if (!found.ok) return { ack: found.ack };
@@ -424,6 +437,22 @@ export class RoomService {
 
   private newPlayer(nickname: string, socketId: string): Player {
     return { id: randomUUID(), token: randomBytes(32).toString('base64url'), nickname, faction: null, ready: false, online: true, offlineUntil: null, socketId };
+  }
+
+  private canJoin(room: Room): boolean {
+    return room.phase === 'lobby' && room.players.length < 3;
+  }
+
+  private summary(room: Room): PublicRoomSummary {
+    return {
+      code: room.code,
+      phase: room.phase,
+      playerCount: room.players.length,
+      maxPlayers: 3,
+      players: room.players.map(({ nickname, faction, ready, online }) => ({ nickname, faction, ready, online })),
+      joinable: this.canJoin(room),
+      watchable: true,
+    };
   }
 
   private receipt(room: Room, player: Player): SessionReceipt {

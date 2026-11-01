@@ -7,6 +7,11 @@ import { useOnlineRoom } from './useOnlineRoom.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
 import { MUSIC_PLAYLISTS, musicTrack, tracksInPlaylist } from './music-catalog.ts';
 import { buildGameRecord, gameRecordFileName } from './game-record.ts';
+import { appRouteUrl, parseAppRoute } from './navigation.ts';
+import type { AppPage } from './navigation.ts';
+import HomePage from './components/HomePage.vue';
+import LobbyPage from './components/LobbyPage.vue';
+import RoomWaiting from './components/RoomWaiting.vue';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
 const legacyStorageKeys = ['three-kingdoms-chess:independent-v1', 'three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
@@ -50,17 +55,32 @@ const resumeRememberedMusic = () => {
   if (audioSettings.value.musicEnabled)
     void playSelectedMusic();
 };
-onMounted(() => { if (audioSettings.value.musicEnabled) document.addEventListener('pointerdown', resumeRememberedMusic, { once: true }); });
-onUnmounted(() => { document.removeEventListener('pointerdown', resumeRememberedMusic); gameAudio.dispose(); });
+onMounted(() => {
+  if (audioSettings.value.musicEnabled) document.addEventListener('pointerdown', resumeRememberedMusic, { once: true });
+  window.addEventListener('popstate', syncPageFromLocation);
+  void activatePage(initialRoute.page, initialRoute.roomCode, true);
+});
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', resumeRememberedMusic);
+  window.removeEventListener('popstate', syncPageFromLocation);
+  gameAudio.dispose();
+});
 const saveAvailable = ref(storageUsable), compatibilityWarning = ref(requiresNewGame);
 const online = useOnlineRoom();
+const initialRoute = parseAppRoute(location.href), page = ref<AppPage>(initialRoute.page);
+const requestedRoomCode = ref(initialRoute.roomCode), lobbyListed = ref(true);
 const { mode, nickname, createCode, joinCode, room, self, connection, error: onlineError, exitNotice, busy: onlineBusy,
-  spectating, watchCode } = online;
-let afterExit: 'local' | 'spectate' | null = null;
+  spectating, watchCode, watchingCode, hasSession, savedRoomCode, lobbyRooms, lobbyLoaded } = online;
 const fallbackGame = newGame();
 const game = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
-const onlineLobby = computed(() => online.mode.value === 'online' && (!online.room.value || online.room.value.phase === 'lobby'));
 const previousGame = computed(() => online.room.value?.phase === 'lobby' && online.room.value.game?.status === 'finished' ? online.room.value.game : null);
+const showGame = computed(() => (page.value === 'room' && !!room.value && room.value.phase !== 'lobby')
+  || (page.value === 'spectate' && !!room.value && room.value.phase !== 'lobby')
+  || page.value === 'local');
+const roomRouteMismatch = computed(() => page.value === 'room' && !!requestedRoomCode.value
+  && !!room.value && room.value.code !== requestedRoomCode.value);
+const showLobbyPage = computed(() => page.value === 'lobby' || page.value === 'friends'
+  || (page.value === 'room' && (!room.value && !hasSession.value || roomRouteMismatch.value)));
 const rematchBusy = ref(false);
 const ownFaction = computed(() => online.mode.value === 'online' ? online.faction.value : null);
 const flipOverride = ref(false);
@@ -96,6 +116,72 @@ const count = (faction: Faction) => game.value.pieces.filter(p => p.faction === 
 const description = (record: MoveRecord) => `${pieceName(record)} ${coordinate(record.from)} → ${coordinate(record.to)}`;
 const eliminatedNames = (record: MoveRecord) => record.eliminated.map(f => PLAYERS[f].name).join('、');
 const capturedAt = (point: Point) => !!at(game.value.pieces, point);
+const currentRoomPhase = computed(() => room.value?.phase ?? null);
+const resumeRoomLabel = computed(() => currentRoomPhase.value === 'lobby' ? '返回等待区' : '返回对局');
+const lobbyPageMode = computed<'public' | 'friends'>(() => page.value === 'lobby' ? 'public' : 'friends');
+
+function historyFor(next: AppPage, code: string | null, method: 'push' | 'replace' | 'none') {
+  if (method === 'none') return;
+  const href = appRouteUrl(location.href, next, code);
+  if (method === 'replace') history.replaceState({ page: next }, '', href);
+  else history.pushState({ page: next }, '', href);
+}
+
+async function activatePage(next: AppPage, code: string | null, initial = false) {
+  if (next !== 'spectate' && spectating.value) online.exitWatching();
+  if (next === 'spectate') {
+    if (!spectating.value) online.openWatchEntry();
+    if (code && !initial && (!spectating.value || watchingCode.value !== code)) {
+      watchCode.value = code;
+      await online.startWatching();
+    }
+    return;
+  }
+  if (next === 'local') {
+    void online.unsubscribeLobby();
+    online.useLocal();
+    return;
+  }
+  if (next === 'home') {
+    void online.unsubscribeLobby();
+    return;
+  }
+  if (next === 'lobby') {
+    online.connect();
+    const ack = await online.subscribeLobby();
+    if (!ack.ok) onlineError.value = ack.error;
+    return;
+  }
+  void online.unsubscribeLobby();
+  online.connect();
+  if (next === 'room' && code) joinCode.value = code;
+}
+
+async function navigatePage(next: AppPage, code: string | null = null, method: 'push' | 'replace' = 'push') {
+  page.value = next;
+  requestedRoomCode.value = code;
+  selectedId.value = null;
+  historyFor(next, code, method);
+  await activatePage(next, code);
+}
+
+function openHomePage() { void navigatePage('home'); }
+function openLobbyPage() { void navigatePage('lobby'); }
+function openFriendsPage() { void navigatePage('friends'); }
+function openSpectateEntry() { void watchOnlineRoom(); }
+function openLocalPage() { void navigatePage('local'); }
+function openCurrentRoom() {
+  const code = room.value?.code ?? savedRoomCode.value;
+  void navigatePage('room', code, 'replace');
+}
+
+function syncPageFromLocation() {
+  const route = parseAppRoute(location.href);
+  page.value = route.page;
+  requestedRoomCode.value = route.roomCode;
+  selectedId.value = null;
+  void activatePage(route.page, route.roomCode, true);
+}
 
 watch([localGame, undo], () => {
   if (compatibilityWarning.value) return;
@@ -214,6 +300,25 @@ function resetRequest() {
 function pieceLabel(piece: Piece) { return `${PLAYERS[piece.faction].nation}方${pieceName(piece)}，第${piece.x + 1}路第${piece.y + 1}线`; }
 function onEscape() { selectedId.value = null; notify(active.value ? `轮到${active.value.name}行棋。` : message.value); }
 async function copyInvite() { notify(await online.copyInvite() ? '邀请链接已复制，发给另外两位朋友即可。' : '复制失败，请手动复制浏览器地址。', false); }
+async function createOnlineRoom() {
+  await online.createRoom(lobbyListed.value);
+  if (room.value) await navigatePage('room', room.value.code, 'replace');
+}
+async function joinOnlineRoom(code?: string) {
+  await online.joinRoom(code);
+  if (room.value) await navigatePage('room', room.value.code, 'replace');
+}
+async function watchOnlineRoom(code?: string) {
+  if (hasSession.value) { onlineError.value = '请先退出当前玩家房间，再进入观战。'; return; }
+  const roomCode = (code ?? watchCode.value).trim().toUpperCase();
+  if (roomCode) watchCode.value = roomCode;
+  await navigatePage('spectate', roomCode || null, 'replace');
+}
+function leaveRoomForLobby() {
+  online.leaveRoom();
+  selectedId.value = null;
+  void navigatePage('lobby', null, 'replace');
+}
 function exportGameRecord(current: Game) {
   if (!current.history.length) return;
   try {
@@ -226,35 +331,18 @@ function exportGameRecord(current: Game) {
     notify(`棋谱已导出：${filename}`);
   } catch { notify('浏览器无法导出棋谱。', true); }
 }
-function chooseMode(mode: 'local' | 'online' | 'spectate') {
-  selectedId.value = null;
-  if (mode === 'spectate') {
-    if (spectating.value) return;
-    if (online.room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value)) {
-      afterExit = 'spectate'; exitDialog.value?.showModal(); return;
-    }
-    if (online.room.value) online.leaveRoom();
-    online.openWatchEntry(); notify('输入房间号即可只读观战。'); return;
-  }
-  if (mode === 'local') {
-    if (online.room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value)) {
-      afterExit = 'local'; exitDialog.value?.showModal(); return;
-    }
-    online.useLocal(); notify('本地试玩：同一设备轮流操作三方。');
-  }
-  else { online.connect(); notify('联机对弈：三人各控制一个阵营。'); }
-}
 function requestLeave() {
-  afterExit = null;
   if (room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value))
     exitDialog.value?.showModal();
-  else { online.leaveRoom(); selectedId.value = null; }
+  else leaveRoomForLobby();
 }
 function confirmLeave() {
-  exitDialog.value?.close(); online.leaveRoom(); selectedId.value = null;
-  if (afterExit === 'spectate') online.openWatchEntry();
-  else if (afterExit === 'local') online.useLocal();
-  afterExit = null;
+  exitDialog.value?.close();
+  leaveRoomForLobby();
+}
+function exitWatchingToLobby() {
+  online.exitWatching();
+  void navigatePage('lobby', null, 'replace');
 }
 async function confirmResign() {
   resignDialog.value?.close();
@@ -289,39 +377,65 @@ async function requestRematch() {
 <template>
   <div class="app-shell" :data-turn-slot="game.turnSlot ?? undefined" @keydown.esc="onEscape">
     <header class="site-header">
-      <div class="brand"><span class="brand-seal" aria-hidden="true">弈</span><div><h1>三国象棋</h1><p>THREE KINGDOMS CHESS</p></div></div>
-      <div class="header-actions"><div class="mode-switch" aria-label="游戏模式"><button :class="{active: mode === 'local'}" @click="chooseMode('local')">本地试玩</button><button :class="{active: mode === 'online' && !spectating}" @click="chooseMode('online')">联机对弈</button><button :class="{active: spectating}" @click="chooseMode('spectate')">观战</button></div><button class="plain-button" @click="settingsDialog?.showModal()">设置</button><button class="plain-button" @click="rulesDialog?.showModal()">玩法说明 <span aria-hidden="true">↗</span></button></div>
+      <button class="brand brand-button" aria-label="返回游戏首页" @click="openHomePage">
+        <span class="brand-seal" aria-hidden="true">弈</span><span><strong>三国象棋</strong><small>THREE KINGDOMS CHESS</small></span>
+      </button>
+      <div class="header-actions">
+        <button class="plain-button" :class="{ active: page === 'home' }" @click="openHomePage">首页</button>
+        <button class="plain-button" :class="{ active: page === 'lobby' }" @click="openLobbyPage">对战大厅</button>
+        <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友组局</button>
+        <button class="plain-button" :class="{ active: page === 'spectate' }" @click="openSpectateEntry">观战</button>
+        <button v-if="hasSession && page !== 'room'" class="plain-button room-return-button" @click="openCurrentRoom">{{ resumeRoomLabel }}</button>
+        <button class="plain-button" @click="settingsDialog?.showModal()">设置</button>
+        <button class="plain-button" @click="rulesDialog?.showModal()">玩法说明</button>
+      </div>
     </header>
-    <main v-if="onlineLobby" class="online-shell">
-      <section v-if="spectating" class="online-entry watch-entry">
+    <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>
+
+    <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
+      @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @rules="rulesDialog?.showModal()"
+      @settings="settingsDialog?.showModal()" @resume="openCurrentRoom" />
+
+    <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname"
+      :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
+      :error="onlineError || exitNotice || (roomRouteMismatch ? `你仍在房间 ${room?.code}。请先返回原房间并退出，再加入 ${requestedRoomCode}。` : '')"
+      :loaded="lobbyLoaded" :has-room="hasSession"
+      :current-room-code="room?.code ?? savedRoomCode" :current-room-phase="currentRoomPhase"
+      @home="openHomePage" @switch-public="openLobbyPage" @switch-friends="openFriendsPage" @resume="openCurrentRoom"
+      @create="createOnlineRoom" @join="joinOnlineRoom" @watch="watchOnlineRoom"
+      @update-nickname="nickname = $event" @update-create-code="createCode = $event"
+      @update-join-code="joinCode = $event" @update-listed="lobbyListed = $event" />
+
+    <main v-else-if="page === 'spectate' && (!room || room.phase === 'lobby')" class="online-shell">
+      <section class="online-entry watch-entry">
         <span class="eyebrow">观战</span><h2>{{ room ? `正在观战 · 房间 ${room.code}` : '输入房间号观战' }}</h2>
         <p v-if="room">{{ room.phase === 'lobby' ? '等待玩家准备' : '棋局正在进行' }}</p>
         <p v-else>等待中或已开局的房间均可观战，玩家满员也可以进入。</p>
         <div v-if="room" class="lobby-players"><article v-for="player in room.players" :key="player.id"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.nickname }}</strong><small>{{ player.online ? '在线' : '离线' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em></article></div>
-        <div v-if="room" class="room-heading-actions"><button class="tool-button" @click="online.exitWatching()">退出观战</button><button class="tool-button" @click="online.stopWatching()">更换房间</button></div>
-        <div v-else class="join-row watch-join"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" :disabled="onlineBusy || connection !== 'online'" @click="online.startWatching()">进入观战</button></div>
-        <button v-if="!room" class="tool-button" @click="chooseMode('online')">返回联机大厅</button>
+        <div v-if="room" class="room-heading-actions"><button class="tool-button" @click="exitWatchingToLobby">退出观战</button><button class="tool-button" @click="exitWatchingToLobby">更换房间</button></div>
+        <form v-else class="join-row watch-join" @submit.prevent="watchOnlineRoom()"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" type="button" :disabled="onlineBusy || connection !== 'online'" @click="watchOnlineRoom()">进入观战</button></form>
+        <button v-if="!room" class="tool-button" @click="openLobbyPage">返回联机大厅</button>
         <p v-if="connection !== 'online' || onlineError" class="connection-note" :class="{error: onlineError}">{{ onlineError || '连接中断，正在重连…' }}</p>
-        <div v-if="previousGame" class="previous-game"><div class="previous-game-heading"><strong>上一局结果</strong><button class="record-export-button" @click="exportGameRecord(previousGame)">导出棋谱</button></div><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
-      </section>
-      <section v-else-if="!room" class="online-entry">
-        <span class="eyebrow">联机对弈</span><h2>和两位朋友进入同一房间</h2><p>每人选择魏、蜀、吴中的一个阵营。</p>
-        <label>你的昵称<input v-model="nickname" maxlength="16" autocomplete="nickname" placeholder="最多 16 个字符"></label>
-        <div class="entry-actions"><div class="join-row"><input v-model="createCode" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" aria-label="创建房间号" placeholder="自定 6 位数字房间号"><button class="primary-button" :disabled="onlineBusy || connection !== 'online'" @click="online.createRoom">创建房间</button></div><div class="join-row"><input v-model="joinCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="加入房间号" placeholder="输入朋友的房间号" @input="joinCode = joinCode.toUpperCase()"><button class="tool-button" :disabled="onlineBusy || connection !== 'online'" @click="online.joinRoom">加入房间</button></div></div>
-        <p v-if="connection !== 'online' || onlineError" class="connection-note" :class="{error: onlineError}">{{ onlineError || '连接中断，正在重连…' }}</p>
-        <p v-if="exitNotice" class="connection-note" role="status">{{ exitNotice }}</p>
-      </section>
-      <section v-else class="room-lobby">
-        <div class="room-heading"><div><span class="eyebrow">等待三人准备</span><h2>房间 {{ room.code }}</h2></div><div class="room-heading-actions"><button class="tool-button" @click="copyInvite">复制邀请链接</button><button class="tool-button leave-button" @click="requestLeave">退出房间</button></div></div>
-        <div class="lobby-players"><article v-for="player in room.players" :key="player.id" :class="{self: player.id === room.selfId}"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.nickname }}</strong><small>{{ player.id === room.selfId ? '这是你' : player.online ? '在线' : '已断线，席位最多保留 60 秒' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em><button v-if="!player.online && player.id !== room.selfId" class="tool-button release-button" :disabled="connection !== 'online'" @click="releaseOffline(player.id)">释放席位</button></article><article v-for="slot in 3 - room.players.length" :key="`empty-${slot}`" class="empty"><span>等待朋友加入…</span></article></div>
-        <div class="faction-choice"><span>选择你的阵营</span><div><button v-for="faction in ORDER" :key="faction" :class="[faction,{selected: self?.faction === faction}]" :disabled="factionTaken(faction) || connection !== 'online'" @click="online.chooseFaction(faction)">{{ PLAYERS[faction].nation }} · {{ PLAYERS[faction].name }}</button></div></div>
-        <button class="primary-button ready-button" :disabled="!self?.faction || connection !== 'online'" @click="online.setReady(!self?.ready)">{{ self?.ready ? '取消准备' : '我已准备' }}</button>
-        <p class="lobby-tip">三人全部在线、阵营不同且准备完毕后自动开局。</p>
-        <p v-if="onlineError" class="connection-note error">{{ onlineError }}</p>
         <div v-if="previousGame" class="previous-game"><div class="previous-game-heading"><strong>上一局结果</strong><button class="record-export-button" @click="exportGameRecord(previousGame)">导出棋谱</button></div><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
       </section>
     </main>
-    <main v-else class="play-layout">
+
+    <main v-else-if="page === 'room' && !room" class="online-shell">
+      <section class="online-entry room-recovery">
+        <span class="eyebrow">房间</span><h2>正在恢复房间状态</h2>
+        <p>{{ hasSession ? '正在使用本机保存的重连凭证恢复席位。' : '请先输入昵称加入这个房间。' }}</p>
+        <p v-if="onlineError" class="connection-note error" role="status">{{ onlineError }}</p>
+        <div class="entry-actions"><button class="primary-button" @click="openCurrentRoom" :disabled="!hasSession">重试恢复</button><button class="tool-button" @click="openLobbyPage">返回大厅</button></div>
+      </section>
+    </main>
+
+    <main v-else-if="page === 'room' && room?.phase === 'lobby'" class="online-shell">
+      <RoomWaiting v-if="room" :room="room" :connection="connection" :error="onlineError"
+        @copy-invite="copyInvite" @leave="requestLeave" @choose-faction="online.chooseFaction"
+        @ready="online.setReady" @release-offline="releaseOffline" @export-record="exportGameRecord" />
+    </main>
+
+    <main v-else-if="showGame" class="play-layout">
       <aside class="players-panel" aria-label="玩家与当前回合">
         <div class="section-label"><span>本局席位</span><span>三人 · 独立竞争</span></div>
         <div class="player-cards">
@@ -376,7 +490,7 @@ async function requestRematch() {
             </g>
           </svg>
         </div>
-        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button class="tool-button sound-button" @click="settingsDialog?.showModal()">设置</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="online.exitWatching()">退出观战</button></div>
+        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button class="tool-button sound-button" @click="settingsDialog?.showModal()">设置</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
         <p v-if="mode === 'local' || feedbackError" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
         <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${PLAYERS[game.winner].name}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
@@ -389,7 +503,7 @@ async function requestRematch() {
         <div class="board-legend"><p><i class="legend-dot"></i> 可走位置</p><p><i class="legend-ring"></i> 可以吃子</p><p><i class="legend-square"></i> 上一步起点与落点</p><small>棋盘边缘显示标准棋谱坐标；当前左上角为第 {{ flipped ? 9 : 1 }} 路、第 {{ flipped ? 10 : 1 }} 线。</small></div>
       </aside>
     </main>
-    <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="mode === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
+    <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。曹操视角上方左吴右蜀，魏方默认标准视角；刘备、孙权默认使用相同的 180° 视角，翻转只改变个人看到的画面与点击换算。输入房间号可只读观战。</p><ul><li>三方独立竞争。初始共 29 枚：魏 16、蜀 6、吴 7；上方中路中卒归吴方。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>联机对弈中，只有轮到自己行棋时才能提和；所有存活阵营同意后本局和棋。已有一方出局时，剩余两方均同意即可。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的自动判和次数尚待确认；本版仅采用全部存活阵营同意的手动和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="settingsDialog" class="settings-dialog">
       <div class="dialog-heading"><h2>声音设置</h2><button class="dialog-close" aria-label="关闭设置" @click="settingsDialog?.close()">×</button></div>

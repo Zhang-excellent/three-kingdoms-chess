@@ -9,16 +9,48 @@ const { mount } = await import('@vue/test-utils');
 const compiled = './.compiled-app.mts';
 const { default: App } = await import(compiled);
 after(() => GlobalRegistrator.unregister());
+const useLocalRoute = () => history.replaceState(null, '', 'http://localhost:5173/?mode=local');
 function setup(t: TestContext, clear = true) {
-  if (clear) localStorage.clear(); const wrapper = mount(App, { attachTo: document.body });
+  if (clear) localStorage.clear();
+  useLocalRoute();
+  const wrapper = mount(App, { attachTo: document.body });
   t.after(() => wrapper.unmount()); return wrapper;
 }
 function remount(t: TestContext, wrapper: ReturnType<typeof mount>) {
-  wrapper.unmount(); const next = mount(App, { attachTo: document.body });
+  wrapper.unmount(); useLocalRoute(); const next = mount(App, { attachTo: document.body });
   t.after(() => next.unmount()); return next;
 }
 const piece = (faction: string, name: string, x: number, y: number) => `g.piece[aria-label="${faction}方${name}，第${x}路第${y}线"]`;
 const target = (x: number, y: number) => `g.legal-point[aria-label="走到第${x}路第${y}线"]`;
+
+test('new visitors start on the home page and can open local play, rules, friends and lobby', async t => {
+  localStorage.clear();
+  const mountHome = () => {
+    history.replaceState(null, '', 'http://localhost:5173/');
+    return mount(App, { attachTo: document.body });
+  };
+  let wrapper = mountHome();
+  t.after(() => wrapper.unmount());
+  assert.ok(wrapper.find('.home-page').exists());
+  assert.match(wrapper.get('.home-page').text(), /魏、蜀、吴三方轮流行棋/);
+  assert.equal(wrapper.find('.board-panel').exists(), false);
+
+  await wrapper.findAll('button').find(button => button.text() === '玩法说明')!.trigger('click');
+  assert.equal((wrapper.get('.rules-dialog').element as HTMLDialogElement).open, true);
+  await wrapper.get('.rules-dialog .dialog-close').trigger('click');
+
+  await wrapper.get('.home-secondary-action').trigger('click');
+  assert.ok(wrapper.find('.lobby-page').exists());
+  assert.match(wrapper.get('.lobby-page-heading h1').text(), /与好友对弈/);
+
+  wrapper.unmount(); wrapper = mountHome();
+  await wrapper.get('.home-main-action').trigger('click');
+  assert.match(wrapper.get('.lobby-page-heading h1').text(), /公开对战大厅/);
+
+  wrapper.unmount(); wrapper = mountHome();
+  await wrapper.get('.home-local-card').trigger('click');
+  assert.ok(wrapper.find('.board-panel').exists());
+});
 
 test('screen starts with 29 pieces, Cao Cao highlighted and undo disabled', t => {
   const wrapper = setup(t);

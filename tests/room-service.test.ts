@@ -65,6 +65,38 @@ test('a room rejects a fourth player and separate rooms never share state', asyn
   assert.equal(service.getRoom(other.roomCode)!.game, null);
 });
 
+test('public lobby summaries are ordered by available seats and hide unlisted rooms', () => {
+  const service = new RoomService();
+  const one = receipt(service.createRoom('111111', '一号房主', 'one'));
+  receipt(service.joinRoom('111111', '一号二号', 'one-two') as ReturnType<RoomService['createRoom']>);
+  const single = receipt(service.createRoom('222222', '单人等位', 'single'));
+  const hidden = receipt(service.createRoom('333333', '隐藏房主', 'hidden', false));
+
+  const rooms = service.publicRooms();
+  assert.deepEqual(Object.keys(rooms[0]).sort(), ['code', 'joinable', 'maxPlayers', 'phase', 'playerCount', 'players', 'watchable']);
+  assert.deepEqual(rooms.map(room => [room.code, room.playerCount, room.joinable]), [
+    ['111111', 2, true],
+    ['222222', 1, true],
+  ]);
+  assert.equal(rooms.some(room => room.code === hidden.roomCode), false);
+  assert.equal(service.joinRoom(hidden.roomCode, '房号加入者', 'hidden-join').ack.ok, true);
+  assert.equal(service.joinRoom(single.roomCode, '末位一', 'race-a').ack.ok, true);
+  assert.equal(service.joinRoom(single.roomCode, '末位二', 'race-b').ack.ok, true);
+  const lastSeat = service.joinRoom(single.roomCode, '末位三', 'race-c');
+  assert.equal(lastSeat.ack.ok, false);
+  if (!lastSeat.ack.ok) assert.equal(lastSeat.ack.code, 'ROOM_FULL');
+  assert.equal(service.getRoom(single.roomCode)?.players.length, 3);
+  assert.equal(JSON.stringify(service.publicRooms()).includes('reconnectToken'), false);
+  assert.equal((service.getRoom(one.roomCode)?.listed), true);
+  assert.equal((service.getRoom(hidden.roomCode)?.listed), false);
+
+  for (let index = 0; index < 52; index++)
+    receipt(service.createRoom(String(410000 + index), `容量房${index}`, `capacity-${index}`));
+  assert.equal(service.publicRooms().length, 50);
+  assert.equal(service.publicRooms(3).length, 3);
+  assert.equal(service.publicRooms(100).length, 50);
+});
+
 test('server enforces faction ownership, turn, legal moves, and three-slot order', async () => {
   const { service, code, players, room } = startedRoom();
   failure(await service.submitMove(code, players[1].reconnectToken, intent('wrongturn1', room.version, 'wei-pawn-0-6', 0, 5)), 'NOT_YOUR_TURN');

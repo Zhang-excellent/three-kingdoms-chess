@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { io as connect, type Socket } from 'socket.io-client';
 import { createOnlineServer } from '../server/create-server.ts';
 import { newGame } from '../src/game.ts';
-import type { ClientAck, RoomView, SessionReceipt } from '../src/online.ts';
+import type { ClientAck, PublicLobbySnapshot, RoomView, SessionReceipt } from '../src/online.ts';
 
 const server = createOnlineServer();
 let origin = '';
@@ -41,6 +41,60 @@ test('missing or retired audio paths return 404 instead of the application HTML'
   assert.equal(response.status, 404);
   assert.match(response.headers.get('content-type') ?? '', /^text\/plain/);
   assert.equal(await response.text(), 'Audio not found');
+});
+
+test('public lobby subscription stays concise, ordered, and safe against malformed requests', async () => {
+  const [host, joiner, malformed, third, hidden] = await Promise.all([client(), client(), client(), client(), client()]);
+  const snapshots: PublicLobbySnapshot[] = [];
+  host.on('lobby:rooms', snapshot => snapshots.push(snapshot));
+  const initial = success(await emit<PublicLobbySnapshot>(host, 'lobby:subscribe', {}));
+  assert.ok(Array.isArray(initial.rooms));
+
+  malformed.emit('room:create', { roomCode: '310099', nickname: '无回执' });
+  await pause();
+  const typed = await new Promise<ClientAck<SessionReceipt>>(resolve => malformed.emit('room:create', 42, resolve));
+  assert.equal(typed.ok, false);
+
+  const a = success(await emit<SessionReceipt>(malformed, 'room:create', {
+    roomCode: '310099', nickname: '异常后正常', listed: true,
+  }));
+  const b = success(await emit<SessionReceipt>(joiner, 'room:join', { roomCode: a.roomCode, nickname: '公开二号' }));
+  success(await emit<SessionReceipt>(host, 'room:create', { roomCode: '310098', nickname: '公开一号', listed: true }));
+  success(await emit<SessionReceipt>(hidden, 'room:create', { roomCode: '310097', nickname: '隐藏房主', listed: false }));
+  await new Promise(resolve => setTimeout(resolve, 80));
+
+  const latest = snapshots.at(-1)?.rooms ?? [];
+  assert.deepEqual(latest.filter(room => ['310099', '310098', '310097'].includes(room.code)).map(room => [room.code, room.playerCount, room.joinable]), [
+    ['310099', 2, true],
+    ['310098', 1, true],
+  ]);
+  assert.equal(latest.some(room => room.code === '310097'), false);
+  assert.equal(JSON.stringify(latest).includes('reconnectToken'), false);
+  const afterJoin = success(await emit<SessionReceipt>(third, 'room:join', {
+    roomCode: a.roomCode, nickname: '公开三号',
+  }));
+  assert.equal(afterJoin.state.players.length, 3);
+  const full = server.rooms.getRoom('310099');
+  assert.equal(full?.players.length, 3);
+  for (const [socket, receipt, faction] of [[malformed, a, 'wei'], [joiner, b, 'shu'], [third, afterJoin, 'wu']] as const)
+    success(await emit(socket, 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipt.reconnectToken, faction, round: 1 }));
+  for (const [socket, receipt] of [[malformed, a], [joiner, b], [third, afterJoin]] as const)
+    success(await emit(socket, 'room:ready', { roomCode: a.roomCode, reconnectToken: receipt.reconnectToken, ready: true, round: 1 }));
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(snapshots.at(-1)?.rooms.find(room => room.code === a.roomCode)?.phase, 'playing');
+  success(await emit(malformed, 'game:resign', { roomCode: a.roomCode, reconnectToken: a.reconnectToken }));
+  success(await emit(joiner, 'game:resign', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(snapshots.at(-1)?.rooms.find(room => room.code === a.roomCode)?.phase, 'finished');
+  success(await emit(malformed, 'room:rematch', {
+    roomCode: a.roomCode, reconnectToken: a.reconnectToken, version: server.rooms.getRoom(a.roomCode)!.version,
+  }));
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(snapshots.at(-1)?.rooms.find(room => room.code === a.roomCode)?.phase, 'lobby');
+  for (const [socket, receipt] of [[malformed, a], [joiner, b], [third, afterJoin]] as const)
+    success(await emit(socket, 'room:leave', { roomCode: a.roomCode, reconnectToken: receipt.reconnectToken }));
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(snapshots.at(-1)?.rooms.some(room => room.code === a.roomCode), false);
 });
 
 test('three independent Socket.IO clients create, join, start, move, and reconnect in sync', async () => {
