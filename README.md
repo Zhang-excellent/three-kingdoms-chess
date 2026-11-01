@@ -149,6 +149,7 @@ npm run build
 | 验收页面 | 桌面 | 手机 400×811 |
 | --- | --- | --- |
 | 游戏首页 | [截图](docs/验收截图/2026-11-01-home-desktop.png) | [截图](docs/验收截图/2026-11-01-home-mobile.png) |
+| 好友对弈 | [截图](docs/验收截图/2026-11-01-friends-desktop.png) | [截图](docs/验收截图/2026-11-01-friends-mobile.png) |
 | 公开大厅 | [截图](docs/验收截图/2026-11-01-lobby-desktop.png) | [截图](docs/验收截图/2026-11-01-lobby-mobile.png) |
 | 棋社 10 桌列表 | [截图](docs/验收截图/2026-11-01-lobby-rooms-desktop.png) | [截图](docs/验收截图/2026-11-01-lobby-rooms-mobile.png) |
 | 席位昵称弹框 | [截图](docs/验收截图/2026-11-01-lobby-seat-dialog-desktop.png) | — |

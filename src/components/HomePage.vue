@@ -47,7 +47,7 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
       <button class="home-action-card" @click="emit('friends')">
         <strong>好友对战</strong>
       </button>
-      <button class="home-action-card home-local-card" @click="emit('local')">
+      <button class="home-action-card" @click="emit('local')">
         <strong>本地试玩</strong>
       </button>
     </section>

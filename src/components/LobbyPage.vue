@@ -38,10 +38,7 @@ const emit = defineEmits<{
 
 const online = computed(() => props.connection === 'online');
 const phaseLabel = (phase: RoomPhase) => phase === 'lobby' ? '等待中' : phase === 'playing' ? '对局中' : '已结束';
-const title = computed(() => props.mode === 'public' ? '公开对战大厅' : '与好友对弈');
-const subtitle = computed(() => props.mode === 'public'
-  ? ''
-  : '创建 6 位数字房间，把号码或邀请链接发给朋友。');
+const title = computed(() => props.mode === 'public' ? '公开对战大厅' : '好友对弈');
 const publicRoom = computed(() => props.rooms.find(room => room.code === PUBLIC_ROOM_CODE) ?? null);
 const tableSlots = computed(() => Array.from({ length: 9 }, (_, index) =>
   props.rooms.filter(room => room.code !== PUBLIC_ROOM_CODE)[index] ?? null));
@@ -109,9 +106,7 @@ function submitTableDialog() {
     </div>
 
     <header class="lobby-page-heading">
-      <span class="eyebrow">游客体验 · 无需登录</span>
       <h1>{{ title }}</h1>
-      <p v-if="subtitle">{{ subtitle }}</p>
     </header>
 
     <div v-if="hasRoom" class="lobby-current-room">
@@ -233,4 +228,16 @@ function submitTableDialog() {
 
 <style scoped>
 .club-unassigned{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9c503c!important}
+.lobby-card-kicker{font-size:10px;font-weight:700}
+.lobby-entry-card h2{font-size:24px}
+.lobby-entry-card label{font-size:13px;font-weight:600;color:#625444}
+.lobby-entry-card input{font-size:14px;font-weight:500;color:#43382d}
+.lobby-entry-card input::placeholder{color:#8c7a66;font-weight:500;opacity:1}
+.lobby-entry-card .lobby-listed-option{font-size:12px;font-weight:600}
+.lobby-join-card>p{font-size:12px;font-weight:500;line-height:1.7}
+.lobby-seat-dialog label{font-size:13px;font-weight:600;color:#625444}
+.lobby-seat-dialog input{font-size:14px;font-weight:500;color:#43382d}
+.lobby-seat-dialog input::placeholder{color:#8c7a66;font-weight:500;opacity:1}
+.lobby-seat-as{font-size:12px;font-weight:600}
+.lobby-seat-factions button{font-size:11px;font-weight:600}
 </style>

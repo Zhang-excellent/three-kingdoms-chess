@@ -522,3 +522,9 @@ async function requestRematch() {
     <dialog ref="exitDialog" class="reset-dialog"><h2>确认退出房间？</h2><p>你仍在对局中，退出将先按认输出局，再返回大厅。断网时本机立即退出，服务器恢复连接后补发通知。</p><div class="dialog-actions"><button class="tool-button" @click="exitDialog?.close()">继续对局</button><button class="primary-button" @click="confirmLeave">确认退出</button></div></dialog>
   </div>
 </template>
+
+<style scoped>
+.watch-entry .join-row input{font-size:14px;font-weight:500}
+.watch-entry .join-row input::placeholder{color:#8c7a66;font-weight:500;opacity:1}
+.watch-entry .join-row .primary-button{font-size:12px;font-weight:600}
+</style>

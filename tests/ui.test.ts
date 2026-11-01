@@ -51,7 +51,8 @@ test('new visitors start on the home page and can open local play, rules, friend
 
   await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
   assert.ok(wrapper.find('.lobby-page').exists());
-  assert.match(wrapper.get('.lobby-page-heading h1').text(), /与好友对弈/);
+  assert.equal(wrapper.get('.lobby-page-heading h1').text(), '好友对弈');
+  assert.doesNotMatch(wrapper.get('.lobby-page-heading').text(), /游客体验|无需登录|创建 6 位数字房间/);
 
   wrapper.unmount(); wrapper = mountHome();
   await wrapper.findAll('.home-action-card').find(button => button.text() === '公开大厅')!.trigger('click');
