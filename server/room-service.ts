@@ -103,6 +103,16 @@ export class RoomService {
     return { room, ack: { ok: true, data: this.receipt(room, player) } };
   }
 
+  inspectRoom(codeValue: unknown): RoomActionResult<PublicRoomSummary> {
+    const code = cleanCode(codeValue);
+    if (!validExistingCode(code))
+      return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '请输入 6 位房间号。' } };
+    const room = this.rooms.get(code);
+    if (!room)
+      return { ack: { ok: false, code: 'ROOM_NOT_FOUND', error: '邀请已失效，房间不存在或已结束。' } };
+    return { room, ack: { ok: true, data: this.summary(room) } };
+  }
+
   claimSeat(codeValue: unknown, nicknameValue: unknown, factionValue: unknown, listedValue: unknown,
     socketId: string): Promise<RoomActionResult<SessionReceipt>> {
     const code = cleanCode(codeValue);

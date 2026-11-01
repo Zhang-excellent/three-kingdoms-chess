@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { RoomService, type InternalRoom } from './room-service.ts';
-import type { ClientAck, MoveIntent, PublicLobbySnapshot, RoomView, SessionReceipt } from '../src/online.ts';
+import type { ClientAck, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from '../src/online.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 
@@ -92,6 +92,12 @@ export function createOnlineServer() {
       const result = rooms.joinRoom(payload?.roomCode, payload?.nickname, socket.id);
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
       done(result.ack); broadcast(result.room);
+    });
+    socket.on('room:inspect', (payload: { roomCode?: unknown }, done: (ack: ClientAck<PublicRoomSummary>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        done(rooms.inspectRoom(payload?.roomCode).ack);
+      } catch { internalError(done); }
     });
     socket.on('room:claim-seat', async (payload: { roomCode?: unknown; nickname?: unknown; faction?: unknown; listed?: unknown },
       done: (ack: ClientAck<SessionReceipt>) => void) => {

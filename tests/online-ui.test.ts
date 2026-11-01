@@ -37,6 +37,7 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
   const wrapper = mount(App, { attachTo: document.body });
   const otherClients: Socket[] = [];
   const oldRandomUUID = Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID');
+  const oldClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
   try {
     await wrapper.findAll('button').find(button => button.text() === '好友组局')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button => button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
@@ -47,6 +48,31 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:online-session-v1')!);
     const code: string = saved.roomCode;
     assert.match(wrapper.get('.room-heading h2').text(), new RegExp(code));
+    let copiedInvite = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (value: string) => { copiedInvite = value; } },
+    });
+    await wrapper.findAll('button').find(button => button.text() === '复制邀请链接')!.trigger('click');
+    await waitUntil(() => wrapper.find('.invite-copy-dialog').text().includes('邀请链接已复制'), 'Copy success was not shown');
+    const inviteText = (wrapper.get('.invite-copy-dialog textarea').element as HTMLTextAreaElement).value;
+    const expectedInvite = `${origin}/?mode=online&room=${code}`;
+    assert.equal(copiedInvite, expectedInvite);
+    assert.equal(inviteText, expectedInvite);
+    assert.deepEqual([...new URL(inviteText).searchParams.keys()].sort(), ['mode', 'room']);
+    assert.equal(inviteText.includes('reconnectToken'), false);
+    assert.equal(inviteText.includes('token'), false);
+    await wrapper.get('.invite-copy-dialog .dialog-close').trigger('click');
+
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('denied'); } },
+    });
+    await wrapper.findAll('button').find(button => button.text() === '复制邀请链接')!.trigger('click');
+    await waitUntil(() => wrapper.find('.invite-copy-dialog').text().includes('请手动复制邀请链接'), 'Copy fallback was not shown');
+    assert.doesNotMatch(wrapper.get('.invite-copy-dialog').text(), /邀请链接已复制/);
+    assert.equal((wrapper.get('.invite-copy-dialog textarea').element as HTMLTextAreaElement).value, expectedInvite);
+    await wrapper.get('.invite-copy-dialog .dialog-close').trigger('click');
     const others: SessionReceipt[] = [];
     for (const nickname of ['界面蜀', '界面吴']) {
       const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
@@ -71,6 +97,8 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
   } finally {
     if (oldRandomUUID) Object.defineProperty(globalThis.crypto, 'randomUUID', oldRandomUUID);
     else delete (globalThis.crypto as unknown as { randomUUID?: unknown }).randomUUID;
+    if (oldClipboard) Object.defineProperty(navigator, 'clipboard', oldClipboard);
+    else delete (navigator as unknown as { clipboard?: unknown }).clipboard;
     wrapper.unmount();
     otherClients.forEach(socket => socket.disconnect());
   }
@@ -197,6 +225,132 @@ test('expired reconnect credentials are cleared without an obsolete-room error',
     assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
     assert.equal(wrapper.find('.room-lobby').exists(), false);
   } finally { wrapper.unmount(); }
+});
+
+test('an invitation URL inspects the room, joins the chosen seat, and survives refresh', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    const owner = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+    players.push(owner);
+    await new Promise<void>((resolve, reject) => { owner.once('connect', resolve); owner.once('connect_error', reject); });
+    const receipt = success(await send<SessionReceipt>(owner, 'room:create', {
+      roomCode: '001357', nickname: '邀请房主', listed: false,
+    }));
+    const invite = `${origin}/three-chess/?mode=online&room=${receipt.roomCode}`;
+    history.replaceState(null, '', invite);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.invite-page').exists(), 'Invitation did not load the room page');
+    await waitUntil(() => wrapper!.get('.invite-entry').text().includes('1/3'), 'Invitation room summary did not load');
+    assert.equal(wrapper.get('.invite-page h1').text(), '好友邀请');
+    assert.match(wrapper.get('.invite-entry').text(), /001357/);
+    assert.match(wrapper.get('.invite-entry').text(), /1\/3/);
+    assert.equal(wrapper.find('.invite-page input[autocomplete="nickname"]').attributes('placeholder'), '可不填');
+    await wrapper.get('.invite-page input[autocomplete="nickname"]').setValue('受邀魏');
+    await wrapper.findAll('.invite-page button').find(button => button.text() === '加入房间')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Invitation join did not open the waiting room');
+    assert.equal(server.rooms.getRoom(receipt.roomCode)?.players.length, 2);
+    const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:online-session-v1')!);
+    assert.equal(saved.roomCode, '001357');
+
+    wrapper.unmount();
+    history.replaceState(null, '', invite);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Invitation room did not restore after refresh');
+    assert.equal(server.rooms.getRoom(receipt.roomCode)?.players.length, 2);
+    assert.equal(wrapper.text().includes('reconnectToken'), false);
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
+});
+
+test('a full or started invitation shows status and a spectator entry', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    for (let index = 0; index < 3; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '401358', nickname: '满房魏' }));
+    const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '满房蜀' }));
+    const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '满房吴' }));
+    const receipts = [a, b, c];
+    const invite = `${origin}/three-chess/?mode=online&room=${a.roomCode}`;
+    history.replaceState(null, '', invite);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.invite-page').exists(), 'Full invitation did not load');
+    await waitUntil(() => wrapper!.get('.invite-entry').text().includes('房间已满'), 'Full invitation status did not load');
+    assert.match(wrapper.get('.invite-entry').text(), /房间已满/);
+    assert.ok(wrapper.findAll('.invite-page button').some(button => button.text() === '进入观战'));
+    wrapper.unmount(); wrapper = null;
+
+    for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
+      success(await send(players[index], 'room:choose-faction', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1,
+      }));
+    for (let index = 0; index < 3; index++)
+      success(await send(players[index], 'room:ready', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1,
+      }));
+    assert.equal(server.rooms.getRoom(a.roomCode)?.phase, 'playing');
+
+    history.replaceState(null, '', invite);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.invite-page').exists(), 'Started invitation did not load');
+    await waitUntil(() => wrapper!.get('.invite-entry').text().includes('对局已经开始'), 'Started invitation status did not load');
+    assert.match(wrapper.get('.invite-entry').text(), /对局已经开始/);
+    await wrapper.findAll('.invite-page button').find(button => button.text() === '进入观战')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Invitation spectator entry did not open the board');
+    assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
+});
+
+test('invalid invitations do not create rooms, and an existing room is never overwritten', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=999998`);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.invite-page').exists(), 'Missing invitation did not load');
+    await waitUntil(() => wrapper!.get('.invite-entry').text().includes('邀请已失效'), 'Missing invitation was not explained');
+    assert.equal(server.rooms.getRoom('999998'), undefined);
+    assert.ok(wrapper.findAll('.invite-page button').some(button => button.text() === '返回大厅'));
+    wrapper.unmount(); wrapper = null;
+
+    for (let index = 0; index < 2; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const current = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '401359', nickname: '原房主' }));
+    const invited = success(await send<SessionReceipt>(players[1], 'room:create', { roomCode: '401360', nickname: '邀请房主' }));
+    localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+      roomCode: current.roomCode, reconnectToken: current.reconnectToken, playerId: current.playerId, nickname: '原房主',
+    }));
+    history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${invited.roomCode}`);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.invite-page').exists(), 'Existing-room conflict did not load');
+    await waitUntil(() => wrapper!.get('.invite-entry').text().includes('你已在房间 401359'), 'Existing room was not identified');
+    assert.match(wrapper.get('.invite-entry').text(), /不会自动退出或覆盖/);
+    assert.ok(wrapper.findAll('.invite-page button').some(button => button.text() === '返回原房间'));
+    assert.ok(wrapper.findAll('.invite-page button').some(button => button.text() === '退出原房间并加入邀请'));
+    const saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:online-session-v1')!);
+    assert.equal(saved.roomCode, '401359');
+    assert.equal(saved.reconnectToken, current.reconnectToken);
+    assert.equal(server.rooms.getRoom(current.roomCode)?.players.length, 1);
+    assert.equal(server.rooms.getRoom(invited.roomCode)?.players.length, 1);
+
+    await wrapper.findAll('.invite-page button').find(button => button.text() === '退出原房间并加入邀请')!.trigger('click');
+    await waitUntil(() => !wrapper!.get('.invite-entry').text().includes('你已在房间')
+      && wrapper!.get('.invite-entry').text().includes('1/3'), 'Invitation did not open after leaving the original room');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    await wrapper.findAll('.invite-page button').find(button => button.text() === '加入房间')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Invitation was not joined after leaving the original room');
+    assert.equal(JSON.parse(localStorage.getItem('three-kingdoms-chess:online-session-v1')!).roomCode, '401360');
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
 });
 
 test('spectator uses visible entry, sees lobby and live game, remains read-only, and restores after refresh', async () => {

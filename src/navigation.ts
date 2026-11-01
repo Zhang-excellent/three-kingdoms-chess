@@ -34,3 +34,9 @@ export function appRouteUrl(value: string | URL, page: AppPage, roomCode?: strin
   }
   return url.href;
 }
+
+export function roomInviteUrl(value: string | URL, roomCode: string): string | null {
+  const code = roomCode.trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(code)) return null;
+  return appRouteUrl(value, 'room', code);
+}

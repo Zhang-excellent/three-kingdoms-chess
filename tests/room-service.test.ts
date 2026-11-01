@@ -112,6 +112,21 @@ test('public lobby summaries use one permanent table, nine custom slots, and hid
   assert.equal(service.publicRooms(100).length, 10);
 });
 
+test('room inspection returns only the public invitation summary', () => {
+  const service = new RoomService();
+  receipt(service.createRoom('001234', '邀请房主', 'invite-owner'));
+  const inspected = service.inspectRoom('001234');
+  assert.equal(inspected.ack.ok, true);
+  if (!inspected.ack.ok) assert.fail('room inspection failed');
+  assert.equal(inspected.ack.data.code, '001234');
+  assert.equal(inspected.ack.data.playerCount, 1);
+  assert.equal(inspected.ack.data.players[0].nickname, '邀请房主');
+  assert.equal(JSON.stringify(inspected.ack.data).includes('reconnectToken'), false);
+  assert.equal(JSON.stringify(inspected.ack.data).includes('playerId'), false);
+  failure(service.inspectRoom('0012'), 'INVALID_ROOM_CODE');
+  failure(service.inspectRoom('999998'), 'ROOM_NOT_FOUND');
+});
+
 test('server enforces faction ownership, turn, legal moves, and three-slot order', async () => {
   const { service, code, players, room } = startedRoom();
   failure(await service.submitMove(code, players[1].reconnectToken, intent('wrongturn1', room.version, 'wei-pawn-0-6', 0, 5)), 'NOT_YOUR_TURN');

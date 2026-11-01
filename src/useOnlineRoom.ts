@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import { io, type Socket } from 'socket.io-client';
 import { ONLINE_SESSION_KEY, PENDING_LEAVES_KEY, createMoveRequestId } from './online.ts';
 import type { ClientAck, DrawVote, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from './online.ts';
+import { roomInviteUrl } from './navigation.ts';
 import type { Faction, Point } from './game.ts';
 
 interface SavedSession { roomCode: string; reconnectToken: string; playerId?: string; nickname: string }
@@ -36,6 +37,9 @@ export function useOnlineRoom() {
   const room = ref<RoomView | null>(null);
   const lobbyRooms = ref<PublicRoomSummary[]>([]);
   const lobbyLoaded = ref(false);
+  const inviteRoom = ref<PublicRoomSummary | null>(null);
+  const inviteLookup = ref<'idle' | 'loading' | 'ready' | 'missing' | 'error'>('idle');
+  const inviteLookupError = ref('');
   const session = ref<SavedSession | null>(initialSession);
   const connection = ref<'offline' | 'connecting' | 'online' | 'replaced'>('offline');
   const error = ref('');
@@ -45,12 +49,17 @@ export function useOnlineRoom() {
   let recovery: Promise<void> = Promise.resolve();
   let flushing: Promise<void> | null = null;
   let lobbySubscribed = false;
+  let inviteLookupEpoch = 0;
 
   const self = computed(() => room.value?.players.find(player => player.id === room.value?.selfId) ?? null);
   const faction = computed(() => self.value?.faction ?? null);
   const inRoom = computed(() => !!room.value && !!session.value);
   const hasSession = computed(() => !!session.value);
   const savedRoomCode = computed(() => session.value?.roomCode ?? null);
+  const inviteUrl = computed(() => {
+    const code = room.value?.code;
+    return inRoom.value && code && code === session.value?.roomCode ? roomInviteUrl(location.href, code) : null;
+  });
   function pending(): PendingLeave[] { return loadPending(); }
   function queueLeave(value: PendingLeave) {
     const list = pending();
@@ -300,6 +309,33 @@ export function useOnlineRoom() {
     } finally { if (generation === epoch) busy.value = false; }
   }
 
+  async function inspectInvite(codeValue: string): Promise<ClientAck<PublicRoomSummary>> {
+    const code = codeValue.trim().toUpperCase(), lookup = ++inviteLookupEpoch;
+    if (!/^[A-Z0-9]{6}$/.test(code)) {
+      inviteRoom.value = null; inviteLookup.value = 'missing'; inviteLookupError.value = '邀请已失效，房间号无效。';
+      return { ok: false, code: 'INVALID_ROOM_CODE', error: inviteLookupError.value };
+    }
+    inviteRoom.value = null; inviteLookup.value = 'loading'; inviteLookupError.value = '';
+    if (!await ensureConnected()) {
+      if (lookup === inviteLookupEpoch) {
+        inviteLookup.value = 'error';
+        inviteLookupError.value = '暂时无法连接服务器，请稍后重试。';
+      }
+      return { ok: false, code: 'OFFLINE', error: '无法连接联机服务器，请稍后重试。' };
+    }
+    const ack = await emit<PublicRoomSummary>('room:inspect', { roomCode: code });
+    if (lookup !== inviteLookupEpoch) return ack;
+    if (ack.ok) {
+      inviteRoom.value = ack.data;
+      inviteLookup.value = 'ready';
+    } else {
+      inviteRoom.value = null;
+      inviteLookup.value = ack.code === 'ROOM_NOT_FOUND' ? 'missing' : 'error';
+      inviteLookupError.value = ack.error;
+    }
+    return ack;
+  }
+
   async function subscribeLobby(): Promise<ClientAck<PublicLobbySnapshot>> {
     if (!await ensureConnected()) return { ok: false, code: 'OFFLINE', error: '无法连接联机服务器，请稍后重试。' };
     if (!lobbySubscribed) lobbyLoaded.value = false;
@@ -344,19 +380,14 @@ export function useOnlineRoom() {
     const intent: MoveIntent = { requestId: createMoveRequestId(), version: room.value.version, pieceId, to };
     return action<{ state: RoomView }>('game:move', { intent });
   }
-  async function copyInvite(): Promise<boolean> {
-    if (!session.value) return false;
-    const url = new URL(location.href); url.search = '';
-    url.searchParams.set('mode', 'online'); url.searchParams.set('room', session.value.roomCode);
-    try { await navigator.clipboard.writeText(url.toString()); return true; } catch { return false; }
-  }
   function forgetSession() { leaveRoom(); }
 
   onBeforeUnmount(() => socket?.disconnect());
   if (initialSession || mode.value === 'online' || pending().length) openSocket();
   return { mode, nickname, createCode, joinCode, room, self, faction, connection, error, busy, inRoom,
-    hasSession, savedRoomCode, lobbyRooms, lobbyLoaded, subscribeLobby, unsubscribeLobby,
+    hasSession, savedRoomCode, lobbyRooms, lobbyLoaded, inviteRoom, inviteLookup, inviteLookupError, inviteUrl,
+    subscribeLobby, unsubscribeLobby, inspectInvite,
     spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
     connect, useLocal, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
-    releaseOffline, leaveRoom, copyInvite, forgetSession };
+    releaseOffline, leaveRoom, forgetSession };
 }

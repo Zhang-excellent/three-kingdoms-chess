@@ -11,6 +11,7 @@ import { appRouteUrl, parseAppRoute } from './navigation.ts';
 import type { AppPage } from './navigation.ts';
 import HomePage from './components/HomePage.vue';
 import LobbyPage from './components/LobbyPage.vue';
+import InvitePage from './components/InvitePage.vue';
 import RoomWaiting from './components/RoomWaiting.vue';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
@@ -41,6 +42,9 @@ const selectedId = ref<string | null>(null), message = ref(initialMessage), feed
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
+const inviteDialog = ref<HTMLDialogElement | null>(null), inviteLinkInput = ref<HTMLTextAreaElement | null>(null);
+const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-room'>('manual');
+const pendingInviteAfterLeave = ref<string | null>(null), inviteActionError = ref('');
 const audioSettings = ref(loadAudioSettings()), audioMessage = ref('');
 const availableTracks = computed(() => tracksInPlaylist(audioSettings.value.musicPlaylistId));
 const selectedTrackName = computed(() => musicTrack(audioSettings.value.musicTrackId)?.name ?? '暂无歌曲');
@@ -70,7 +74,8 @@ const online = useOnlineRoom();
 const initialRoute = parseAppRoute(location.href), page = ref<AppPage>(initialRoute.page);
 const requestedRoomCode = ref(initialRoute.roomCode), lobbyListed = ref(true);
 const { mode, nickname, createCode, joinCode, room, self, connection, error: onlineError, busy: onlineBusy,
-  spectating, watchCode, watchingCode, hasSession, savedRoomCode, lobbyRooms, lobbyLoaded } = online;
+  spectating, watchCode, watchingCode, hasSession, savedRoomCode, lobbyRooms, lobbyLoaded,
+  inviteRoom, inviteLookup, inviteLookupError, inviteUrl } = online;
 const fallbackGame = newGame();
 const game = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
 const previousGame = computed(() => online.room.value?.phase === 'lobby' && online.room.value.game?.status === 'finished' ? online.room.value.game : null);
@@ -79,8 +84,9 @@ const showGame = computed(() => (page.value === 'room' && !!room.value && room.v
   || page.value === 'local');
 const roomRouteMismatch = computed(() => page.value === 'room' && !!requestedRoomCode.value
   && !!room.value && room.value.code !== requestedRoomCode.value);
-const showLobbyPage = computed(() => page.value === 'lobby' || page.value === 'friends'
-  || (page.value === 'room' && (!room.value && !hasSession.value || roomRouteMismatch.value)));
+const showLobbyPage = computed(() => page.value === 'lobby' || page.value === 'friends');
+const showInvitePage = computed(() => page.value === 'room' && !!requestedRoomCode.value
+  && (roomRouteMismatch.value || (!room.value && !hasSession.value)));
 const rematchBusy = ref(false);
 const ownFaction = computed(() => online.mode.value === 'online' ? online.faction.value : null);
 const flipOverride = ref(false);
@@ -210,6 +216,10 @@ watch(() => online.room.value?.version, () => {
 watch(() => online.room.value?.drawOffer, (offer, previous) => {
   if (previous && !offer && online.room.value?.phase === 'playing') notify('和棋申请未通过，对局继续。');
 });
+watch([page, requestedRoomCode, hasSession, room], ([currentPage, code, hasRoomSession, currentRoom]) => {
+  if (currentPage === 'room' && code && !hasRoomSession && !currentRoom && !spectating.value)
+    void online.inspectInvite(code);
+}, { immediate: true });
 
 function notify(text: string, error = false) { message.value = text; feedbackError.value = error; }
 async function toggleMusic() {
@@ -299,7 +309,27 @@ function resetRequest() {
 }
 function pieceLabel(piece: Piece) { return `${PLAYERS[piece.faction].nation}方${pieceName(piece)}，第${piece.x + 1}路第${piece.y + 1}线`; }
 function onEscape() { selectedId.value = null; notify(active.value ? `轮到${active.value.name}行棋。` : message.value); }
-async function copyInvite() { notify(await online.copyInvite() ? '邀请链接已复制，发给另外两位朋友即可。' : '复制失败，请手动复制浏览器地址。', false); }
+async function copyInvite() {
+  const link = inviteUrl.value;
+  inviteLink.value = link ?? '';
+  if (!link) {
+    inviteCopyResult.value = 'no-room';
+    inviteDialog.value?.showModal();
+    return;
+  }
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(link);
+    inviteCopyResult.value = 'copied';
+  } catch {
+    inviteCopyResult.value = 'manual';
+  }
+  inviteDialog.value?.showModal();
+}
+function selectInviteLink() {
+  inviteLinkInput.value?.focus();
+  inviteLinkInput.value?.select();
+}
 async function createOnlineRoom() {
   await online.createRoom(lobbyListed.value);
   if (room.value) await navigatePage('room', room.value.code, 'replace');
@@ -316,6 +346,23 @@ async function joinOnlineRoom(code?: string) {
   await online.joinRoom(code);
   if (room.value) await navigatePage('room', room.value.code, 'replace');
 }
+async function joinInvitedRoom(faction: Faction, guestName: string) {
+  if (!requestedRoomCode.value) return;
+  inviteActionError.value = '';
+  const result = await online.claimSeat(requestedRoomCode.value, faction, guestName, true);
+  if (result.ok) {
+    await navigatePage('room', result.data.roomCode, 'replace');
+    return;
+  }
+  inviteActionError.value = result.error;
+  await online.inspectInvite(requestedRoomCode.value);
+}
+function retryInvite() {
+  if (requestedRoomCode.value) void online.inspectInvite(requestedRoomCode.value);
+}
+function watchInvitedRoom() {
+  if (requestedRoomCode.value) void watchOnlineRoom(requestedRoomCode.value);
+}
 async function watchOnlineRoom(code?: string) {
   if (hasSession.value) { onlineError.value = '请先退出当前玩家房间，再进入观战。'; return; }
   const roomCode = (code ?? watchCode.value).trim().toUpperCase();
@@ -326,6 +373,14 @@ function leaveRoomForLobby() {
   online.leaveRoom();
   selectedId.value = null;
   void navigatePage('lobby', null, 'replace');
+}
+function requestInviteExit() {
+  const invitation = requestedRoomCode.value;
+  if (!invitation) return;
+  pendingInviteAfterLeave.value = invitation;
+  if (room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value))
+    exitDialog.value?.showModal();
+  else confirmLeave();
 }
 function exportGameRecord(current: Game) {
   if (!current.history.length) return;
@@ -340,13 +395,22 @@ function exportGameRecord(current: Game) {
   } catch { notify('浏览器无法导出棋谱。', true); }
 }
 function requestLeave() {
+  pendingInviteAfterLeave.value = null;
   if (room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value))
     exitDialog.value?.showModal();
   else leaveRoomForLobby();
 }
 function confirmLeave() {
   exitDialog.value?.close();
-  leaveRoomForLobby();
+  const invitation = pendingInviteAfterLeave.value;
+  pendingInviteAfterLeave.value = null;
+  online.leaveRoom(); selectedId.value = null;
+  if (invitation) void navigatePage('room', invitation, 'replace');
+  else void navigatePage('lobby', null, 'replace');
+}
+function cancelExitRequest() {
+  pendingInviteAfterLeave.value = null;
+  exitDialog.value?.close();
 }
 function exitWatchingToLobby() {
   online.exitWatching();
@@ -412,6 +476,13 @@ async function requestRematch() {
       @create="createOnlineRoom" @create-table="createTableAt" @join="joinOnlineRoom" @join-seat="claimTableSeat" @watch="watchOnlineRoom"
       @update-nickname="nickname = $event" @update-create-code="createCode = $event"
       @update-join-code="joinCode = $event" @update-listed="lobbyListed = $event" />
+
+    <InvitePage v-else-if="showInvitePage && requestedRoomCode" :room-code="requestedRoomCode"
+      :room="inviteRoom" :lookup="inviteLookup" :error="inviteActionError || inviteLookupError || onlineError"
+      :connection="connection" :busy="onlineBusy"
+      :existing-room-code="roomRouteMismatch ? (room?.code ?? savedRoomCode) : null"
+      @join="joinInvitedRoom" @watch="watchInvitedRoom" @retry="retryInvite" @lobby="openLobbyPage"
+      @return-room="openCurrentRoom" @exit-room="requestInviteExit" />
 
     <main v-else-if="page === 'spectate' && (!room || room.phase === 'lobby')" class="online-shell">
       <section class="online-entry watch-entry">
@@ -519,7 +590,22 @@ async function requestRematch() {
     </dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
     <dialog ref="resignDialog" class="reset-dialog"><h2>确认认输？</h2><p>本国立即失败并清空棋子；你仍可留在房间查看。</p><div class="dialog-actions"><button class="tool-button" @click="resignDialog?.close()">继续对局</button><button class="primary-button" @click="confirmResign">确认认输</button></div></dialog>
-    <dialog ref="exitDialog" class="reset-dialog"><h2>确认退出房间？</h2><p>你仍在对局中，退出将先按认输出局，再返回大厅。断网时本机立即退出，服务器恢复连接后补发通知。</p><div class="dialog-actions"><button class="tool-button" @click="exitDialog?.close()">继续对局</button><button class="primary-button" @click="confirmLeave">确认退出</button></div></dialog>
+    <dialog ref="exitDialog" class="reset-dialog"><h2>确认退出房间？</h2><p>你仍在对局中，退出将先按认输出局，{{ pendingInviteAfterLeave ? '然后继续打开好友邀请。' : '再返回大厅。' }}断网时本机立即退出，服务器恢复连接后补发通知。</p><div class="dialog-actions"><button class="tool-button" @click="cancelExitRequest">继续对局</button><button class="primary-button" @click="confirmLeave">确认退出</button></div></dialog>
+    <dialog ref="inviteDialog" class="invite-copy-dialog">
+      <div class="dialog-heading">
+        <h2>{{ inviteCopyResult === 'copied' ? '邀请链接已复制' : inviteCopyResult === 'no-room' ? '暂无有效房间' : '请手动复制邀请链接' }}</h2>
+        <button type="button" class="dialog-close" aria-label="关闭邀请链接" @click="inviteDialog?.close()">×</button>
+      </div>
+      <p v-if="inviteCopyResult === 'copied'">链接已写入剪贴板，可以直接发给好友。</p>
+      <p v-else-if="inviteCopyResult === 'manual'">浏览器未能自动复制，请长按或全选下面的完整网址后复制。</p>
+      <p v-else>当前没有已确认的房间，无法生成邀请链接。</p>
+      <textarea v-if="inviteLink" ref="inviteLinkInput" class="invite-link-text" :value="inviteLink" readonly rows="3"
+        aria-label="完整邀请链接" @focus="selectInviteLink"></textarea>
+      <div class="dialog-actions">
+        <button v-if="inviteLink" class="tool-button" type="button" @click="selectInviteLink">全选链接</button>
+        <button class="primary-button" type="button" @click="inviteDialog?.close()">关闭</button>
+      </div>
+    </dialog>
   </div>
 </template>
 
@@ -527,4 +613,9 @@ async function requestRematch() {
 .watch-entry .join-row input{font-size:14px;font-weight:500}
 .watch-entry .join-row input::placeholder{color:#8c7a66;font-weight:500;opacity:1}
 .watch-entry .join-row .primary-button{font-size:12px;font-weight:600}
+.invite-copy-dialog{width:min(560px,calc(100vw - 32px));padding:26px}
+.invite-copy-dialog p{font-size:13px;line-height:1.8;color:#756552}
+.invite-copy-dialog .dialog-actions{margin-top:16px}
+.invite-link-text{width:100%;margin-top:14px;padding:11px 12px;border:1px solid #d8cab4;border-radius:8px;background:#fffefb;color:#43382d;font:500 13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;resize:none;outline:none}
+.invite-link-text:focus{border-color:#a78147;box-shadow:0 0 0 3px #a781471b}
 </style>
