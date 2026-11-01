@@ -14,7 +14,7 @@ export function createOnlineServer() {
   const httpServer = createServer(app);
   const io = new Server(httpServer, { path: '/three-chess/socket.io', cors: { origin: true, credentials: true } });
   let lobbyTimer: ReturnType<typeof setTimeout> | null = null;
-  const lobbySnapshot = (): PublicLobbySnapshot => ({ rooms: rooms.publicRooms(50) });
+  const lobbySnapshot = (): PublicLobbySnapshot => ({ rooms: rooms.publicRooms(10) });
   const flushLobby = () => {
     lobbyTimer = null;
     io.to(PUBLIC_LOBBY).emit('lobby:rooms', lobbySnapshot());

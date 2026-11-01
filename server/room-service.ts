@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { ORDER, drawGame, newGame, playMove, resignFaction } from '../src/game.ts';
 import type { Faction, Game, Point } from '../src/game.ts';
+import { PUBLIC_ROOM_CODE } from '../src/online.ts';
 import type { ClientAck, DrawOfferView, DrawVote, MoveIntent, PublicRoomSummary, RoomPhase, RoomPlayerView, RoomView, SessionReceipt } from '../src/online.ts';
 
 interface Player {
@@ -60,6 +61,10 @@ export class RoomService {
   constructor(onRoomChanged: (room: Room) => void = () => {}, lobbyGraceMs = 60_000) {
     this.onRoomChanged = onRoomChanged;
     this.lobbyGraceMs = lobbyGraceMs;
+    this.rooms.set(PUBLIC_ROOM_CODE, {
+      code: PUBLIC_ROOM_CODE, phase: 'lobby', version: 1, round: 1, players: [], spectators: new Set(),
+      game: null, drawOffer: null, listed: true, requests: new Map(),
+    });
   }
 
   createRoom(codeValue: unknown, nicknameValue: unknown, socketId: string, listedValue: unknown = true): RoomActionResult<SessionReceipt> {
@@ -329,15 +334,17 @@ export class RoomService {
 
   getRoom(code: string): Room | undefined { return this.rooms.get(cleanCode(code)); }
 
-  publicRooms(limit = 50): PublicRoomSummary[] {
-    return Array.from(this.rooms.values())
-      .filter(room => room.listed)
+  publicRooms(limit = 10): PublicRoomSummary[] {
+    const publicRoom = this.rooms.get(PUBLIC_ROOM_CODE);
+    const customRooms = Array.from(this.rooms.values())
+      .filter(room => room.listed && room.code !== PUBLIC_ROOM_CODE)
       .map(room => this.summary(room))
       .sort((left, right) => {
         const priority = (room: PublicRoomSummary) => room.joinable ? 0 : room.phase === 'lobby' ? 1 : room.phase === 'playing' ? 2 : 3;
         return priority(left) - priority(right) || right.playerCount - left.playerCount || left.code.localeCompare(right.code);
-      })
-      .slice(0, Math.max(0, Math.min(50, limit)));
+      });
+    const rooms = publicRoom ? [this.summary(publicRoom), ...customRooms] : customRooms;
+    return rooms.slice(0, Math.max(0, Math.min(10, limit)));
   }
 
   private processMove(code: string, tokenValue: unknown, intentValue: unknown, socketId?: string): RoomActionResult<{ state: RoomView }> {
@@ -420,7 +427,19 @@ export class RoomService {
     if (player.socketId) this.socketRoom.delete(player.socketId);
     room.players = room.players.filter(item => item !== player);
     room.version++;
-    if (!room.players.length) this.rooms.delete(room.code);
+    if (!room.players.length) {
+      if (room.code === PUBLIC_ROOM_CODE) this.resetPublicRoom(room);
+      else this.rooms.delete(room.code);
+    }
+  }
+
+  private resetPublicRoom(room: Room): void {
+    room.phase = 'lobby';
+    room.round++;
+    room.game = null;
+    room.drawOffer = null;
+    room.requests.clear();
+    room.version++;
   }
 
   private nextLobby(room: Room): void {

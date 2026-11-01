@@ -72,6 +72,7 @@ export type ClientAck<T = undefined> =
 
 export const ONLINE_SESSION_KEY = 'three-kingdoms-chess:online-session-v1';
 export const PENDING_LEAVES_KEY = 'three-kingdoms-chess:pending-leaves-v1';
+export const PUBLIC_ROOM_CODE = '000000';
 
 /** getRandomValues works on the site's HTTP IP address; randomUUID requires a secure context. */
 export function createMoveRequestId(source: Pick<Crypto, 'getRandomValues'> = globalThis.crypto): string {

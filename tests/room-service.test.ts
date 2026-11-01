@@ -65,7 +65,7 @@ test('a room rejects a fourth player and separate rooms never share state', asyn
   assert.equal(service.getRoom(other.roomCode)!.game, null);
 });
 
-test('public lobby summaries are ordered by available seats and hide unlisted rooms', () => {
+test('public lobby summaries use one permanent table, nine custom slots, and hide unlisted rooms', async () => {
   const service = new RoomService();
   const one = receipt(service.createRoom('111111', '一号房主', 'one'));
   receipt(service.joinRoom('111111', '一号二号', 'one-two') as ReturnType<RoomService['createRoom']>);
@@ -75,6 +75,7 @@ test('public lobby summaries are ordered by available seats and hide unlisted ro
   const rooms = service.publicRooms();
   assert.deepEqual(Object.keys(rooms[0]).sort(), ['code', 'joinable', 'maxPlayers', 'phase', 'playerCount', 'players', 'watchable']);
   assert.deepEqual(rooms.map(room => [room.code, room.playerCount, room.joinable]), [
+    ['000000', 0, true],
     ['111111', 2, true],
     ['222222', 1, true],
   ]);
@@ -90,11 +91,17 @@ test('public lobby summaries are ordered by available seats and hide unlisted ro
   assert.equal((service.getRoom(one.roomCode)?.listed), true);
   assert.equal((service.getRoom(hidden.roomCode)?.listed), false);
 
-  for (let index = 0; index < 52; index++)
+  const publicJoin = receipt(service.joinRoom('000000', '公开桌访客', 'public-one') as ReturnType<RoomService['createRoom']>);
+  assert.equal(service.getRoom('000000')?.players.length, 1);
+  assert.equal((await service.leaveRoom('000000', publicJoin.reconnectToken, 'public-one')).ack.ok, true);
+  assert.equal(service.getRoom('000000')?.players.length, 0);
+  assert.equal(service.getRoom('000000')?.phase, 'lobby');
+
+  for (let index = 0; index < 12; index++)
     receipt(service.createRoom(String(410000 + index), `容量房${index}`, `capacity-${index}`));
-  assert.equal(service.publicRooms().length, 50);
+  assert.equal(service.publicRooms().length, 10);
   assert.equal(service.publicRooms(3).length, 3);
-  assert.equal(service.publicRooms(100).length, 50);
+  assert.equal(service.publicRooms(100).length, 10);
 });
 
 test('server enforces faction ownership, turn, legal moves, and three-slot order', async () => {

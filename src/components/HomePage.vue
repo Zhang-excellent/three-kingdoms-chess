@@ -54,7 +54,7 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
         <div>
           <span>{{ PLAYERS[faction].nation }}国</span>
           <h2>{{ PLAYERS[faction].name }}</h2>
-          <p>{{ index === 0 ? '坐镇下方，先手开局' : index === 1 ? '据守右翼，伺机而动' : '列阵左翼，后发制人' }}</p>
+          <p>{{ index === 0 ? '坐镇北方，先手开局' : index === 1 ? '据守西方，伺机而动' : '列阵东方，后发制人' }}</p>
         </div>
       </article>
     </section>

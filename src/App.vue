@@ -304,6 +304,15 @@ async function createOnlineRoom() {
   await online.createRoom(lobbyListed.value);
   if (room.value) await navigatePage('room', room.value.code, 'replace');
 }
+async function createPublicTable() {
+  if (!nickname.value.trim()) { onlineError.value = '请先填写昵称，再点亮桌位。'; return; }
+  for (let attempt = 0; attempt < 4 && !room.value; attempt++) {
+    const random = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000;
+    createCode.value = String(random || 1).padStart(6, '0');
+    await online.createRoom(true);
+  }
+  if (room.value) await navigatePage('room', room.value.code, 'replace');
+}
 async function joinOnlineRoom(code?: string) {
   await online.joinRoom(code);
   if (room.value) await navigatePage('room', room.value.code, 'replace');
@@ -402,7 +411,7 @@ async function requestRematch() {
       :loaded="lobbyLoaded" :has-room="hasSession"
       :current-room-code="room?.code ?? savedRoomCode" :current-room-phase="currentRoomPhase"
       @home="openHomePage" @switch-public="openLobbyPage" @switch-friends="openFriendsPage" @resume="openCurrentRoom"
-      @create="createOnlineRoom" @join="joinOnlineRoom" @watch="watchOnlineRoom"
+      @create="createOnlineRoom" @create-table="createPublicTable" @join="joinOnlineRoom" @watch="watchOnlineRoom"
       @update-nickname="nickname = $event" @update-create-code="createCode = $event"
       @update-join-code="joinCode = $event" @update-listed="lobbyListed = $event" />
 

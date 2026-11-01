@@ -100,8 +100,10 @@ test('a public lobby room updates live and accepts the final player without repl
     success(await send(players[1], 'room:ready', { roomCode: a.roomCode, reconnectToken: b.reconnectToken, ready: true, round: 1 }));
 
     wrapper = mount(App, { attachTo: document.body });
-    await waitUntil(() => wrapper!.findAll('.public-room-card').some(card => card.text().includes('400006')), 'Public room did not appear');
-    const roomCard = () => wrapper!.findAll('.public-room-card').find(card => card.text().includes('400006'))!;
+    await waitUntil(() => wrapper!.findAll('.chess-club-table').some(card => card.text().includes('400006')), 'Public room did not appear');
+    assert.equal(wrapper.findAll('.chess-club-table').length, 10);
+    assert.match(wrapper.findAll('.chess-club-table')[0].text(), /公开房间/);
+    const roomCard = () => wrapper!.findAll('.chess-club-table').find(card => card.text().includes('400006'))!;
     assert.match(roomCard().text(), /2\/3 席/);
     await wrapper.get('input[autocomplete="nickname"]').setValue('大厅吴');
     await roomCard().findAll('button').find(button => button.text() === '加入')!.trigger('click');
