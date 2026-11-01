@@ -103,12 +103,18 @@ test('a public lobby room updates live and accepts the final player without repl
     await waitUntil(() => wrapper!.findAll('.chess-club-table').some(card => card.text().includes('400006')), 'Public room did not appear');
     assert.equal(wrapper.findAll('.chess-club-table').length, 10);
     assert.match(wrapper.findAll('.chess-club-table')[0].text(), /公开房间/);
+    await wrapper.get('.chess-club-table.empty .club-table-center .primary-button').trigger('click');
+    assert.equal((wrapper.get('.lobby-seat-dialog').element as HTMLDialogElement).open, true);
+    assert.match(wrapper.get('.lobby-seat-dialog').text(), /昵称：.*房间号：/);
+    assert.equal(wrapper.get('.lobby-seat-dialog input[autocomplete="nickname"]').attributes('placeholder'), '可不填');
+    assert.doesNotMatch(wrapper.get('.lobby-seat-dialog').text(), /你的昵称/);
+    await wrapper.get('.lobby-seat-dialog .dialog-close').trigger('click');
     const roomCard = () => wrapper!.findAll('.chess-club-table').find(card => card.text().includes('400006'))!;
     assert.match(roomCard().text(), /2\/3 席/);
-    await wrapper.get('input[autocomplete="nickname"]').setValue('大厅吴');
-    await roomCard().findAll('button').find(button => button.text() === '加入')!.trigger('click');
+    await roomCard().find('.club-seat.wu').trigger('click');
+    await wrapper.get('.lobby-seat-dialog input[autocomplete="nickname"]').setValue('大厅吴');
+    await wrapper.get('.lobby-seat-dialog').findAll('button').find(button => button.text() === '加入并入座')!.trigger('click');
     await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Lobby join did not open the waiting room');
-    await wrapper.findAll('button').find(button => button.text() === '吴 · 孙权')!.trigger('click');
     await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.find(player => player.nickname === '大厅吴')?.faction === 'wu',
       'Lobby player faction was not recorded');
     await wrapper.findAll('button').find(button => button.text() === '我已准备')!.trigger('click');

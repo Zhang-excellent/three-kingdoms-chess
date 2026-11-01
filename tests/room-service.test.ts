@@ -97,6 +97,14 @@ test('public lobby summaries use one permanent table, nine custom slots, and hid
   assert.equal(service.getRoom('000000')?.players.length, 0);
   assert.equal(service.getRoom('000000')?.phase, 'lobby');
 
+  const seated = await service.claimSeat('444444', '', 'wei', true, 'seat-one');
+  assert.equal(seated.ack.ok, true);
+  if (!seated.ack.ok) assert.fail('seat claim failed');
+  assert.equal(seated.ack.data.state.players[0].faction, 'wei');
+  assert.match(seated.ack.data.state.players[0].nickname, /^游客/);
+  failure(await service.claimSeat('444444', '抢魏', 'wei', true, 'seat-two'), 'SEAT_TAKEN');
+  assert.equal(service.getRoom('444444')?.players.length, 1);
+
   for (let index = 0; index < 12; index++)
     receipt(service.createRoom(String(410000 + index), `容量房${index}`, `capacity-${index}`));
   assert.equal(service.publicRooms().length, 10);

@@ -95,13 +95,49 @@ export class RoomService {
       ? { room: existing.room, ack: { ok: true, data: this.receipt(existing.room, existing.player) } }
       : { ack: { ok: false, code: 'ALREADY_IN_ROOM', error: `请先退出房间 ${existing.room.code}。` } };
     if (!room) return { ack: { ok: false, code: 'ROOM_NOT_FOUND', error: '没有找到这个房间，请检查房间号。' } };
-    if (!nickname) return { ack: { ok: false, code: 'INVALID_NICKNAME', error: '请输入 1～16 个字符的昵称。' } };
     if (room.phase !== 'lobby') return { ack: { ok: false, code: 'GAME_STARTED', error: '该房间已经开局，不能再加入。' } };
     if (!this.canJoin(room)) return { ack: { ok: false, code: 'ROOM_FULL', error: '房间已满，最多三名玩家。' } };
     const player = this.newPlayer(nickname, socketId);
     room.players.push(player); room.version++; this.tokenRoom.set(player.token, room.code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
     return { room, ack: { ok: true, data: this.receipt(room, player) } };
+  }
+
+  claimSeat(codeValue: unknown, nicknameValue: unknown, factionValue: unknown, listedValue: unknown,
+    socketId: string): Promise<RoomActionResult<SessionReceipt>> {
+    const code = cleanCode(codeValue);
+    return this.serial(code, () => {
+      if (this.spectatorRoom.has(socketId))
+        return { ack: { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战，再加入房间。' } };
+      const existing = this.playerForSocket(socketId);
+      if (existing) return { ack: { ok: false, code: 'ALREADY_IN_ROOM', error: `请先退出房间 ${existing.room.code}。` } };
+      if (!validExistingCode(code)) return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '请输入 6 位房间号。' } };
+      if (!isFaction(factionValue)) return { ack: { ok: false, code: 'INVALID_FACTION', error: '请选择魏、蜀或吴。' } };
+      const nickname = cleanNickname(nicknameValue);
+      let room = this.rooms.get(code);
+      if (!room) {
+        if (!validNewCode(code)) return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '新房号必须是 6 位数字。' } };
+        const player = this.newPlayer(nickname, socketId);
+        player.faction = factionValue;
+        room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(),
+          game: null, drawOffer: null, listed: listedValue !== false, requests: new Map() };
+        this.rooms.set(code, room);
+        this.tokenRoom.set(player.token, code);
+        this.socketRoom.set(socketId, { code, playerId: player.id });
+        return { room, ack: { ok: true, data: this.receipt(room, player) } };
+      }
+      if (room.phase !== 'lobby') return { ack: { ok: false, code: 'GAME_STARTED', error: '该房间已经开局，不能中途入座。' } };
+      if (!this.canJoin(room)) return { ack: { ok: false, code: 'ROOM_FULL', error: '这个房间已经坐满。' } };
+      if (room.players.some(player => player.faction === factionValue))
+        return { ack: { ok: false, code: 'SEAT_TAKEN', error: '这个阵营席位刚刚已被其他玩家选择。' } };
+      const player = this.newPlayer(nickname, socketId);
+      player.faction = factionValue;
+      room.players.push(player);
+      room.version++;
+      this.tokenRoom.set(player.token, code);
+      this.socketRoom.set(socketId, { code, playerId: player.id });
+      return { room, ack: { ok: true, data: this.receipt(room, player) } };
+    });
   }
 
   resumeRoom(codeValue: unknown, tokenValue: unknown, socketId: string): RoomActionResult<SessionReceipt> {
@@ -455,7 +491,9 @@ export class RoomService {
   }
 
   private newPlayer(nickname: string, socketId: string): Player {
-    return { id: randomUUID(), token: randomBytes(32).toString('base64url'), nickname, faction: null, ready: false, online: true, offlineUntil: null, socketId };
+    const id = randomUUID();
+    return { id, token: randomBytes(32).toString('base64url'), nickname: nickname || `游客${id.slice(0, 4).toUpperCase()}`,
+      faction: null, ready: false, online: true, offlineUntil: null, socketId };
   }
 
   private canJoin(room: Room): boolean {

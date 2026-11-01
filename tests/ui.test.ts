@@ -33,6 +33,9 @@ test('new visitors start on the home page and can open local play, rules, friend
   t.after(() => wrapper.unmount());
   assert.ok(wrapper.find('.home-page').exists());
   assert.match(wrapper.get('.home-page').text(), /魏、蜀、吴三方轮流行棋/);
+  assert.deepEqual(wrapper.findAll('.home-action-card strong').map(item => item.text()), ['好友对战', '公开大厅', '本地试玩']);
+  assert.deepEqual(wrapper.findAll('.home-action-card').map(item => item.text()), ['好友对战', '公开大厅', '本地试玩']);
+  assert.doesNotMatch(wrapper.get('.home-actions').text(), /找棋友|查看正在等待|创建或加入|查看 10 张|开始本地/);
   assert.equal(wrapper.find('.board-panel').exists(), false);
 
   await wrapper.findAll('button').find(button => button.text() === '玩法说明')!.trigger('click');

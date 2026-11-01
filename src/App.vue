@@ -304,14 +304,13 @@ async function createOnlineRoom() {
   await online.createRoom(lobbyListed.value);
   if (room.value) await navigatePage('room', room.value.code, 'replace');
 }
-async function createPublicTable() {
-  if (!nickname.value.trim()) { onlineError.value = '请先填写昵称，再点亮桌位。'; return; }
-  for (let attempt = 0; attempt < 4 && !room.value; attempt++) {
-    const random = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000;
-    createCode.value = String(random || 1).padStart(6, '0');
-    await online.createRoom(true);
-  }
-  if (room.value) await navigatePage('room', room.value.code, 'replace');
+async function claimTableSeat(roomCode: string, faction: Faction, guestName: string) {
+  const result = await online.claimSeat(roomCode, faction, guestName, true);
+  if (result.ok) await navigatePage('room', result.data.roomCode, 'replace');
+}
+async function createTableAt(faction: Faction, guestName: string, roomCode: string) {
+  const result = await online.claimSeat(roomCode, faction, guestName, true);
+  if (result.ok) await navigatePage('room', result.data.roomCode, 'replace');
 }
 async function joinOnlineRoom(code?: string) {
   await online.joinRoom(code);
@@ -411,15 +410,14 @@ async function requestRematch() {
       :loaded="lobbyLoaded" :has-room="hasSession"
       :current-room-code="room?.code ?? savedRoomCode" :current-room-phase="currentRoomPhase"
       @home="openHomePage" @switch-public="openLobbyPage" @switch-friends="openFriendsPage" @resume="openCurrentRoom"
-      @create="createOnlineRoom" @create-table="createPublicTable" @join="joinOnlineRoom" @watch="watchOnlineRoom"
+      @create="createOnlineRoom" @create-table="createTableAt" @join="joinOnlineRoom" @join-seat="claimTableSeat" @watch="watchOnlineRoom"
       @update-nickname="nickname = $event" @update-create-code="createCode = $event"
       @update-join-code="joinCode = $event" @update-listed="lobbyListed = $event" />
 
     <main v-else-if="page === 'spectate' && (!room || room.phase === 'lobby')" class="online-shell">
       <section class="online-entry watch-entry">
-        <span class="eyebrow">观战</span><h2>{{ room ? `正在观战 · 房间 ${room.code}` : '输入房间号观战' }}</h2>
+        <h2>{{ room ? `正在观战 · 房间 ${room.code}` : '输入房间号观战' }}</h2>
         <p v-if="room">{{ room.phase === 'lobby' ? '等待玩家准备' : '棋局正在进行' }}</p>
-        <p v-else>等待中或已开局的房间均可观战，玩家满员也可以进入。</p>
         <div v-if="room" class="lobby-players"><article v-for="player in room.players" :key="player.id"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.nickname }}</strong><small>{{ player.online ? '在线' : '离线' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em></article></div>
         <div v-if="room" class="room-heading-actions"><button class="tool-button" @click="exitWatchingToLobby">退出观战</button><button class="tool-button" @click="exitWatchingToLobby">更换房间</button></div>
         <form v-else class="join-row watch-join" @submit.prevent="watchOnlineRoom()"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" type="button" :disabled="onlineBusy || connection !== 'online'" @click="watchOnlineRoom()">进入观战</button></form>

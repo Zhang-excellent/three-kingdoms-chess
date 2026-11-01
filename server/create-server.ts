@@ -93,6 +93,15 @@ export function createOnlineServer() {
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
       done(result.ack); broadcast(result.room);
     });
+    socket.on('room:claim-seat', async (payload: { roomCode?: unknown; nickname?: unknown; faction?: unknown; listed?: unknown },
+      done: (ack: ClientAck<SessionReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        const result = await rooms.claimSeat(payload?.roomCode, payload?.nickname, payload?.faction, payload?.listed, socket.id);
+        if (result.ack.ok) socket.join(result.ack.data.roomCode);
+        done(result.ack); broadcast(result.room);
+      } catch { internalError(done); }
+    });
     socket.on('room:resume', (payload: { roomCode?: unknown; reconnectToken?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
       if (typeof done !== 'function') return;
       const result = rooms.resumeRoom(payload?.roomCode, payload?.reconnectToken, socket.id);

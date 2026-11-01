@@ -258,7 +258,6 @@ export function useOnlineRoom() {
 
   async function enter(event: 'room:create' | 'room:join', listed = true) {
     if (busy.value) return;
-    if (!nickname.value.trim()) { error.value = '请先输入昵称。'; return; }
     const code = event === 'room:create' ? createCode.value.trim() : joinCode.value.trim().toUpperCase();
     if (event === 'room:create' && !/^[0-9]{6}$/.test(code)) { error.value = '请输入 6 位数字房间号。'; return; }
     if (event === 'room:join' && !/^[A-Z0-9]{6}$/.test(code)) { error.value = '请输入 6 位房间号。'; return; }
@@ -285,6 +284,26 @@ export function useOnlineRoom() {
     if (roomCode) joinCode.value = roomCode;
     return enter('room:join');
   };
+  async function claimSeat(roomCode: string, faction: Faction, guestName = '', listed = true): Promise<ClientAck<SessionReceipt>> {
+    if (busy.value) return { ok: false, code: 'BUSY', error: '正在处理上一项操作，请稍候。' };
+    if (session.value) return { ok: false, code: 'ALREADY_IN_ROOM', error: '请先退出当前房间。' };
+    if (spectating.value) return { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战。' };
+    busy.value = true;
+    const generation = epoch;
+    try {
+      if (!await ensureConnected()) return { ok: false, code: 'OFFLINE', error: '无法连接联机服务器，请稍后重试。' };
+      if (flushing) await flushing;
+      if (pending().length) return { ok: false, code: 'PENDING_LEAVE', error: '旧房间退出尚未得到服务器确认，请稍后重试。' };
+      if (generation !== epoch) return { ok: false, code: 'CANCELLED', error: '页面状态已变化，请重试。' };
+      nickname.value = guestName.trim();
+      const ack = await emit<SessionReceipt>('room:claim-seat', {
+        roomCode: roomCode.trim().toUpperCase(), nickname: nickname.value, faction, listed,
+      });
+      if (!ack.ok) error.value = ack.error;
+      else if (!save(ack.data)) return { ok: false, code: 'INVALID_RECEIPT', error: error.value };
+      return ack;
+    } finally { if (generation === epoch) busy.value = false; }
+  }
 
   async function subscribeLobby(): Promise<ClientAck<PublicLobbySnapshot>> {
     if (!await ensureConnected()) return { ok: false, code: 'OFFLINE', error: '无法连接联机服务器，请稍后重试。' };
@@ -343,6 +362,6 @@ export function useOnlineRoom() {
   return { mode, nickname, createCode, joinCode, room, self, faction, connection, error, exitNotice, busy, inRoom,
     hasSession, savedRoomCode, lobbyRooms, lobbyLoaded, subscribeLobby, unsubscribeLobby,
     spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
-    connect, useLocal, createRoom, joinRoom, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
+    connect, useLocal, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
     releaseOffline, leaveRoom, copyInvite, forgetSession };
 }

@@ -60,23 +60,14 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
     </section>
 
     <section class="home-actions">
-      <button class="home-action-card" @click="emit('lobby')">
-        <span class="home-action-kicker">公开对局</span>
-        <strong>找棋友</strong>
-        <p>查看正在等待的房间，加入还缺人的对局。</p>
-        <span class="home-action-link">进入对战大厅 →</span>
-      </button>
       <button class="home-action-card" @click="emit('friends')">
-        <span class="home-action-kicker">好友组局</span>
-        <strong>邀请两位朋友</strong>
-        <p>创建 6 位数字房间，或用房间号加入好友。</p>
-        <span class="home-action-link">与好友对弈 →</span>
+        <strong>好友对战</strong>
+      </button>
+      <button class="home-action-card" @click="emit('lobby')">
+        <strong>公开大厅</strong>
       </button>
       <button class="home-action-card home-local-card" @click="emit('local')">
-        <span class="home-action-kicker">单人熟悉规则</span>
         <strong>本地试玩</strong>
-        <p>在同一个页面轮流操作魏、蜀、吴三方。</p>
-        <span class="home-action-link">开始本地对局 →</span>
       </button>
     </section>
 
@@ -92,3 +83,8 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
     </section>
   </main>
 </template>
+
+<style scoped>
+.home-action-card{display:grid;place-items:center;text-align:center;padding:28px 22px;min-height:128px}
+.home-action-card strong{font-size:26px;letter-spacing:3px}
+</style>
