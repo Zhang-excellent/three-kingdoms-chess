@@ -53,6 +53,9 @@ test('new visitors start on the home page and can open local play, rules, friend
   assert.ok(wrapper.find('.lobby-page').exists());
   assert.equal(wrapper.get('.lobby-page-heading h1').text(), '好友对弈');
   assert.doesNotMatch(wrapper.get('.lobby-page-heading').text(), /游客体验|无需登录|创建 6 位数字房间/);
+  assert.deepEqual(wrapper.findAll('.lobby-entry-card h2').map(item => item.text()), ['创建房间', '加入房间']);
+  assert.equal(wrapper.find('.lobby-entry-card .lobby-card-kicker').exists(), false);
+  assert.equal(wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').attributes('placeholder'), undefined);
 
   wrapper.unmount(); wrapper = mountHome();
   await wrapper.findAll('.home-action-card').find(button => button.text() === '公开大厅')!.trigger('click');

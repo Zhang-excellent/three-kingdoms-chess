@@ -118,17 +118,15 @@ function submitTableDialog() {
 
     <section v-if="mode === 'friends'" class="lobby-entry-grid">
       <form class="lobby-entry-card" @submit.prevent="emit('create')">
-        <span class="lobby-card-kicker">创建房间</span>
-        <h2>开一桌等朋友</h2>
-        <label>昵称：<input :value="nickname" maxlength="16" autocomplete="nickname" placeholder="可不填" @input="emit('updateNickname', ($event.target as HTMLInputElement).value)"></label>
+        <h2>创建房间</h2>
+        <label>昵称：<input :value="nickname" maxlength="16" autocomplete="nickname" @input="emit('updateNickname', ($event.target as HTMLInputElement).value)"></label>
         <label>6 位数字房间号<input :value="createCode" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" aria-label="创建房间号" placeholder="例如 001234" @input="emit('updateCreateCode', ($event.target as HTMLInputElement).value.replace(/[^0-9]/g, ''))"></label>
         <label class="lobby-listed-option"><input type="checkbox" :checked="listed" @change="emit('updateListed', ($event.target as HTMLInputElement).checked)">在大厅展示这个房间</label>
         <button class="primary-button" type="submit" :disabled="busy || !online || hasRoom">创建房间</button>
       </form>
 
       <form class="lobby-entry-card lobby-join-card" @submit.prevent="emit('join')">
-        <span class="lobby-card-kicker">加入房间</span>
-        <h2>已有房间号</h2>
+        <h2>加入房间</h2>
         <label>房间号<input :value="joinCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="加入房间号" placeholder="输入 6 位房间号" @input="emit('updateJoinCode', ($event.target as HTMLInputElement).value.toUpperCase())"></label>
         <p>对局已经开始时仍可进入观战。</p>
         <div class="lobby-join-actions">
@@ -228,7 +226,7 @@ function submitTableDialog() {
 
 <style scoped>
 .club-unassigned{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9c503c!important}
-.lobby-card-kicker{font-size:10px;font-weight:700}
+.lobby-page-nav>.plain-button{font-size:16px;font-weight:600}
 .lobby-entry-card h2{font-size:24px}
 .lobby-entry-card label{font-size:13px;font-weight:600;color:#625444}
 .lobby-entry-card input{font-size:14px;font-weight:500;color:#43382d}
