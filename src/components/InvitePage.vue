@@ -127,7 +127,7 @@ function submit() {
               </button>
             </div>
           </div>
-          <label>昵称<input v-model="nickname" maxlength="16" autocomplete="nickname" placeholder="可不填"></label>
+          <label>昵称<input v-model="nickname" maxlength="16" autocomplete="nickname"></label>
           <p v-if="error" class="connection-note error" role="status">{{ error }}</p>
           <div class="entry-actions">
             <button class="primary-button" type="submit" :disabled="!canJoin || busy || connection !== 'online'">加入房间</button>

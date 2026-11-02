@@ -134,7 +134,7 @@ test('a public lobby room updates live and accepts the final player without repl
     await wrapper.get('.chess-club-table.empty .club-table-center .primary-button').trigger('click');
     assert.equal((wrapper.get('.lobby-seat-dialog').element as HTMLDialogElement).open, true);
     assert.match(wrapper.get('.lobby-seat-dialog').text(), /昵称：.*房间号：/);
-    assert.equal(wrapper.get('.lobby-seat-dialog input[autocomplete="nickname"]').attributes('placeholder'), '可不填');
+    assert.equal(wrapper.get('.lobby-seat-dialog input[autocomplete="nickname"]').attributes('placeholder'), undefined);
     assert.doesNotMatch(wrapper.get('.lobby-seat-dialog').text(), /你的昵称/);
     await wrapper.get('.lobby-seat-dialog .dialog-close').trigger('click');
     const roomCard = () => wrapper!.findAll('.chess-club-table').find(card => card.text().includes('400006'))!;
@@ -246,7 +246,7 @@ test('an invitation URL inspects the room, joins the chosen seat, and survives r
     assert.equal(wrapper.get('.invite-page h1').text(), '好友邀请');
     assert.match(wrapper.get('.invite-entry').text(), /001357/);
     assert.match(wrapper.get('.invite-entry').text(), /1\/3/);
-    assert.equal(wrapper.find('.invite-page input[autocomplete="nickname"]').attributes('placeholder'), '可不填');
+    assert.equal(wrapper.find('.invite-page input[autocomplete="nickname"]').attributes('placeholder'), undefined);
     await wrapper.get('.invite-page input[autocomplete="nickname"]').setValue('受邀魏');
     await wrapper.findAll('.invite-page button').find(button => button.text() === '加入房间')!.trigger('click');
     await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Invitation join did not open the waiting room');

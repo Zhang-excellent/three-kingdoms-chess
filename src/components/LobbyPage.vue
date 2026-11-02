@@ -215,7 +215,7 @@ function submitTableDialog() {
             {{ PLAYERS[faction].nation }} · {{ PLAYERS[faction].name }}
           </button>
         </div>
-        <label>昵称：<input v-model="tableNickname" maxlength="16" autocomplete="nickname" placeholder="可不填"></label>
+        <label>昵称：<input v-model="tableNickname" maxlength="16" autocomplete="nickname"></label>
         <label v-if="tableIntent === 'create'">房间号：<input v-model="tableRoomCode" maxlength="6" inputmode="numeric" autocomplete="off" placeholder="输入 6 位数字房间号" @input="tableRoomCode = tableRoomCode.replace(/[^0-9]/g, '')"></label>
         <p v-if="tableError || error" class="connection-note error" role="status">{{ tableError || error }}</p>
         <div class="dialog-actions"><button class="tool-button" type="button" @click="tableDialog?.close()">取消</button><button class="primary-button" type="submit" :disabled="busy || !online">{{ tableIntent === 'create' ? '创建并入座' : '加入并入座' }}</button></div>
