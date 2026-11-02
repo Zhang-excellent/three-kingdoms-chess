@@ -151,15 +151,17 @@ npm run build
 | 验收页面 | 桌面 | 手机 400×811 |
 | --- | --- | --- |
 | 游戏首页 | [截图](docs/验收截图/2026-11-01-home-desktop.png) | [截图](docs/验收截图/2026-11-01-home-mobile.png) |
-| 好友对弈 | [截图](docs/验收截图/2026-11-01-friends-desktop.png) | [截图](docs/验收截图/2026-11-01-friends-mobile.png) |
+| 好友对弈 | [截图](docs/验收截图/2026-11-02-friends-polish-desktop.png) | [截图](docs/验收截图/2026-11-02-friends-polish-mobile.png) |
 | 邀请加入 | [截图](docs/验收截图/2026-11-01-invite-join-desktop.png) | [截图](docs/验收截图/2026-11-01-invite-join-mobile.png) |
 | 复制邀请链接 | [截图](docs/验收截图/2026-11-01-invite-copy-dialog-desktop.png) | — |
 | 公开大厅 | [截图](docs/验收截图/2026-11-01-lobby-desktop.png) | [截图](docs/验收截图/2026-11-01-lobby-mobile.png) |
 | 棋社 10 桌列表 | [截图](docs/验收截图/2026-11-01-lobby-rooms-desktop.png) | [截图](docs/验收截图/2026-11-01-lobby-rooms-mobile.png) |
-| 席位昵称弹框 | [截图](docs/验收截图/2026-11-01-lobby-seat-dialog-desktop.png) | — |
+| 席位昵称弹框 | [截图](docs/验收截图/2026-11-02-seat-dialog-polish-desktop.png) | [截图](docs/验收截图/2026-11-02-seat-dialog-polish-mobile.png) |
 | 观战入口 | [截图](docs/验收截图/2026-11-01-spectate-desktop.png) | [截图](docs/验收截图/2026-11-01-spectate-mobile.png) |
 | 房间等待区 | [截图](docs/验收截图/2026-11-01-waiting-desktop.png) | [截图](docs/验收截图/2026-11-01-waiting-mobile.png) |
 | 三人对局 | [截图](docs/验收截图/2026-11-01-game-desktop.png) | [截图](docs/验收截图/2026-11-01-game-mobile.png) |
+
+2026-11-02 好友页与席位弹窗第一轮精修（仅本地，未部署）：好友页改为两张带棋社印章和纸张层次的创建/加入任务卡，重整标题、字段、说明和主次操作；输入框统一为 46px，桌面手机为 48px，房间号使用等宽数字与字距排版，并统一悬停、按下、键盘聚焦、禁用和错误状态。公开大厅席位弹窗加入魏、蜀、吴棋子造型卡片，明确显示“已选择 / 空位 / 已占用”，同时保留昵称可空、自选房号、加入、观战和原子占座行为。`npm test` 共 103 项通过，`npm run check` 与 `npm run build` 通过。真实 Edge 检查桌面和 400px 手机视口：好友页输入框高度 48px、无横向溢出；席位弹窗手机宽 364px，三阵营在窄屏改为纵向卡片。
 
 2026-11-01 邀请链接流程（仅本地，未部署）：等待区“复制邀请链接”改为从服务端确认的当前房间和实际应用路径生成完整网址；链接仅包含 `mode=online` 与字符串房间号，不包含重连凭证。真实浏览器点击后写入系统剪贴板并粘贴核对为 `http://127.0.0.1:4173/three-chess/?mode=online&room=001357`；模拟权限拒绝时显示可全选、长按复制的完整链接。新增服务端 `room:inspect` 公开摘要查询及独立邀请页：新玩家可直接选择空阵营、空昵称加入；满房、已开局和失效邀请分别显示状态、观战入口或返回大厅。已有其他房间的玩家可选择返回原房间或退出后再加入，不会被自动覆盖身份。`npm test` 共 103 项通过，`npm run check` 与 `npm run build` 通过。独立 Edge 会话实际打开邀请加入 `001357`，刷新后恢复同一 2/3 房间且未重复占座；400px 视口无横向溢出。
 

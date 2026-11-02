@@ -136,10 +136,17 @@ test('a public lobby room updates live and accepts the final player without repl
     assert.match(wrapper.get('.lobby-seat-dialog').text(), /昵称：.*房间号：/);
     assert.equal(wrapper.get('.lobby-seat-dialog input[autocomplete="nickname"]').attributes('placeholder'), undefined);
     assert.doesNotMatch(wrapper.get('.lobby-seat-dialog').text(), /你的昵称/);
+    assert.deepEqual(wrapper.findAll('.lobby-seat-dialog .seat-faction-state').map(item => item.text()), ['已选择', '空位', '空位']);
+    assert.deepEqual(wrapper.findAll('.lobby-seat-dialog .lobby-seat-factions button').map(item => item.attributes('aria-pressed')), ['true', 'false', 'false']);
+    await wrapper.get('.lobby-seat-dialog input[placeholder="输入 6 位数字房间号"]').setValue('123');
+    await wrapper.findAll('.lobby-seat-dialog button').find(button => button.text() === '创建并入座')!.trigger('click');
+    assert.match(wrapper.get('.seat-dialog-error').text(), /6 位数字/);
+    assert.equal(wrapper.get('.lobby-seat-dialog input[placeholder="输入 6 位数字房间号"]').attributes('aria-invalid'), 'true');
     await wrapper.get('.lobby-seat-dialog .dialog-close').trigger('click');
     const roomCard = () => wrapper!.findAll('.chess-club-table').find(card => card.text().includes('400006'))!;
     assert.match(roomCard().text(), /2\/3 席/);
     await roomCard().find('.club-seat.wu').trigger('click');
+    assert.deepEqual(wrapper.findAll('.lobby-seat-dialog .seat-faction-state').map(item => item.text()), ['已占用', '已占用', '已选择']);
     await wrapper.get('.lobby-seat-dialog input[autocomplete="nickname"]').setValue('大厅吴');
     await wrapper.get('.lobby-seat-dialog').findAll('button').find(button => button.text() === '加入并入座')!.trigger('click');
     await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Lobby join did not open the waiting room');
