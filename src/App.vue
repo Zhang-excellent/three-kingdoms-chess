@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, toRaw, watch } from 'vue';
-import { ORDER, PLAYERS, RULES_VERSION, TURN_CYCLE, at, legalMoves, newGame, pieceName, playMove, validGame } from './game.ts';
+import { ORDER, PLAYERS, RULES_VERSION, at, legalMoves, newGame, pieceName, playMove, validGame } from './game.ts';
 import type { Faction, Game, MoveRecord, Piece, Point } from './game.ts';
 import { screenPoint } from './board-view.ts';
 import { useOnlineRoom } from './useOnlineRoom.ts';
@@ -28,7 +28,7 @@ try {
       const validUndo = Array.isArray(value?.undo) && value.undo.every(validGame);
       if (value?.rulesVersion === RULES_VERSION && validGame(value.game) && validUndo) {
         restored = { game: value.game, undo: value.undo.slice(-50) };
-        initialMessage = '已恢复上次棋局，继续行棋即可。';
+        initialMessage = '';
       } else requiresNewGame = true;
     } catch { requiresNewGame = true; }
     if (requiresNewGame) initialMessage = '检测到无法无歧义恢复的存档，原数据已保留，请按新规则另开一局。';
@@ -93,6 +93,23 @@ const flipOverride = ref(false);
 const flipped = computed(() => (ownFaction.value === 'shu' || ownFaction.value === 'wu') !== flipOverride.value);
 watch([ownFaction, mode], () => { flipOverride.value = false; });
 const roomPlayer = (faction: Faction) => online.room.value?.players.find(player => player.faction === faction);
+const playerDisplayName = (faction: Faction) => mode.value === 'online'
+  ? roomPlayer(faction)?.nickname || PLAYERS[faction].name
+  : PLAYERS[faction].name;
+const activePlayerName = computed(() => game.value.turn ? playerDisplayName(game.value.turn) : '');
+const winnerDisplayName = computed(() => game.value.winner ? playerDisplayName(game.value.winner) : '');
+type PlayerStatusTone = 'active' | 'offline' | 'result' | 'out';
+function playerStatuses(faction: Faction): Array<{ label: string; tone: PlayerStatusTone }> {
+  const statuses: Array<{ label: string; tone: PlayerStatusTone }> = [];
+  const player = mode.value === 'online' ? roomPlayer(faction) : undefined;
+  if (player && !player.online) statuses.push({ label: '离线', tone: 'offline' });
+  if (game.value.eliminated.includes(faction)) statuses.push({ label: '已出局', tone: 'out' });
+  else if (game.value.status === 'finished') {
+    const result = game.value.results[faction];
+    if (result !== 'playing') statuses.push({ label: result === 'won' ? '胜利' : result === 'draw' ? '和棋' : '失败', tone: 'result' });
+  } else if (game.value.turn === faction) statuses.push({ label: '行棋中', tone: 'active' });
+  return statuses;
+}
 const factionTaken = (faction: Faction) => !!online.room.value?.players.some(player => player.id !== online.room.value?.selfId && player.faction === faction);
 const drawOffer = computed(() => online.mode.value === 'online' ? online.room.value?.drawOffer ?? null : null);
 const canOfferDraw = computed(() => !spectating.value && !!ownFaction.value && game.value.status === 'playing'
@@ -101,18 +118,16 @@ const canRespondDraw = computed(() => !!drawOffer.value && !!ownFaction.value &&
   && drawOffer.value.eligible.includes(ownFaction.value) && !drawOffer.value.votes[ownFaction.value]);
 const ownDrawVote = computed(() => ownFaction.value && drawOffer.value ? drawOffer.value.votes[ownFaction.value] : undefined);
 const drawAcceptedCount = computed(() => drawOffer.value?.eligible.filter(faction => drawOffer.value?.votes[faction] === 'accept').length ?? 0);
-const drawEligibleNames = computed(() => drawOffer.value?.eligible.map(faction => PLAYERS[faction].name).join('、') ?? '');
+const drawEligibleNames = computed(() => drawOffer.value?.eligible.map(faction => playerDisplayName(faction)).join('、') ?? '');
 const selected = computed(() => game.value.pieces.find(p => p.id === selectedId.value) ?? null);
 const moves = computed(() => selected.value ? legalMoves(game.value.pieces, selected.value) : []);
 const active = computed(() => game.value.turn ? PLAYERS[game.value.turn] : null);
 const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
-const turnPosition = computed(() => game.value.turnSlot === null ? '' : game.value.eliminated.length
-  ? `双人交替 · 当前${PLAYERS[game.value.turn!].nation}方` : `三拍循环 · 第 ${game.value.turnSlot + 1} 位`);
 const resultLabel = (current: Game, faction: Faction) => current.results[faction] === 'won' ? '胜利'
   : current.results[faction] === 'lost' ? '失败' : current.results[faction] === 'draw' ? '和棋' : '对局中';
-const losersText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'lost').map(faction => PLAYERS[faction].name).join('、'));
-const drawingText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'draw').map(faction => PLAYERS[faction].name).join('、'));
+const losersText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'lost').map(faction => playerDisplayName(faction)).join('、'));
+const drawingText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'draw').map(faction => playerDisplayName(faction)).join('、'));
 const px = (x: number) => 50 + x * 55;
 const py = (y: number) => 50 + y * 55;
 const viewX = (x: number) => px(flipped.value ? 8 - x : x);
@@ -514,28 +529,36 @@ async function requestRematch() {
 
     <main v-else-if="showGame" class="play-layout">
       <aside class="players-panel" aria-label="玩家与当前回合">
-        <div class="section-label"><span>本局席位</span><span>三人 · 独立竞争</span></div>
+        <div class="section-label"><span>本局席位</span></div>
         <div class="player-cards">
-          <section v-for="faction in ORDER" :key="faction" class="player-card" :class="{active: game.turn === faction, eliminated: game.eliminated.includes(faction)}" :style="{'--faction-color': PLAYERS[faction].color}" :aria-current="game.turn === faction ? 'true' : undefined">
+          <section v-for="faction in ORDER" :key="faction" class="player-card"
+            :class="{active: game.status === 'playing' && game.turn === faction, eliminated: game.eliminated.includes(faction), offline: mode === 'online' && roomPlayer(faction) && !roomPlayer(faction)?.online}"
+            :style="{'--faction-color': PLAYERS[faction].color}"
+            :aria-current="game.status === 'playing' && game.turn === faction ? 'true' : undefined">
             <div class="player-card-top">
-              <div class="avatar" :class="{'avatar-lit': game.turn === faction}">{{ PLAYERS[faction].initial }}<span class="avatar-dot" v-if="game.turn === faction"></span></div>
-              <div class="player-name"><span class="nation">{{ PLAYERS[faction].nation }}国</span><h2>{{ PLAYERS[faction].name }}</h2><p v-if="mode === 'online'">{{ roomPlayer(faction)?.nickname ?? '等待玩家' }} · {{ roomPlayer(faction)?.online ? '在线' : '离线' }}</p><p v-else>{{ PLAYERS[faction].team }}</p></div>
-              <span class="seat-number">0{{ ORDER.indexOf(faction) + 1 }}</span>
+              <div class="avatar" :class="{'avatar-lit': game.status === 'playing' && game.turn === faction}">{{ PLAYERS[faction].initial }}<span class="avatar-dot" v-if="game.status === 'playing' && game.turn === faction"></span></div>
+              <div class="player-name">
+                <h2 tabindex="0" :title="playerDisplayName(faction)" :aria-label="`${playerDisplayName(faction)}，${PLAYERS[faction].name}`">{{ playerDisplayName(faction) }}</h2>
+                <span class="player-name-tooltip" aria-hidden="true">{{ playerDisplayName(faction) }}</span>
+              </div>
             </div>
-            <div class="player-card-bottom"><span>{{ count(faction) }} 枚子力</span><strong v-if="game.turn === faction" class="turn-label"><i></i>正在行棋</strong><strong v-else-if="game.results[faction] !== 'playing'">{{ resultLabel(game, faction) }}</strong><span v-else>对局中</span></div>
+            <div class="player-card-bottom">
+              <span>{{ count(faction) }} 枚子力</span>
+              <div class="player-status-list">
+                <strong v-for="status in playerStatuses(faction)" :key="status.label" class="player-status" :class="`status-${status.tone}`">{{ status.label }}</strong>
+              </div>
+            </div>
           </section>
         </div>
-        <div class="turn-order"><span>行棋顺序</span><p><template v-for="(faction, slot) in TURN_CYCLE" :key="slot"><b v-if="slot">›</b><strong :class="{current: game.turnSlot === slot, eliminated: game.eliminated.includes(faction)}">{{ PLAYERS[faction].name }}</strong></template></p><small>出局方跳过，剩余两国严格交替</small></div>
-        <div class="alliance-note"><span class="tiny-seal">竞</span><p>三方独立竞争<br><strong>最后存活的一方获胜</strong></p></div>
-        <div class="ranking-card"><strong>本局结果</strong><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(game, faction) }}</p></div>
+        <div v-if="game.status === 'finished'" class="ranking-card"><strong>本局结果</strong><p v-for="faction in ORDER" :key="faction">{{ playerDisplayName(faction) }} · {{ resultLabel(game, faction) }}</p></div>
       </aside>
 
       <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div><span class="eyebrow">秦岭淮河 · {{ mode === 'online' ? `${spectating ? '正在观战' : '联机房间'} ${room?.code}` : '本地试玩' }}</span><h2 v-if="active">轮到 <span :style="{color: active.color}">{{ active.name }}</span> 行棋</h2><h2 v-else-if="game.winner">{{ PLAYERS[game.winner].name }}获胜</h2><h2 v-else>本局和棋</h2><small v-if="turnPosition" class="turn-position">{{ turnPosition }}</small></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online'" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2><h2 v-else-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">本局和棋</h2></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
         <div v-if="mode === 'online' && connection !== 'online'" class="network-banner" role="alert">连接中断，正在重连…</div>
         <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则、旧初始布局或名次存档不能按当前规则安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
         <div v-if="drawOffer" class="draw-offer-card" role="status" aria-live="polite">
-          <div><span class="eyebrow">和棋申请</span><strong>{{ PLAYERS[drawOffer.proposer].name }}发起和棋</strong><p>{{ drawEligibleNames }}须全部同意；已同意 {{ drawAcceptedCount }}/{{ drawOffer.eligible.length }}</p></div>
+          <div><span class="eyebrow">和棋申请</span><strong>{{ playerDisplayName(drawOffer.proposer) }}发起和棋</strong><p>{{ drawEligibleNames }}须全部同意；已同意 {{ drawAcceptedCount }}/{{ drawOffer.eligible.length }}</p></div>
           <div v-if="canRespondDraw" class="draw-offer-actions"><button class="tool-button" :disabled="connection !== 'online'" @click="respondToDraw('reject')">拒绝</button><button class="primary-button" :disabled="connection !== 'online'" @click="respondToDraw('accept')">同意和棋</button></div>
           <span v-else-if="ownDrawVote === 'accept'" class="draw-waiting">已同意，等待其他阵营</span>
           <span v-else-if="drawOffer.proposer === ownFaction" class="draw-waiting">等待其他阵营回应</span>
@@ -567,9 +590,9 @@ async function requestRematch() {
             </g>
           </svg>
         </div>
-        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button class="tool-button sound-button" @click="settingsDialog?.showModal()">设置</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
-        <p v-if="mode === 'local' || feedbackError" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
-        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${PLAYERS[game.winner].name}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
+        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
+        <p v-if="feedbackError || (mode === 'local' && !!message)" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
+        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">
@@ -577,7 +600,7 @@ async function requestRematch() {
         <div class="last-move-card"><span class="eyebrow">上一步</span><template v-if="latest"><h3 :style="{color: PLAYERS[latest.faction].color}">{{ PLAYERS[latest.faction].name }} · {{ pieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} <b>→</b> {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${PLAYERS[latest.captured.faction].name}的${pieceName(latest.captured)}` : '已标记起点和落点' }}</small></template><template v-else><h3>棋局已就绪</h3><p>曹操先行</p><small>走子后保留起点与落点痕迹</small></template></div>
         <ol v-if="records.length" class="move-list"><li v-for="record in records" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局，判为失败</small></div></li></ol>
         <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>第一步，开启新棋局。</p></div>
-        <div class="board-legend"><p><i class="legend-dot"></i> 可走位置</p><p><i class="legend-ring"></i> 可以吃子</p><p><i class="legend-square"></i> 上一步起点与落点</p><small>棋盘边缘显示标准棋谱坐标；当前左上角为第 {{ flipped ? 9 : 1 }} 路、第 {{ flipped ? 10 : 1 }} 线。</small></div>
+        <details class="board-legend"><summary>标记说明</summary><div class="board-legend-items"><p><i class="legend-dot"></i> 可走位置</p><p><i class="legend-ring"></i> 可以吃子</p><p><i class="legend-square"></i> 上一步起点与落点</p></div></details>
       </aside>
     </main>
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
@@ -618,4 +641,66 @@ async function requestRematch() {
 .invite-copy-dialog .dialog-actions{margin-top:16px}
 .invite-link-text{width:100%;margin-top:14px;padding:11px 12px;border:1px solid #d8cab4;border-radius:8px;background:#fffefb;color:#43382d;font:500 13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;resize:none;outline:none}
 .invite-link-text:focus{border-color:#a78147;box-shadow:0 0 0 3px #a781471b}
+.players-panel .section-label{justify-content:flex-start;margin-bottom:13px;letter-spacing:.08em}
+.players-panel,.board-panel,.history-panel,.player-cards{min-width:0}
+.player-cards{gap:10px}
+.player-card{min-width:0;min-height:112px;padding:13px 14px;border-radius:11px;background:linear-gradient(145deg,#fbf8f2,#f7f2e9);transition:background .2s ease,border-color .2s ease,box-shadow .2s ease,opacity .2s ease}
+.player-card:hover,.player-card:focus-within{z-index:3}
+.player-card.active{background:#fffdf8;box-shadow:inset 3px 0 var(--faction-color),0 7px 18px #77582c10}
+.player-card.offline:not(.active){border-style:dashed;background:#f3f0ea}
+.player-card.eliminated{opacity:.58}
+.player-card-top{gap:11px;min-width:0}
+.player-card .avatar{width:44px;height:44px;font-size:24px;background:#eee6da}
+.player-card .avatar.avatar-lit{background:var(--faction-color);color:#fff7e8;box-shadow:0 0 0 4px color-mix(in srgb,var(--faction-color) 12%,transparent),0 0 18px color-mix(in srgb,var(--faction-color) 16%,transparent)}
+.player-name{position:relative;flex:1;min-width:0}
+.player-name h2{max-width:100%;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3f352b;font:700 21px/1.25 "Songti SC","SimSun",serif;letter-spacing:.02em;outline:none}
+.player-name h2:focus-visible{border-radius:3px;box-shadow:0 0 0 2px #fffdf8,0 0 0 4px var(--faction-color)}
+.player-name-tooltip{position:absolute;left:0;top:calc(100% + 5px);z-index:8;max-width:210px;padding:6px 9px;border:1px solid #cdbb9f;border-radius:6px;background:#fffdf7;box-shadow:0 8px 20px #4934201c;color:#4d4033;font-size:11px;font-weight:600;line-height:1.45;white-space:normal;opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity .14s ease,transform .14s ease}
+.player-name h2:hover+.player-name-tooltip,.player-name h2:focus-visible+.player-name-tooltip{opacity:1;transform:translateY(0)}
+.player-card-bottom{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-top:11px;padding-top:10px;border-top:1px solid #e4dbcd;font-size:10px;color:#897b68}
+.player-status-list{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.player-status{padding:2px 7px;border:1px solid transparent;border-radius:999px;font-size:9px;font-weight:700;line-height:1.5;white-space:nowrap}
+.player-status.status-active{border-color:color-mix(in srgb,var(--faction-color) 35%,transparent);background:color-mix(in srgb,var(--faction-color) 10%,#fffdf8);color:var(--faction-color)}
+.player-status.status-offline{border-color:#cfc5b7;background:#f0ece5;color:#786e61}
+.player-status.status-out{border-color:#cfb9ad;background:#f6ebe6;color:#9c4f43}
+.player-status.status-result{border-color:#cbbd9e;background:#f4eddf;color:#755f3c}
+.ranking-card{margin-top:18px}
+.board-heading{align-items:flex-end;margin-bottom:14px}
+.board-heading-copy{display:grid;gap:5px;min-width:0}
+.room-chip{justify-self:start;padding:3px 8px;border:1px solid #d8c9b2;border-radius:999px;background:#faf5eb;color:#826f56;font-size:10px;font-weight:600;letter-spacing:.05em}
+.board-heading h2{margin:0;color:#3d352c;font-size:23px;font-weight:600;letter-spacing:.01em}
+.board-heading h2{overflow-wrap:anywhere}
+.board-heading h2 span{font-weight:700}
+.move-count{margin-bottom:1px;background:#fffdf8}
+.history-panel .board-legend{display:block;margin-top:20px;padding-top:13px}
+.history-panel .board-legend summary{display:flex;align-items:center;justify-content:space-between;gap:10px;list-style:none;cursor:pointer;color:#796a57;font-size:11px;font-weight:600}
+.history-panel .board-legend summary::-webkit-details-marker{display:none}
+.history-panel .board-legend summary::after{content:"展开";color:#a08049;font-size:10px;font-weight:500}
+.history-panel .board-legend[open] summary::after{content:"收起"}
+.history-panel .board-legend summary:focus-visible{outline:2px solid #9b7b45;outline-offset:4px;border-radius:3px}
+.board-legend-items{display:grid;gap:8px;padding-top:11px}
+.history-panel .board-legend-items p{margin:0}
+@media(max-width:900px){
+  .player-card{min-height:0}
+}
+@media(max-width:720px){
+  .play-layout{grid-template-columns:minmax(0,1fr)}
+  .players-panel,.board-panel,.history-panel{width:100%}
+  .players-panel .section-label{margin-bottom:10px}
+  .player-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+  .player-card{min-height:132px;padding:10px 8px 9px;border-radius:9px}
+  .player-card-top{flex-direction:column;align-items:center;gap:6px}
+  .player-card .avatar{width:35px;height:35px;font-size:20px}
+  .player-name{width:100%;text-align:center}
+  .player-name h2{font-size:15px;line-height:1.3}
+  .player-name-tooltip{left:50%;top:calc(100% + 4px);max-width:180px;transform:translate(-50%,-3px);text-align:left}
+  .player-name h2:hover+.player-name-tooltip,.player-name h2:focus-visible+.player-name-tooltip{transform:translate(-50%,0)}
+  .player-card-bottom{align-items:flex-start;flex-direction:column;gap:5px;margin-top:8px;padding-top:7px;font-size:8px}
+  .player-status-list{justify-content:flex-start;gap:3px}
+  .player-status{padding:1px 5px;font-size:8px}
+  .board-heading{align-items:flex-start;gap:9px}
+  .room-chip{font-size:9px;padding:2px 6px}
+  .board-heading h2{font-size:18px}
+  .move-count{padding:4px 8px}
+}
 </style>

@@ -74,7 +74,8 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     assert.equal((wrapper.get('.invite-copy-dialog textarea').element as HTMLTextAreaElement).value, expectedInvite);
     await wrapper.get('.invite-copy-dialog .dialog-close').trigger('click');
     const others: SessionReceipt[] = [];
-    for (const nickname of ['界面蜀', '界面吴']) {
+    const guestNames = ['长昵称测试一二三四五六', '界面吴'];
+    for (const nickname of guestNames) {
       const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
       otherClients.push(socket);
       await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
@@ -87,6 +88,10 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     }
     await wrapper.findAll('button').find(button => button.text() === '我已准备')!.trigger('click');
     await waitUntil(() => wrapper.find('.board-panel').exists(), 'Three players did not start the game');
+    assert.deepEqual(wrapper.findAll('.player-card h2').map(item => item.text()), ['界面魏', ...guestNames]);
+    assert.equal(wrapper.findAll('.player-card h2')[1].attributes('title'), guestNames[0]);
+    assert.match(wrapper.get('.board-heading').text(), /轮到 界面魏 行棋/);
+    assert.match(wrapper.get('.board-heading').text(), /房间 001234/);
     Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true });
     await wrapper.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');
     assert.equal(wrapper.findAll('g.legal-point').length, 1);
@@ -94,6 +99,9 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
     await waitUntil(() => server.rooms.getRoom(code)?.game?.history.length === 1, 'UI move failed');
     assert.equal(server.rooms.getRoom(code)?.game?.turn, 'shu');
     await waitUntil(() => wrapper.findAll('.move-list li').length === 1, 'Move did not render on the client');
+    otherClients[0].disconnect();
+    await waitUntil(() => wrapper.find('.player-card.offline').exists(), 'Offline player was not marked on the card');
+    assert.match(wrapper.get('.player-card.offline').text(), /离线/);
   } finally {
     if (oldRandomUUID) Object.defineProperty(globalThis.crypto, 'randomUUID', oldRandomUUID);
     else delete (globalThis.crypto as unknown as { randomUUID?: unknown }).randomUUID;
@@ -388,7 +396,7 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     for (let index = 0; index < 3; index++)
       success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1 }));
     await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Watcher did not follow game start');
-    assert.match(wrapper.get('.board-heading').text(), /正在观战/);
+    assert.match(wrapper.get('.board-heading').text(), new RegExp(`房间 ${a.roomCode}`));
     assert.equal(wrapper.findAll('.board-tools button').some(button => button.text() === '认输'), false);
     await wrapper.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');
     assert.match(wrapper.get('.feedback').text(), /正在观战/);
@@ -404,7 +412,7 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     wrapper.unmount(); wrapper = null;
     wrapper = mount(App, { attachTo: document.body });
     await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Watch refresh did not restore room');
-    assert.match(wrapper.get('.board-heading').text(), /正在观战/);
+    assert.match(wrapper.get('.board-heading').text(), new RegExp(`房间 ${a.roomCode}`));
     assert.equal(wrapper.findAll('.move-list li').length, 1);
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
     await wrapper.findAll('button').find(button => button.text() === '退出观战')!.trigger('click');
@@ -506,7 +514,7 @@ test('online draw prompt only enables for the current player and both opponents 
     history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${a.roomCode}`);
     wrapper = mount(App, { attachTo: document.body });
     await waitUntil(() => wrapper!.find('.draw-offer-card').exists(), 'Shu did not receive draw prompt');
-    assert.match(wrapper.get('.draw-offer-card').text(), /曹操发起和棋.*曹操、刘备、孙权须全部同意/);
+    assert.match(wrapper.get('.draw-offer-card').text(), /提和魏发起和棋.*提和魏、提和蜀、提和吴须全部同意/);
     assert.equal(wrapper.findAll('.board-tools button').find(button => button.text() === '提和')?.attributes('disabled'), '');
     await wrapper.findAll('button').find(button => button.text() === '同意和棋')!.trigger('click');
     await waitUntil(() => room.drawOffer?.votes.shu === 'accept', 'Shu approval was not recorded');
@@ -521,8 +529,8 @@ test('online draw prompt only enables for the current player and both opponents 
     await wrapper.findAll('button').find(button => button.text() === '同意和棋')!.trigger('click');
     await waitUntil(() => room.phase === 'finished', 'Unanimous draw did not finish the game');
     await waitUntil(() => wrapper!.find('.result-banner').exists(), 'Draw result did not render');
-    assert.match(wrapper.get('.result-banner').text(), /和棋.*曹操、刘备、孙权同意和棋/);
-    assert.match(wrapper.get('.ranking-card').text(), /曹操.*和棋.*刘备.*和棋.*孙权.*和棋/);
+    assert.match(wrapper.get('.result-banner').text(), /和棋.*提和魏、提和蜀、提和吴同意和棋/);
+    assert.match(wrapper.get('.ranking-card').text(), /提和魏.*和棋.*提和蜀.*和棋.*提和吴.*和棋/);
     assert.equal(room.game?.winner, null);
     assert.equal(room.game?.status, 'finished');
   } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }

@@ -74,8 +74,16 @@ test('screen starts with 29 pieces, Cao Cao highlighted and undo disabled', t =>
   assert.equal(wrapper.find(piece('蜀','卒',5,4)).exists(),false);
   assert.equal(wrapper.get('.player-card.active h2').text(),'曹操');
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'0');
-  assert.match(wrapper.get('.turn-order').text(),/曹操.*刘备.*孙权/);
-  assert.match(wrapper.get('.alliance-note').text(),/三方独立竞争/);
+  assert.deepEqual(wrapper.findAll('.player-card h2').map(item => item.text()), ['曹操', '刘备', '孙权']);
+  assert.doesNotMatch(wrapper.get('.player-cards').text(), /对局中/);
+  assert.equal(wrapper.find('.turn-order').exists(), false);
+  assert.equal(wrapper.find('.alliance-note').exists(), false);
+  assert.equal(wrapper.find('.ranking-card').exists(), false);
+  assert.match(wrapper.get('.board-heading').text(), /轮到 曹操 行棋/);
+  assert.equal(wrapper.find('.board-heading .eyebrow').exists(), false);
+  assert.equal(wrapper.find('.sound-button').exists(), false);
+  assert.equal(wrapper.get('.board-legend').element.hasAttribute('open'), false);
+  assert.equal(wrapper.get('.board-legend').text().includes('坐标'), false);
   assert.ok(wrapper.findAll('button').find(b=>b.text().includes('悔棋'))?.attributes('disabled') !== undefined);
 });
 
@@ -277,13 +285,16 @@ test('win-loss results survive refresh and undo restores the pre-elimination sta
   assert.equal(result.ok,true); if (!result.ok) return;
   localStorage.setItem('three-kingdoms-chess:win-loss-v1',JSON.stringify({rulesVersion:RULES_VERSION,game:result.game,undo:[before]}));
   let wrapper=setup(t,false);
-  assert.match(wrapper.get('.ranking-card').text(),/曹操.*失败/);
+  assert.equal(wrapper.find('.ranking-card').exists(), false);
+  assert.match(wrapper.get('.player-card.eliminated').text(), /已出局/);
   assert.equal(wrapper.get('.player-card.active h2').text(),'孙权');
   wrapper=remount(t,wrapper);
-  assert.match(wrapper.get('.ranking-card').text(),/曹操.*失败/);
+  assert.equal(wrapper.find('.ranking-card').exists(), false);
+  assert.match(wrapper.get('.player-card.eliminated').text(), /已出局/);
   assert.equal(wrapper.get('.app-shell').attributes('data-turn-slot'),'2');
   await wrapper.findAll('button').find(b=>b.text().includes('悔棋'))!.trigger('click');
-  assert.match(wrapper.get('.ranking-card').text(),/曹操.*对局中/);
+  assert.equal(wrapper.find('.ranking-card').exists(), false);
+  assert.equal(wrapper.find('.player-card.eliminated').exists(), false);
   assert.ok(wrapper.find(piece('魏','曹操',5,10)).exists());
   assert.equal(wrapper.get('.player-card.active h2').text(),'刘备');
 });
