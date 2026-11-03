@@ -701,16 +701,6 @@ async function requestRematch() {
           <div><strong>棋谱复盘</strong><span>{{ replayFileName }}</span></div>
           <b>第 {{ replayIndex }} 步 / 共 {{ replayTotal }} 步</b>
         </div>
-        <div class="replay-controls">
-          <button class="tool-button" :disabled="!replayCanGoBack" @click="jumpReplay(0)">初始局面</button>
-          <button class="tool-button" :disabled="!replayCanGoBack" @click="jumpReplay(replayIndex - 1)">上一步</button>
-          <button class="primary-button replay-play-button" :disabled="replayTotal === 0" @click="toggleReplayPlayback">{{ replayPlaying ? '暂停' : '自动播放' }}</button>
-          <button class="tool-button" :disabled="!replayCanGoForward" @click="jumpReplay(replayIndex + 1)">下一步</button>
-          <button class="tool-button" :disabled="!replayCanGoForward" @click="jumpReplay(replayTotal)">最后一步</button>
-          <div class="replay-speed" aria-label="自动播放速度">
-            <button v-for="speed in (['slow', 'normal', 'fast'] as const)" :key="speed" :class="{ active: replaySpeed === speed }" @click="setReplaySpeed(speed)">{{ speed === 'slow' ? '慢' : speed === 'normal' ? '正常' : '快' }}</button>
-          </div>
-        </div>
         <p class="replay-declared-result">文件记录结果：{{ replayDocument?.declaredResult || '未注明' }}</p>
         <div v-for="warning in replayDocument?.warnings" :key="warning.message" class="replay-warning">
           <strong>棋谱提示</strong>
@@ -783,6 +773,16 @@ async function requestRematch() {
           </svg>
         </div>
         <div class="board-tools"><button v-if="mode === 'local' && !isReplaying" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local' && !isReplaying" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button v-if="isReplaying" class="tool-button" @click="switchLocalPanel('play')">退出复盘</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
+        <div v-if="isReplaying" class="replay-controls replay-controls-board">
+          <button class="tool-button" :disabled="!replayCanGoBack" @click="jumpReplay(0)">初始局面</button>
+          <button class="tool-button" :disabled="!replayCanGoBack" @click="jumpReplay(replayIndex - 1)">上一步</button>
+          <button class="primary-button replay-play-button" :disabled="replayTotal === 0" @click="toggleReplayPlayback">{{ replayPlaying ? '暂停' : '自动播放' }}</button>
+          <button class="tool-button" :disabled="!replayCanGoForward" @click="jumpReplay(replayIndex + 1)">下一步</button>
+          <button class="tool-button" :disabled="!replayCanGoForward" @click="jumpReplay(replayTotal)">最后一步</button>
+          <div class="replay-speed" aria-label="自动播放速度">
+            <button v-for="speed in (['slow', 'normal', 'fast'] as const)" :key="speed" :class="{ active: replaySpeed === speed }" @click="setReplaySpeed(speed)">{{ speed === 'slow' ? '慢' : speed === 'normal' ? '正常' : '快' }}</button>
+          </div>
+        </div>
         <p v-if="feedbackError || (!isReplaying && mode === 'local' && !!message)" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
         <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
@@ -896,6 +896,7 @@ async function requestRematch() {
 .replay-console-head span{max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#897a65;font-size:10px}
 .replay-console-head>b{flex:none;padding:4px 9px;border-radius:999px;background:#f0e7d8;color:#785e39;font-size:11px;font-weight:600}
 .replay-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.replay-controls-board{margin-top:11px;padding-top:12px;border-top:1px solid #e3d8c7}
 .replay-controls>button{min-height:38px;padding:7px 11px;border:1px solid #d4c4ac;background:#fffdf8;font-size:11px}
 .replay-controls>.replay-play-button{min-width:84px;border-color:#a64b3c;background:#a64b3c;color:#fff7e6;font-size:12px}
 .replay-play-button:hover:not(:disabled){background:#8f3d31}
@@ -924,6 +925,7 @@ async function requestRematch() {
   .replay-console-head{align-items:flex-start;gap:8px}
   .replay-console-head strong{font-size:17px}.replay-console-head>b{font-size:10px}
   .replay-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .replay-controls-board{margin-top:8px;padding-top:11px}
   .replay-controls>button{width:100%;min-height:40px;padding:6px}
   .replay-controls>.replay-play-button{min-width:0}
   .replay-speed{grid-column:1 / -1;justify-self:start;margin-left:0;margin-top:2px}

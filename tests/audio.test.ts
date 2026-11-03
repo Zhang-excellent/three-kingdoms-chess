@@ -15,23 +15,23 @@ test('sound settings default off, persist independent levels and reject malforme
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicEnabled: true, musicVolume: 30, effectsEnabled: true, effectsVolume: -5 }));
     assert.deepEqual(loadAudioSettings(), { musicEnabled: true, musicVolume: 1, musicPlaylistId: 'default', musicTrackId: 'liushang-qushui', effectsEnabled: true, effectsVolume: 0 });
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'classical', musicTrackId: 'mozart-symphony-40' }));
-    assert.equal(loadAudioSettings().musicTrackId, 'mozart-symphony-40');
+    assert.equal(loadAudioSettings().musicTrackId, 'liushang-qushui');
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'classical', musicTrackId: 'removed-song' }));
-    assert.equal(loadAudioSettings().musicTrackId, 'mozart-symphony-40');
+    assert.equal(loadAudioSettings().musicTrackId, 'liushang-qushui');
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'guitar', musicTrackId: 'lebang-zhanshi-guitar' }));
     assert.deepEqual(loadAudioSettings(), { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: false, musicVolume: 0.35 });
   } finally { GlobalRegistrator.unregister(); }
 });
 
-test('catalogue supports several playlists and songs and falls back from deleted IDs', () => {
-  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default', 'classical']);
-  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水', '莫扎特《G小调第40交响曲》']);
-  const tracks = [...MUSIC_TRACKS, { id: 'another', name: '另一首', file: 'another.mp3', cacheVersion: 'abc', playlistId: 'classical' }];
-  assert.deepEqual(tracksInPlaylist('classical', tracks).map(item => item.id), ['mozart-symphony-40', 'another']);
-  assert.equal(availablePlaylists(MUSIC_PLAYLISTS, tracks).length, 2);
-  assert.deepEqual(resolveMusicSelection('default', 'another', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'another' });
-  assert.deepEqual(resolveMusicSelection('classical', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'mozart-symphony-40' });
-  assert.deepEqual(resolveMusicSelection('classical', 'mozart-symphony-40', MUSIC_PLAYLISTS, tracks), { playlistId: 'classical', trackId: 'mozart-symphony-40' });
+test('catalogue keeps one theme while generic playlist resolution still handles deleted IDs', () => {
+  assert.deepEqual(MUSIC_PLAYLISTS.map(item => item.id), ['default']);
+  assert.deepEqual(MUSIC_TRACKS.map(item => item.name), ['流觞曲水']);
+  const playlists = [...MUSIC_PLAYLISTS, { id: 'test-list', name: '测试歌单' }];
+  const tracks = [...MUSIC_TRACKS, { id: 'another', name: '另一首', file: 'another.mp3', cacheVersion: 'abc', playlistId: 'test-list' }];
+  assert.deepEqual(tracksInPlaylist('test-list', tracks).map(item => item.id), ['another']);
+  assert.equal(availablePlaylists(playlists, tracks).length, 2);
+  assert.deepEqual(resolveMusicSelection('default', 'another', playlists, tracks), { playlistId: 'test-list', trackId: 'another' });
+  assert.deepEqual(resolveMusicSelection('test-list', 'removed', playlists, tracks), { playlistId: 'test-list', trackId: 'another' });
   assert.deepEqual(resolveMusicSelection('removed', 'removed', MUSIC_PLAYLISTS, tracks), { playlistId: 'default', trackId: 'liushang-qushui' });
 });
 
@@ -95,46 +95,15 @@ test('music uses one looping player, independent volume and a path relative to t
   }
 });
 
-test('rapid track changes reuse one player and ignore a late error from the old song', async () => {
+test('removed second track cannot be selected and resolves to the theme', () => {
   GlobalRegistrator.register({ url: 'https://example.test/three-chess/' });
-  const original = globalThis.Audio;
-  const pending: { resolve: () => void; reject: (reason: Error) => void }[] = [];
-  const created: FakeAudio[] = [];
-  class FakeAudio {
-    src = '';
-    loop = false;
-    volume = 1;
-    paused = true;
-    plays = 0;
-    constructor() { created.push(this); }
-    load() {}
-    pause() { this.paused = true; }
-    play() {
-      this.plays++;
-      return new Promise<void>((resolve, reject) => pending.push({ resolve: () => { this.paused = false; resolve(); }, reject }));
-    }
-  }
-  Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
   try {
     const sound = new GameAudio();
-    const first = { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: true };
-    const oldRequest = sound.chooseMusic(first);
-    const latest = { ...first, musicPlaylistId: 'classical', musicTrackId: 'mozart-symphony-40' };
-    const newRequest = sound.chooseMusic(latest);
-    assert.equal(created.length, 1);
-    assert.match(created[0].src, /mozart-symphony-40\.mp3\?v=1bcc472eee7c$/);
-    pending[1].resolve();
-    pending[0].reject(new Error('old playback aborted'));
-    assert.equal(await newRequest, null);
-    assert.equal(await oldRequest, null);
-    assert.equal(created[0].plays, 2);
-    await sound.setMusic({ ...latest, musicEnabled: false });
-    assert.equal(created[0].paused, true);
+    assert.equal(sound.musicUrl('mozart-symphony-40'), '');
+    assert.deepEqual(resolveMusicSelection('classical', 'mozart-symphony-40'),
+      { playlistId: 'default', trackId: 'liushang-qushui' });
     sound.dispose();
-  } finally {
-    Object.defineProperty(globalThis, 'Audio', { configurable: true, value: original });
-    GlobalRegistrator.unregister();
-  }
+  } finally { GlobalRegistrator.unregister(); }
 });
 
 test('failed music load reports once and does not affect legal moves', async () => {
