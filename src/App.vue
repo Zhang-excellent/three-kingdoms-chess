@@ -7,6 +7,8 @@ import { useOnlineRoom } from './useOnlineRoom.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
 import { MUSIC_PLAYLISTS, musicTrack, tracksInPlaylist } from './music-catalog.ts';
 import { buildGameRecord, gameRecordFileName } from './game-record.ts';
+import { parseGameRecord } from './game-replay.ts';
+import type { ReplayDocument } from './game-replay.ts';
 import { appRouteUrl, parseAppRoute } from './navigation.ts';
 import type { AppPage } from './navigation.ts';
 import HomePage from './components/HomePage.vue';
@@ -39,6 +41,13 @@ try {
 } catch { storageUsable = false; }
 const localGame = ref<Game>(restored.game), undo = ref<Game[]>(restored.undo);
 const selectedId = ref<string | null>(null), message = ref(initialMessage), feedbackError = ref(false);
+const localPanel = ref<'play' | 'replay'>('play');
+const replayDocument = ref<ReplayDocument | null>(null);
+const replayIndex = ref(0), replayFileName = ref(''), replayImportError = ref('');
+const replayDragActive = ref(false), replayPlaying = ref(false);
+const replaySpeed = ref<'slow' | 'normal' | 'fast'>('normal');
+const replayFileInput = ref<HTMLInputElement | null>(null);
+let replayTimer: number | null = null;
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
@@ -67,6 +76,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', resumeRememberedMusic);
   window.removeEventListener('popstate', syncPageFromLocation);
+  stopReplayPlayback();
   gameAudio.dispose();
 });
 const saveAvailable = ref(storageUsable), compatibilityWarning = ref(requiresNewGame);
@@ -77,7 +87,10 @@ const { mode, nickname, createCode, joinCode, room, self, connection, error: onl
   spectating, watchCode, watchingCode, hasSession, savedRoomCode, lobbyRooms, lobbyLoaded,
   inviteRoom, inviteLookup, inviteLookupError, inviteUrl } = online;
 const fallbackGame = newGame();
-const game = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
+const liveGame = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
+const isReplaying = computed(() => online.mode.value === 'local' && localPanel.value === 'replay' && !!replayDocument.value);
+const replayFrame = computed(() => replayDocument.value?.frames[replayIndex.value] ?? null);
+const game = computed(() => isReplaying.value && replayFrame.value ? replayFrame.value : liveGame.value);
 const previousGame = computed(() => online.room.value?.phase === 'lobby' && online.room.value.game?.status === 'finished' ? online.room.value.game : null);
 const showGame = computed(() => (page.value === 'room' && !!room.value && room.value.phase !== 'lobby')
   || (page.value === 'spectate' && !!room.value && room.value.phase !== 'lobby')
@@ -107,7 +120,8 @@ function playerStatuses(faction: Faction): Array<{ label: string; tone: PlayerSt
   else if (game.value.status === 'finished') {
     const result = game.value.results[faction];
     if (result !== 'playing') statuses.push({ label: result === 'won' ? '胜利' : result === 'draw' ? '和棋' : '失败', tone: 'result' });
-  } else if (game.value.turn === faction) statuses.push({ label: '行棋中', tone: 'active' });
+  } else if (isReplaying.value && replayCurrentStep.value?.faction === faction) statuses.push({ label: '本步', tone: 'active' });
+  else if (!isReplaying.value && game.value.turn === faction) statuses.push({ label: '行棋中', tone: 'active' });
   return statuses;
 }
 const factionTaken = (faction: Faction) => !!online.room.value?.players.some(player => player.id !== online.room.value?.selfId && player.faction === faction);
@@ -122,8 +136,16 @@ const drawEligibleNames = computed(() => drawOffer.value?.eligible.map(faction =
 const selected = computed(() => game.value.pieces.find(p => p.id === selectedId.value) ?? null);
 const moves = computed(() => selected.value ? legalMoves(game.value.pieces, selected.value) : []);
 const active = computed(() => game.value.turn ? PLAYERS[game.value.turn] : null);
+const highlightedFaction = computed<Faction | null>(() => isReplaying.value
+  ? replayCurrentStep.value?.faction ?? null
+  : game.value.status === 'playing' ? game.value.turn : null);
 const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
+const replayCurrentStep = computed(() => replayDocument.value && replayIndex.value > 0
+  ? replayDocument.value.moves[replayIndex.value - 1] ?? null : null);
+const replayTotal = computed(() => replayDocument.value?.moves.length ?? 0);
+const replayCanGoBack = computed(() => isReplaying.value && replayIndex.value > 0);
+const replayCanGoForward = computed(() => isReplaying.value && replayIndex.value < replayTotal.value);
 const resultLabel = (current: Game, faction: Faction) => current.results[faction] === 'won' ? '胜利'
   : current.results[faction] === 'lost' ? '失败' : current.results[faction] === 'draw' ? '和棋' : '对局中';
 const losersText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'lost').map(faction => playerDisplayName(faction)).join('、'));
@@ -217,6 +239,7 @@ watch(audioSettings, value => {
 }, { deep: true });
 
 watch([game, mode, room, connection], () => {
+  if (isReplaying.value) return;
   const live = mode.value === 'local' || (connection.value === 'online' && !!room.value && room.value.phase !== 'lobby');
   const scope = mode.value === 'local' ? 'local' : `${room.value?.code ?? ''}:${room.value?.round ?? ''}`;
   const effect = moveSoundTracker.observe(game.value, scope, live);
@@ -235,8 +258,86 @@ watch([page, requestedRoomCode, hasSession, room], ([currentPage, code, hasRoomS
   if (currentPage === 'room' && code && !hasRoomSession && !currentRoom && !spectating.value)
     void online.inspectInvite(code);
 }, { immediate: true });
+watch(page, current => { if (current !== 'local') stopReplayPlayback(); });
+watch(localPanel, current => { if (current !== 'replay') stopReplayPlayback(); });
 
 function notify(text: string, error = false) { message.value = text; feedbackError.value = error; }
+function stopReplayPlayback() {
+  if (replayTimer !== null) window.clearInterval(replayTimer);
+  replayTimer = null; replayPlaying.value = false;
+}
+function switchLocalPanel(panel: 'play' | 'replay') {
+  if (localPanel.value === panel) return;
+  stopReplayPlayback(); selectedId.value = null;
+  localPanel.value = panel;
+  replayImportError.value = '';
+}
+function jumpReplay(index: number) {
+  if (!replayDocument.value) return;
+  stopReplayPlayback();
+  replayIndex.value = Math.max(0, Math.min(index, replayDocument.value.moves.length));
+  selectedId.value = null; feedbackError.value = false;
+}
+function startReplayPlayback() {
+  if (!replayDocument.value || replayPlaying.value) return;
+  if (replayIndex.value >= replayDocument.value.moves.length) jumpReplay(0);
+  replayPlaying.value = true;
+  const delay = replaySpeed.value === 'slow' ? 1400 : replaySpeed.value === 'fast' ? 360 : 760;
+  replayTimer = window.setInterval(() => {
+    if (!replayDocument.value || replayIndex.value >= replayDocument.value.moves.length) {
+      stopReplayPlayback(); return;
+    }
+    replayIndex.value++;
+    selectedId.value = null;
+  }, delay);
+}
+function toggleReplayPlayback() {
+  if (replayPlaying.value) stopReplayPlayback();
+  else startReplayPlayback();
+}
+function setReplaySpeed(speed: 'slow' | 'normal' | 'fast') {
+  replaySpeed.value = speed;
+  if (replayPlaying.value) {
+    stopReplayPlayback();
+    startReplayPlayback();
+  }
+}
+async function importReplayFile(file: File) {
+  replayImportError.value = '';
+  if (!/\.md$/i.test(file.name)) {
+    replayImportError.value = '请选择三国象棋导出的 .md 棋谱文件。';
+    return;
+  }
+  if (file.size > 5_000_000) {
+    replayImportError.value = '棋谱文件超过 5 MB，无法导入。';
+    return;
+  }
+  try {
+    const result = parseGameRecord(await file.text());
+    if (!result.ok) {
+      replayImportError.value = `导入失败：${result.error}`;
+      return;
+    }
+    stopReplayPlayback();
+    replayDocument.value = result.replay;
+    replayIndex.value = 0;
+    replayFileName.value = file.name;
+    localPanel.value = 'replay';
+    selectedId.value = null;
+  } catch {
+    replayImportError.value = '读取棋谱文件失败，请确认文件完整且可访问。';
+  }
+}
+function chooseReplayFile(event: Event) {
+  const input = event.target as HTMLInputElement, file = input.files?.[0];
+  if (file) void importReplayFile(file);
+  input.value = '';
+}
+function dropReplayFile(event: DragEvent) {
+  replayDragActive.value = false;
+  const file = event.dataTransfer?.files?.[0];
+  if (file) void importReplayFile(file);
+}
 async function toggleMusic() {
   audioSettings.value.musicEnabled = !audioSettings.value.musicEnabled;
   if (audioSettings.value.musicEnabled) await playSelectedMusic(true);
@@ -264,6 +365,7 @@ async function previewSelectedMusic() {
   if (request === musicUiRequest) audioMessage.value = problem ?? '';
 }
 async function cellClick(x: number, y: number) {
+  if (isReplaying.value) return;
   if (spectating.value) { notify('正在观战，不能操作棋子。', true); return; }
   if (drawOffer.value) { notify('请先处理和棋申请，再继续行棋。', true); return; }
   if (online.mode.value === 'local' && compatibilityWarning.value) { notify('旧规则存档不能按三方独立规则续局，请另开一局。', true); return; }
@@ -527,16 +629,65 @@ async function requestRematch() {
         @ready="online.setReady" @release-offline="releaseOffline" @export-record="exportGameRecord" />
     </main>
 
-    <main v-else-if="showGame" class="play-layout">
+    <template v-else-if="showGame">
+      <section v-if="mode === 'local'" class="local-workbench" :class="{ 'drag-active': replayDragActive }"
+        @dragenter.prevent="replayDragActive = true" @dragover.prevent="replayDragActive = true"
+        @dragleave.prevent="replayDragActive = false" @drop.prevent="dropReplayFile">
+        <div class="local-view-tabs" role="tablist" aria-label="本地试玩模式">
+          <button :class="{ active: localPanel === 'play' }" :aria-selected="localPanel === 'play'" @click="switchLocalPanel('play')">自由试玩 / 录谱</button>
+          <button :class="{ active: localPanel === 'replay' }" :aria-selected="localPanel === 'replay'" @click="switchLocalPanel('replay')">棋谱复盘</button>
+        </div>
+        <div v-if="localPanel === 'replay'" class="replay-file-action">
+          <span v-if="replayFileName" :title="replayFileName">{{ replayFileName }}</span>
+          <span v-else>选择或拖入 `.md` 棋谱</span>
+          <button class="tool-button" type="button" @click="replayFileInput?.click()">{{ replayDocument ? '更换棋谱' : '选择棋谱' }}</button>
+        </div>
+        <input ref="replayFileInput" class="replay-file-input" type="file" accept=".md,text/markdown,text/plain" @change="chooseReplayFile">
+      </section>
+      <p v-if="mode === 'local' && replayImportError" class="replay-import-error" role="alert">{{ replayImportError }}</p>
+
+      <section v-if="mode === 'local' && localPanel === 'replay' && !replayDocument" class="replay-empty"
+        @dragenter.prevent="replayDragActive = true" @dragover.prevent="replayDragActive = true"
+        @dragleave.prevent="replayDragActive = false" @drop.prevent="dropReplayFile">
+        <span class="replay-empty-seal" aria-hidden="true">谱</span>
+        <h2>导入棋谱回看全局</h2>
+        <p>选择或拖入三国象棋导出的 `.md` 棋谱。</p>
+        <button class="primary-button" type="button" @click="replayFileInput?.click()">选择棋谱文件</button>
+      </section>
+
+      <section v-else-if="isReplaying" class="replay-console" aria-label="棋谱复盘控制">
+        <div class="replay-console-head">
+          <div><strong>棋谱复盘</strong><span>{{ replayFileName }}</span></div>
+          <b>第 {{ replayIndex }} 步 / 共 {{ replayTotal }} 步</b>
+        </div>
+        <div class="replay-controls">
+          <button class="tool-button" :disabled="!replayCanGoBack" @click="jumpReplay(0)">初始局面</button>
+          <button class="tool-button" :disabled="!replayCanGoBack" @click="jumpReplay(replayIndex - 1)">上一步</button>
+          <button class="primary-button replay-play-button" :disabled="replayTotal === 0" @click="toggleReplayPlayback">{{ replayPlaying ? '暂停' : '自动播放' }}</button>
+          <button class="tool-button" :disabled="!replayCanGoForward" @click="jumpReplay(replayIndex + 1)">下一步</button>
+          <button class="tool-button" :disabled="!replayCanGoForward" @click="jumpReplay(replayTotal)">最后一步</button>
+          <div class="replay-speed" aria-label="自动播放速度">
+            <button v-for="speed in (['slow', 'normal', 'fast'] as const)" :key="speed" :class="{ active: replaySpeed === speed }" @click="setReplaySpeed(speed)">{{ speed === 'slow' ? '慢' : speed === 'normal' ? '正常' : '快' }}</button>
+          </div>
+        </div>
+        <p class="replay-declared-result">文件记录结果：{{ replayDocument?.declaredResult || '未注明' }}</p>
+        <div v-for="warning in replayDocument?.warnings" :key="warning.message" class="replay-warning">
+          <strong>棋谱提示</strong>
+          <p>{{ warning.message }}</p>
+          <details><summary>查看核对详情</summary><ul><li v-for="detail in warning.details" :key="detail">{{ detail }}</li></ul></details>
+        </div>
+      </section>
+
+      <main v-if="localPanel !== 'replay' || replayDocument" class="play-layout" :class="{ 'is-replay': isReplaying }">
       <aside class="players-panel" aria-label="玩家与当前回合">
         <div class="section-label"><span>本局席位</span></div>
         <div class="player-cards">
           <section v-for="faction in ORDER" :key="faction" class="player-card"
-            :class="{active: game.status === 'playing' && game.turn === faction, eliminated: game.eliminated.includes(faction), offline: mode === 'online' && roomPlayer(faction) && !roomPlayer(faction)?.online}"
+            :class="{active: highlightedFaction === faction, eliminated: game.eliminated.includes(faction), offline: mode === 'online' && roomPlayer(faction) && !roomPlayer(faction)?.online}"
             :style="{'--faction-color': PLAYERS[faction].color}"
-            :aria-current="game.status === 'playing' && game.turn === faction ? 'true' : undefined">
+            :aria-current="highlightedFaction === faction ? 'true' : undefined">
             <div class="player-card-top">
-              <div class="avatar" :class="{'avatar-lit': game.status === 'playing' && game.turn === faction}">{{ PLAYERS[faction].initial }}<span class="avatar-dot" v-if="game.status === 'playing' && game.turn === faction"></span></div>
+              <div class="avatar" :class="{'avatar-lit': highlightedFaction === faction}">{{ PLAYERS[faction].initial }}<span class="avatar-dot" v-if="highlightedFaction === faction"></span></div>
               <div class="player-name">
                 <h2 tabindex="0" :title="playerDisplayName(faction)" :aria-label="`${playerDisplayName(faction)}，${PLAYERS[faction].name}`">{{ playerDisplayName(faction) }}</h2>
                 <span class="player-name-tooltip" aria-hidden="true">{{ playerDisplayName(faction) }}</span>
@@ -554,7 +705,7 @@ async function requestRematch() {
       </aside>
 
       <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online'" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2><h2 v-else-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">本局和棋</h2></div><span class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online' && !isReplaying" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="isReplaying && replayCurrentStep">第 {{ replayIndex }} 步 · <span :style="{color: PLAYERS[replayCurrentStep.faction].color}">{{ PLAYERS[replayCurrentStep.faction].name }}</span> 行棋</h2><h2 v-else-if="isReplaying">初始局面</h2><h2 v-else-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2><h2 v-else-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">本局和棋</h2></div><span v-if="isReplaying" class="move-count">第 <strong>{{ replayIndex }}</strong> / {{ replayTotal }} 步</span><span v-else class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
         <div v-if="mode === 'online' && connection !== 'online'" class="network-banner" role="alert">连接中断，正在重连…</div>
         <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则、旧初始布局或名次存档不能按当前规则安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
         <div v-if="drawOffer" class="draw-offer-card" role="status" aria-live="polite">
@@ -590,19 +741,21 @@ async function requestRematch() {
             </g>
           </svg>
         </div>
-        <div class="board-tools"><button v-if="mode === 'local'" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local'" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
-        <p v-if="feedbackError || (mode === 'local' && !!message)" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
+        <div class="board-tools"><button v-if="mode === 'local' && !isReplaying" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local' && !isReplaying" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button v-if="isReplaying" class="tool-button" @click="switchLocalPanel('play')">退出复盘</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
+        <p v-if="feedbackError || (!isReplaying && mode === 'local' && !!message)" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
         <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">
-        <div class="section-label history-heading"><span>行棋记录 · {{ game.history.length }} 步</span><button class="record-export-button" :disabled="!game.history.length" @click="exportGameRecord(game)">导出棋谱</button></div>
-        <div class="last-move-card"><span class="eyebrow">上一步</span><template v-if="latest"><h3 :style="{color: PLAYERS[latest.faction].color}">{{ PLAYERS[latest.faction].name }} · {{ pieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} <b>→</b> {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${PLAYERS[latest.captured.faction].name}的${pieceName(latest.captured)}` : '已标记起点和落点' }}</small></template><template v-else><h3>棋局已就绪</h3><p>曹操先行</p><small>走子后保留起点与落点痕迹</small></template></div>
-        <ol v-if="records.length" class="move-list"><li v-for="record in records" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局，判为失败</small></div></li></ol>
-        <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>第一步，开启新棋局。</p></div>
+        <div class="section-label history-heading"><span>{{ isReplaying ? `复盘记录 · ${replayTotal} 步` : `行棋记录 · ${game.history.length} 步` }}</span><button v-if="!isReplaying" class="record-export-button" :disabled="!game.history.length" @click="exportGameRecord(game)">导出棋谱</button></div>
+        <div class="last-move-card"><span class="eyebrow">{{ isReplaying ? '当前步骤' : '上一步' }}</span><template v-if="latest"><h3 :style="{color: PLAYERS[latest.faction].color}">{{ PLAYERS[latest.faction].name }} · {{ pieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} <b>→</b> {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${PLAYERS[latest.captured.faction].nation}方${pieceName(latest.captured)}` : '已标记起点和落点' }}</small></template><template v-else><h3>{{ isReplaying ? '初始局面' : '棋局已就绪' }}</h3><p>{{ isReplaying ? '尚未行棋' : '曹操先行' }}</p><small>{{ isReplaying ? '可使用上方控件逐步查看' : '走子后保留起点与落点痕迹' }}</small></template></div>
+        <ol v-if="isReplaying && replayDocument" class="move-list replay-move-list"><li v-for="(record, index) in replayDocument.moves" :key="record.number" :class="{ current: replayIndex === index + 1 }" tabindex="0" @click="jumpReplay(index + 1)" @keydown.enter.prevent="jumpReplay(index + 1)" @keydown.space.prevent="jumpReplay(index + 1)"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.captured" class="capture-record">吃掉{{ PLAYERS[record.captured.faction].nation }}方{{ pieceName(record.captured) }}</small><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局，判为失败</small></div></li></ol>
+        <ol v-else-if="records.length" class="move-list"><li v-for="record in records" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2,'0') }}</span><div><strong :style="{color: PLAYERS[record.faction].color}">{{ PLAYERS[record.faction].name }}</strong><p>{{ description(record) }}</p><small v-if="record.eliminated.length">{{ eliminatedNames(record) }}出局，判为失败</small></div></li></ol>
+        <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>{{ isReplaying ? '棋谱没有行棋记录。' : '第一步，开启新棋局。' }}</p></div>
         <details class="board-legend"><summary>标记说明</summary><div class="board-legend-items"><p><i class="legend-dot"></i> 可走位置</p><p><i class="legend-ring"></i> 可以吃子</p><p><i class="legend-square"></i> 上一步起点与落点</p></div></details>
       </aside>
-    </main>
+      </main>
+    </template>
     <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。曹操视角上方左吴右蜀，魏方默认标准视角；刘备、孙权默认使用相同的 180° 视角，翻转只改变个人看到的画面与点击换算。输入房间号可只读观战。</p><ul><li>三方独立竞争。初始共 29 枚：魏 16、蜀 6、吴 7；上方中路中卒归吴方。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>联机对弈中，只有轮到自己行棋时才能提和；所有存活阵营同意后本局和棋。已有一方出局时，剩余两方均同意即可。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的自动判和次数尚待确认；本版仅采用全部存活阵营同意的手动和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="settingsDialog" class="settings-dialog">
@@ -680,10 +833,62 @@ async function requestRematch() {
 .history-panel .board-legend summary:focus-visible{outline:2px solid #9b7b45;outline-offset:4px;border-radius:3px}
 .board-legend-items{display:grid;gap:8px;padding-top:11px}
 .history-panel .board-legend-items p{margin:0}
+.local-workbench{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:18px auto 0;padding:9px 11px;border:1px solid #d9cbb7;border-radius:12px;background:#fffdf8;box-shadow:0 8px 24px #59432308;transition:border-color .16s ease,box-shadow .16s ease}
+.local-workbench.drag-active{border-color:#a78147;box-shadow:0 0 0 3px #a7814718}
+.local-view-tabs{display:inline-flex;gap:3px;padding:3px;border-radius:9px;background:#efe7d9}
+.local-view-tabs button{min-height:36px;padding:0 15px;border:0;border-radius:7px;background:transparent;color:#796a57;font-size:12px;font-weight:600}
+.local-view-tabs button.active{background:#fffdf8;color:#8e4236;box-shadow:0 1px 5px #59432317}
+.local-view-tabs button:focus-visible,.replay-controls button:focus-visible,.replay-speed button:focus-visible,.replay-file-action button:focus-visible,.replay-move-list li:focus-visible{outline:2px solid #997545;outline-offset:2px}
+.replay-file-action{display:flex;align-items:center;gap:10px;min-width:0;color:#877762;font-size:11px}
+.replay-file-action>span{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.replay-file-action .tool-button{min-height:36px;border-color:#d4c4ac;background:#fffaf0}
+.replay-file-input{display:none}
+.replay-import-error{margin:10px auto 0;max-width:1110px;padding:10px 13px;border-left:3px solid #a34438;border-radius:0 7px 7px 0;background:#f8eae5;color:#8f4237;font-size:12px}
+.replay-empty{max-width:720px;margin:28px auto 0;padding:42px 28px;text-align:center;border:1px dashed #d2c1a6;border-radius:16px;background:#fffdf8}
+.replay-empty-seal{display:grid;place-items:center;width:54px;height:60px;margin:0 auto 15px;border:1px solid #a94c3e;border-radius:6px;background:#a94c3e;color:#fff7e8;font:700 30px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff4df2b;transform:rotate(-2deg)}
+.replay-empty h2{margin:0 0 8px;font:700 23px "Songti SC","SimSun",serif;color:#453a2e}
+.replay-empty p{margin:0 0 20px;color:#857762;font-size:12px}
+.replay-console{max-width:1110px;margin:12px auto 0;padding:15px 17px;border:1px solid #d9cbb7;border-radius:13px;background:linear-gradient(145deg,#fffdf8,#f8f2e7);box-shadow:0 9px 26px #5943230a}
+.replay-console-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}
+.replay-console-head>div{display:grid;gap:2px;min-width:0}
+.replay-console-head strong{font:700 18px "Songti SC","SimSun",serif;color:#43392e}
+.replay-console-head span{max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#897a65;font-size:10px}
+.replay-console-head>b{flex:none;padding:4px 9px;border-radius:999px;background:#f0e7d8;color:#785e39;font-size:11px;font-weight:600}
+.replay-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.replay-controls>button{min-height:38px;padding:7px 11px;border:1px solid #d4c4ac;background:#fffdf8;font-size:11px}
+.replay-controls>.replay-play-button{min-width:84px;border-color:#a64b3c;background:#a64b3c;color:#fff7e6;font-size:12px}
+.replay-play-button:hover:not(:disabled){background:#8f3d31}
+.replay-speed{display:inline-flex;margin-left:auto;padding:3px;border:1px solid #d4c4ac;border-radius:8px;background:#eee6d8}
+.replay-speed button{min-height:30px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:#756652;font-size:10px}
+.replay-speed button.active{background:#fffdf8;color:#8e4236;box-shadow:0 1px 4px #59432315}
+.replay-declared-result{margin:10px 0 0;color:#786956;font-size:11px}
+.replay-warning{margin-top:10px;padding:10px 12px;border-left:3px solid #bf8e51;border-radius:0 8px 8px 0;background:#f7eedf;color:#785d38}
+.replay-warning strong{font-size:12px}.replay-warning p{margin:4px 0 0;font-size:11px;line-height:1.65}
+.replay-warning details{margin-top:7px;font-size:10px;color:#7f6b50}.replay-warning summary{cursor:pointer;font-weight:600}
+.replay-warning ul{margin:7px 0 0;padding-left:18px;line-height:1.7}
+.replay-move-list li{cursor:pointer;padding-right:8px;border-radius:6px;transition:background .14s ease}
+.replay-move-list li:hover{background:#f6efe3}.replay-move-list li.current{background:#f1e6d3;box-shadow:inset 3px 0 #a77a3e}
+.history-panel .replay-move-list{padding-right:2px}
+.history-panel .replay-move-list .capture-record{color:#8c6a3f}
 @media(max-width:900px){
   .player-card{min-height:0}
 }
 @media(max-width:720px){
+  .local-workbench{align-items:stretch;flex-direction:column;gap:9px;padding:8px}
+  .local-view-tabs{display:grid;grid-template-columns:1fr 1fr}
+  .local-view-tabs button{min-height:40px;padding:0 8px}
+  .replay-file-action{justify-content:space-between}
+  .replay-file-action>span{max-width:60vw}
+  .replay-console{margin-top:10px;padding:13px 12px}
+  .replay-console-head{align-items:flex-start;gap:8px}
+  .replay-console-head strong{font-size:17px}.replay-console-head>b{font-size:10px}
+  .replay-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .replay-controls>button{width:100%;min-height:40px;padding:6px}
+  .replay-controls>.replay-play-button{min-width:0}
+  .replay-speed{grid-column:1 / -1;justify-self:start;margin-left:0;margin-top:2px}
+  .replay-speed button{min-width:52px;min-height:32px}
+  .replay-empty{margin:18px 0 0;padding:34px 18px}
+  .replay-import-error{margin-top:9px}
   .play-layout{grid-template-columns:minmax(0,1fr)}
   .players-panel,.board-panel,.history-panel{width:100%}
   .players-panel .section-label{margin-bottom:10px}

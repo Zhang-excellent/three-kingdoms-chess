@@ -1,5 +1,7 @@
 import { ORDER, PLAYERS, newGame, pieceName, validGame } from './game.ts';
 import type { Faction, Game, Piece } from './game.ts';
+import { REPLAY_FORMAT, REPLAY_FORMAT_VERSION } from './game-replay.ts';
+import type { ReplayEvent } from './game-replay.ts';
 
 const coordinate = (point: { x: number; y: number }) => `(${point.x + 1}, ${point.y + 1})`;
 const resultLabel = (game: Game, faction: Faction) =>
@@ -7,6 +9,7 @@ const resultLabel = (game: Game, faction: Faction) =>
     : game.results[faction] === 'draw' ? '和棋' : '对局中';
 const pieceDescription = (piece: Piece) =>
   `${PLAYERS[piece.faction].nation}方${pieceName(piece)} ${coordinate(piece)}`;
+const toPlain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 function piecesByFaction(pieces: readonly Piece[]): string {
   return ORDER.map(faction => {
@@ -28,8 +31,39 @@ export function gameRecordFileName(exportedAt = new Date()): string {
   return `三国象棋棋谱-${stamp}.md`;
 }
 
-export function buildGameRecord(game: Game, exportedAt = new Date()): string {
+export function buildGameRecord(game: Game, exportedAt = new Date(), recordedEvents: ReplayEvent[] = []): string {
   if (!validGame(game)) throw new Error('无法导出无效棋局。');
+  const derivedEvents: ReplayEvent[] = game.history
+    .filter(record => record.eliminated.length)
+    .map(record => ({ type: 'elimination', step: record.number, factions: [...record.eliminated] }));
+  if (game.status === 'finished') {
+    derivedEvents.push({
+      type: 'result',
+      step: game.history.length,
+      winner: game.winner,
+      results: { ...game.results },
+    });
+  }
+  const eventKey = (event: ReplayEvent) => JSON.stringify(event);
+  const structuredEvents = [...recordedEvents, ...derivedEvents]
+    .filter((event, index, all) => all.findIndex(item => eventKey(item) === eventKey(event)) === index);
+  const structured = {
+    format: REPLAY_FORMAT,
+    formatVersion: REPLAY_FORMAT_VERSION,
+    coordinateSystem: 'code-zero-based',
+    schema: game.schema,
+    rulesVersion: game.rulesVersion,
+    initialPieces: toPlain(newGame().pieces),
+    moves: toPlain(game.history),
+    events: structuredEvents,
+    finalPieces: toPlain(game.pieces),
+    finalState: {
+      status: game.status,
+      winner: game.winner,
+      results: toPlain(game.results),
+      eliminated: [...game.eliminated],
+    },
+  };
   const moveLines = game.history.length
     ? game.history.map(record => {
       const extras = [
@@ -60,6 +94,12 @@ export function buildGameRecord(game: Game, exportedAt = new Date()): string {
     '## 导出时子力',
     '',
     piecesByFaction(game.pieces),
+    '',
+    '## 结构化数据',
+    '',
+    '```json',
+    JSON.stringify(structured, null, 2),
+    '```',
     '',
     '坐标均采用页面显示的 `(路, 线)`，即代码坐标加一。',
     '',
