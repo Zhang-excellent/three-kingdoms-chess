@@ -5,7 +5,7 @@ import type { Faction, Game, MoveRecord, Piece, Point } from './game.ts';
 import { screenPoint } from './board-view.ts';
 import { useOnlineRoom } from './useOnlineRoom.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
-import { MUSIC_PLAYLISTS, musicTrack, tracksInPlaylist } from './music-catalog.ts';
+import { musicTrack } from './music-catalog.ts';
 import { buildGameRecord, gameRecordFileName } from './game-record.ts';
 import { parseGameRecord } from './game-replay.ts';
 import type { ReplayDocument } from './game-replay.ts';
@@ -46,7 +46,6 @@ const replayDocument = ref<ReplayDocument | null>(null);
 const replayIndex = ref(0), replayFileName = ref(''), replayImportError = ref('');
 const replayDragActive = ref(false), replayPlaying = ref(false);
 const replaySpeed = ref<'slow' | 'normal' | 'fast'>('normal');
-const replayFileInput = ref<HTMLInputElement | null>(null);
 let replayTimer: number | null = null;
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
@@ -56,7 +55,6 @@ const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-roo
 const pendingRoomNavigation = ref<{ next: AppPage; code: string | null; method: 'push' | 'replace' | 'none'; href?: string } | null>(null);
 const leavingRoom = ref(false), inviteActionError = ref('');
 const audioSettings = ref(loadAudioSettings()), audioMessage = ref('');
-const availableTracks = computed(() => tracksInPlaylist(audioSettings.value.musicPlaylistId));
 const selectedTrackName = computed(() => musicTrack(audioSettings.value.musicTrackId)?.name ?? '暂无歌曲');
 const gameAudio = new GameAudio(), moveSoundTracker = new MoveSoundTracker();
 let musicUiRequest = 0;
@@ -398,22 +396,6 @@ async function toggleMusic() {
   if (audioSettings.value.musicEnabled) await playSelectedMusic(true);
   else { musicUiRequest++; audioMessage.value = ''; await gameAudio.setMusic(audioSettings.value); }
 }
-function choosePlaylist(event: Event) {
-  const playlistId = (event.target as HTMLSelectElement).value;
-  const first = tracksInPlaylist(playlistId)[0];
-  if (!first) return;
-  audioSettings.value.musicPlaylistId = playlistId;
-  audioSettings.value.musicTrackId = first.id;
-  audioMessage.value = '';
-  void playSelectedMusic(true);
-}
-function chooseTrack(event: Event) {
-  const trackId = (event.target as HTMLSelectElement).value;
-  if (!availableTracks.value.some(track => track.id === trackId)) return;
-  audioSettings.value.musicTrackId = trackId;
-  audioMessage.value = '';
-  void playSelectedMusic(true);
-}
 async function previewSelectedMusic() {
   const request = ++musicUiRequest;
   const problem = await gameAudio.previewMusic(audioSettings.value);
@@ -681,9 +663,9 @@ async function requestRematch() {
         <div v-if="localPanel === 'replay'" class="replay-file-action">
           <span v-if="replayFileName" :title="replayFileName">{{ replayFileName }}</span>
           <span v-else>选择或拖入 `.md` 棋谱</span>
-          <button class="tool-button" type="button" @click="replayFileInput?.click()">{{ replayDocument ? '更换棋谱' : '选择棋谱' }}</button>
+          <label class="tool-button replay-file-trigger" for="replay-file-input">{{ replayDocument ? '更换棋谱' : '选择棋谱' }}</label>
         </div>
-        <input ref="replayFileInput" class="replay-file-input" type="file" accept=".md,text/markdown,text/plain" @change="chooseReplayFile">
+        <input id="replay-file-input" class="replay-file-input" type="file" @change="chooseReplayFile">
       </section>
       <p v-if="mode === 'local' && replayImportError" class="replay-import-error" role="alert">{{ replayImportError }}</p>
 
@@ -693,7 +675,7 @@ async function requestRematch() {
         <span class="replay-empty-seal" aria-hidden="true">谱</span>
         <h2>导入棋谱回看全局</h2>
         <p>选择或拖入三国象棋导出的 `.md` 棋谱。</p>
-        <button class="primary-button" type="button" @click="replayFileInput?.click()">选择棋谱文件</button>
+        <label class="primary-button replay-file-primary" for="replay-file-input">选择棋谱文件</label>
       </section>
 
       <section v-else-if="isReplaying" class="replay-console" aria-label="棋谱复盘控制">
@@ -802,7 +784,7 @@ async function requestRematch() {
     <dialog ref="settingsDialog" class="settings-dialog">
       <div class="dialog-heading"><h2>声音设置</h2><button class="dialog-close" aria-label="关闭设置" @click="settingsDialog?.close()">×</button></div>
       <div class="audio-control"><label for="music-toggle">背景音乐</label><button id="music-toggle" class="tool-button" :aria-pressed="audioSettings.musicEnabled" @click="toggleMusic">{{ audioSettings.musicEnabled ? '开启' : '关闭' }}</button><label for="music-volume">音乐音量 {{ Math.round(audioSettings.musicVolume * 100) }}%</label><input id="music-volume" v-model.number="audioSettings.musicVolume" type="range" min="0" max="1" step="0.01" aria-label="音乐音量"></div>
-      <div class="music-choice"><label for="music-playlist">歌单</label><select id="music-playlist" :value="audioSettings.musicPlaylistId" @change="choosePlaylist"><option v-for="playlist in MUSIC_PLAYLISTS" :key="playlist.id" :value="playlist.id">{{ playlist.name }}</option></select><label for="music-track">歌曲</label><select id="music-track" :value="audioSettings.musicTrackId" @change="chooseTrack"><option v-for="track in availableTracks" :key="track.id" :value="track.id">{{ track.name }}</option></select><div class="music-choice-footer"><p>当前选择：{{ selectedTrackName }}</p><button id="music-preview" class="tool-button" @click="previewSelectedMusic">试听</button></div></div>
+      <div class="music-choice"><div class="music-choice-copy"><span>主题曲</span><strong id="music-theme">{{ selectedTrackName }}</strong></div><button id="music-preview" class="tool-button" @click="previewSelectedMusic">试听</button></div>
       <div class="audio-control"><label for="effects-toggle">落子音效</label><button id="effects-toggle" class="tool-button" :aria-pressed="audioSettings.effectsEnabled" @click="audioSettings.effectsEnabled = !audioSettings.effectsEnabled">{{ audioSettings.effectsEnabled ? '开启' : '关闭' }}</button><label for="effects-volume">音效音量 {{ Math.round(audioSettings.effectsVolume * 100) }}%</label><input id="effects-volume" v-model.number="audioSettings.effectsVolume" type="range" min="0" max="1" step="0.01" aria-label="音效音量"></div><p v-if="audioMessage" class="connection-note error" role="status">{{ audioMessage }}</p><p v-if="audioSettings.musicEnabled && !audioMessage" class="audio-hint">若浏览器暂停播放，请关闭后重新开启音乐。</p>
     </dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
@@ -879,11 +861,12 @@ async function requestRematch() {
 .local-view-tabs{display:inline-flex;gap:3px;padding:3px;border-radius:9px;background:#efe7d9}
 .local-view-tabs button{min-height:36px;padding:0 15px;border:0;border-radius:7px;background:transparent;color:#796a57;font-size:12px;font-weight:600}
 .local-view-tabs button.active{background:#fffdf8;color:#8e4236;box-shadow:0 1px 5px #59432317}
-.local-view-tabs button:focus-visible,.replay-controls button:focus-visible,.replay-speed button:focus-visible,.replay-file-action button:focus-visible,.replay-move-list li:focus-visible{outline:2px solid #997545;outline-offset:2px}
+.local-view-tabs button:focus-visible,.replay-controls button:focus-visible,.replay-speed button:focus-visible,.replay-file-trigger:focus-visible,.replay-file-primary:focus-visible,.replay-move-list li:focus-visible{outline:2px solid #997545;outline-offset:2px}
 .replay-file-action{display:flex;align-items:center;gap:10px;min-width:0;color:#877762;font-size:11px}
 .replay-file-action>span{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.replay-file-action .tool-button{min-height:36px;border-color:#d4c4ac;background:#fffaf0}
-.replay-file-input{display:none}
+.replay-file-trigger{display:inline-flex;align-items:center;justify-content:center;min-height:36px;border-color:#d4c4ac;background:#fffaf0;cursor:pointer;user-select:none}
+.replay-file-primary{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
+.replay-file-input{position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;pointer-events:none}
 .replay-import-error{margin:10px auto 0;max-width:1110px;padding:10px 13px;border-left:3px solid #a34438;border-radius:0 7px 7px 0;background:#f8eae5;color:#8f4237;font-size:12px}
 .replay-empty{max-width:720px;margin:28px auto 0;padding:42px 28px;text-align:center;border:1px dashed #d2c1a6;border-radius:16px;background:#fffdf8}
 .replay-empty-seal{display:grid;place-items:center;width:54px;height:60px;margin:0 auto 15px;border:1px solid #a94c3e;border-radius:6px;background:#a94c3e;color:#fff7e8;font:700 30px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff4df2b;transform:rotate(-2deg)}

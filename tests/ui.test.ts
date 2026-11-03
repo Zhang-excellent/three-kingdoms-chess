@@ -243,9 +243,9 @@ test('settings keep music and effect switches and volumes independently on this 
   assert.equal(wrapper.get('#music-toggle').text(), '关闭');
   assert.equal(wrapper.get('#effects-toggle').text(), '关闭');
   assert.equal(wrapper.get('#music-preview').text(), '试听');
-  assert.match(wrapper.get('#music-track').text(), /流觞曲水/);
-  assert.doesNotMatch(wrapper.get('#music-playlist').text(), /古典/);
-  assert.doesNotMatch(wrapper.get('#music-track').text(), /莫扎特/);
+  assert.equal(wrapper.get('#music-theme').text(), '流觞曲水');
+  assert.equal(wrapper.find('#music-playlist').exists(), false);
+  assert.equal(wrapper.find('#music-track').exists(), false);
   await wrapper.get('#effects-toggle').trigger('click');
   await wrapper.get('#effects-volume').setValue('0.42');
   await wrapper.get('#music-volume').setValue('0.18');
@@ -260,7 +260,7 @@ test('settings keep music and effect switches and volumes independently on this 
   assert.equal(wrapper.get('#effects-toggle').text(), '开启');
   assert.equal(wrapper.get('#music-toggle').text(), '关闭');
   assert.equal((wrapper.get('#effects-volume').element as HTMLInputElement).value, '0.42');
-  assert.equal((wrapper.get('#music-track').element as HTMLSelectElement).value, 'liushang-qushui');
+  assert.equal(wrapper.get('#music-theme').text(), '流觞曲水');
 });
 test('finished local game presents one winner and two losses without placement labels', t => {
   localStorage.clear();

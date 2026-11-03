@@ -45,6 +45,8 @@ test('local replay imports the legacy 60-step record, jumps through snapshots, a
 
   await wrapper.findAll('.local-view-tabs button').find(button => button.text() === '棋谱复盘')!.trigger('click');
   assert.ok(wrapper.find('.replay-empty').exists());
+  assert.equal(wrapper.get('.replay-file-primary').attributes('for'), 'replay-file-input');
+  assert.equal(wrapper.get('input.replay-file-input').attributes('accept'), undefined);
   await importFile(wrapper, markdownFile('三国象棋棋谱-20261029-234542.md', fixture));
   await waitUntil(() => wrapper.find('.replay-console').exists(), 'Replay console did not open');
   assert.match(wrapper.get('.replay-console-head').text(), /第 0 步 \/ 共 60 步/);
