@@ -120,13 +120,8 @@ export function useOnlineRoom() {
         if (!item) break;
         attempted.add(item.reconnectToken);
         if (!socket?.connected) break;
-        let ack = await emit('room:leave', item);
-        if (!ack.ok && ack.code === 'NOT_ACTIVE_CONNECTION') {
-          const resumeAck = await emit<SessionReceipt>('room:resume', item);
-          if (resumeAck.ok) ack = await emit('room:leave', item);
-          else if (resumeAck.code === 'SESSION_NOT_FOUND') ack = { ok: true, data: undefined };
-        }
-        if (ack.ok || ack.code === 'SESSION_NOT_FOUND') {
+        const ack = await emit('room:leave', item);
+        if (ack.ok || ack.code === 'SESSION_NOT_FOUND' || ack.code === 'NOT_ACTIVE_CONNECTION') {
           removePending(item.reconnectToken);
         }
       }
@@ -167,7 +162,10 @@ export function useOnlineRoom() {
     });
     socket.on('disconnect', reason => {
       if (connection.value !== 'replaced') connection.value = 'offline';
-      if (reason !== 'io client disconnect' && session.value) error.value = '连接已中断，正在自动重连；等待区座位暂留 60 秒。';
+      if (reason !== 'io client disconnect' && session.value) {
+        const grace = room.value?.phase === 'lobby' ? '60 秒' : '180 秒';
+        error.value = `连接已中断，正在自动重连；当前席位暂留 ${grace}。`;
+      }
     });
     socket.on('room:state', (state: RoomView) => acceptState(state));
     socket.on('lobby:rooms', (snapshot: PublicLobbySnapshot) => {
@@ -203,13 +201,35 @@ export function useOnlineRoom() {
     await recovery;
     return !!socket?.connected;
   }
-  function leaveRoom() {
-    const saved = session.value;
+  function clearLocalRoom() {
     epoch++; room.value = null; session.value = null; busy.value = false;
     joinCode.value = '';
     localStorage.removeItem(ONLINE_SESSION_KEY);
     error.value = '';
-    if (saved) { queueLeave(saved); if (socket?.connected) void flushPendingLeaves(); else openSocket(); }
+  }
+  async function leaveRoom(): Promise<ClientAck> {
+    const saved = session.value;
+    if (!saved) {
+      clearLocalRoom();
+      return { ok: true, data: undefined };
+    }
+    busy.value = true;
+    if (socket?.connected) {
+      const ack = await emit('room:leave', saved);
+      if (ack.ok || ack.code === 'SESSION_NOT_FOUND') {
+        clearLocalRoom();
+        return { ok: true, data: undefined };
+      }
+      if (!['OFFLINE', 'TIMEOUT', 'NOT_ACTIVE_CONNECTION'].includes(ack.code)) {
+        busy.value = false;
+        return ack;
+      }
+    }
+    queueLeave(saved);
+    clearLocalRoom();
+    if (socket?.connected) void flushPendingLeaves();
+    else openSocket();
+    return { ok: true, data: undefined };
   }
   function openWatchEntry() {
     if (session.value) { error.value = '请先退出玩家房间，再进入观战。'; return; }
@@ -380,7 +400,7 @@ export function useOnlineRoom() {
     const intent: MoveIntent = { requestId: createMoveRequestId(), version: room.value.version, pieceId, to };
     return action<{ state: RoomView }>('game:move', { intent });
   }
-  function forgetSession() { leaveRoom(); }
+  function forgetSession() { return leaveRoom(); }
 
   onBeforeUnmount(() => socket?.disconnect());
   if (initialSession || mode.value === 'online' || pending().length) openSocket();

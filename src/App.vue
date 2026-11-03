@@ -53,7 +53,8 @@ const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLD
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const inviteDialog = ref<HTMLDialogElement | null>(null), inviteLinkInput = ref<HTMLTextAreaElement | null>(null);
 const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-room'>('manual');
-const pendingInviteAfterLeave = ref<string | null>(null), inviteActionError = ref('');
+const pendingRoomNavigation = ref<{ next: AppPage; code: string | null; method: 'push' | 'replace' | 'none'; href?: string } | null>(null);
+const leavingRoom = ref(false), inviteActionError = ref('');
 const audioSettings = ref(loadAudioSettings()), audioMessage = ref('');
 const availableTracks = computed(() => tracksInPlaylist(audioSettings.value.musicPlaylistId));
 const selectedTrackName = computed(() => musicTrack(audioSettings.value.musicTrackId)?.name ?? '暂无歌曲');
@@ -170,6 +171,49 @@ function historyFor(next: AppPage, code: string | null, method: 'push' | 'replac
   else history.pushState({ page: next }, '', href);
 }
 
+function leavesRoom(next: AppPage, code: string | null): boolean {
+  if (hasSession.value)
+    return next !== 'room' || code !== (room.value?.code ?? savedRoomCode.value);
+  if (page.value === 'spectate' && spectating.value)
+    return next !== 'spectate' || code !== watchingCode.value;
+  return false;
+}
+
+const needsPlayingExitConfirmation = () => hasSession.value && room.value?.phase === 'playing'
+  && !!ownFaction.value && !game.value.eliminated.includes(ownFaction.value);
+
+async function applyNavigation(target: NonNullable<typeof pendingRoomNavigation.value>): Promise<void> {
+  page.value = target.next;
+  requestedRoomCode.value = target.code;
+  selectedId.value = null;
+  if (target.href) history.replaceState({ page: target.next }, '', target.href);
+  else historyFor(target.next, target.code, target.method);
+  await activatePage(target.next, target.code);
+}
+
+async function completeRoomDeparture(): Promise<void> {
+  const target = pendingRoomNavigation.value;
+  if (!target || leavingRoom.value) return;
+  leavingRoom.value = true;
+  try {
+    if (page.value === 'spectate' && spectating.value) {
+      online.exitWatching();
+    } else if (hasSession.value) {
+      const ack = await online.leaveRoom();
+      if (!ack.ok) {
+        onlineError.value = ack.error;
+        pendingRoomNavigation.value = null;
+        return;
+      }
+    }
+    pendingRoomNavigation.value = null;
+    leavingRoom.value = false;
+    await applyNavigation(target);
+  } finally {
+    leavingRoom.value = false;
+  }
+}
+
 async function activatePage(next: AppPage, code: string | null, initial = false) {
   if (next !== 'spectate' && spectating.value) online.exitWatching();
   if (next === 'spectate') {
@@ -201,29 +245,40 @@ async function activatePage(next: AppPage, code: string | null, initial = false)
 }
 
 async function navigatePage(next: AppPage, code: string | null = null, method: 'push' | 'replace' = 'push') {
-  page.value = next;
-  requestedRoomCode.value = code;
-  selectedId.value = null;
-  historyFor(next, code, method);
-  await activatePage(next, code);
+  if (leavingRoom.value) return;
+  if (leavesRoom(next, code)) {
+    pendingRoomNavigation.value = { next, code, method };
+    if (needsPlayingExitConfirmation()) exitDialog.value?.showModal();
+    else await completeRoomDeparture();
+    return;
+  }
+  await applyNavigation({ next, code, method });
 }
 
 function openHomePage() { void navigatePage('home'); }
 function openLobbyPage() { void navigatePage('lobby'); }
 function openFriendsPage() { void navigatePage('friends'); }
-function openSpectateEntry() { void watchOnlineRoom(); }
+function openSpectateEntry() { void navigatePage('spectate', null, 'replace'); }
 function openLocalPage() { void navigatePage('local'); }
 function openCurrentRoom() {
   const code = room.value?.code ?? savedRoomCode.value;
   void navigatePage('room', code, 'replace');
 }
 
-function syncPageFromLocation() {
+async function syncPageFromLocation() {
   const route = parseAppRoute(location.href);
-  page.value = route.page;
-  requestedRoomCode.value = route.roomCode;
-  selectedId.value = null;
-  void activatePage(route.page, route.roomCode, true);
+  if (leavesRoom(route.page, route.roomCode)) {
+    const targetHref = location.href;
+    const currentHref = page.value === 'room'
+      ? appRouteUrl(location.href, 'room', room.value?.code ?? savedRoomCode.value)
+      : appRouteUrl(location.href, 'spectate', watchingCode.value);
+    history.replaceState({ page: page.value }, '', currentHref);
+    pendingRoomNavigation.value = { next: route.page, code: route.roomCode, method: 'replace', href: targetHref };
+    if (needsPlayingExitConfirmation()) exitDialog.value?.showModal();
+    else await completeRoomDeparture();
+    return;
+  }
+  await applyNavigation({ next: route.page, code: route.roomCode, method: 'none' });
 }
 
 watch([localGame, undo], () => {
@@ -481,23 +536,17 @@ function watchInvitedRoom() {
   if (requestedRoomCode.value) void watchOnlineRoom(requestedRoomCode.value);
 }
 async function watchOnlineRoom(code?: string) {
-  if (hasSession.value) { onlineError.value = '请先退出当前玩家房间，再进入观战。'; return; }
   const roomCode = (code ?? watchCode.value).trim().toUpperCase();
   if (roomCode) watchCode.value = roomCode;
   await navigatePage('spectate', roomCode || null, 'replace');
 }
 function leaveRoomForLobby() {
-  online.leaveRoom();
-  selectedId.value = null;
   void navigatePage('lobby', null, 'replace');
 }
 function requestInviteExit() {
   const invitation = requestedRoomCode.value;
   if (!invitation) return;
-  pendingInviteAfterLeave.value = invitation;
-  if (room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value))
-    exitDialog.value?.showModal();
-  else confirmLeave();
+  void navigatePage('room', invitation, 'replace');
 }
 function exportGameRecord(current: Game) {
   if (!current.history.length) return;
@@ -512,25 +561,17 @@ function exportGameRecord(current: Game) {
   } catch { notify('浏览器无法导出棋谱。', true); }
 }
 function requestLeave() {
-  pendingInviteAfterLeave.value = null;
-  if (room.value?.phase === 'playing' && ownFaction.value && !game.value.eliminated.includes(ownFaction.value))
-    exitDialog.value?.showModal();
-  else leaveRoomForLobby();
+  void navigatePage('lobby', null, 'replace');
 }
 function confirmLeave() {
   exitDialog.value?.close();
-  const invitation = pendingInviteAfterLeave.value;
-  pendingInviteAfterLeave.value = null;
-  online.leaveRoom(); selectedId.value = null;
-  if (invitation) void navigatePage('room', invitation, 'replace');
-  else void navigatePage('lobby', null, 'replace');
+  void completeRoomDeparture();
 }
 function cancelExitRequest() {
-  pendingInviteAfterLeave.value = null;
+  pendingRoomNavigation.value = null;
   exitDialog.value?.close();
 }
 function exitWatchingToLobby() {
-  online.exitWatching();
   void navigatePage('lobby', null, 'replace');
 }
 async function confirmResign() {
@@ -766,7 +807,7 @@ async function requestRematch() {
     </dialog>
     <dialog ref="resetDialog" class="reset-dialog"><h2>重新开局？</h2><p>当前棋局与行棋记录将清空，三国棋子回到初始位置。</p><div class="dialog-actions"><button class="tool-button" @click="resetDialog?.close()">继续本局</button><button class="primary-button" @click="reset">重新开局</button></div></dialog>
     <dialog ref="resignDialog" class="reset-dialog"><h2>确认认输？</h2><p>本国立即失败并清空棋子；你仍可留在房间查看。</p><div class="dialog-actions"><button class="tool-button" @click="resignDialog?.close()">继续对局</button><button class="primary-button" @click="confirmResign">确认认输</button></div></dialog>
-    <dialog ref="exitDialog" class="reset-dialog"><h2>确认退出房间？</h2><p>你仍在对局中，退出将先按认输出局，{{ pendingInviteAfterLeave ? '然后继续打开好友邀请。' : '再返回大厅。' }}断网时本机立即退出，服务器恢复连接后补发通知。</p><div class="dialog-actions"><button class="tool-button" @click="cancelExitRequest">继续对局</button><button class="primary-button" @click="confirmLeave">确认退出</button></div></dialog>
+    <dialog ref="exitDialog" class="reset-dialog" @cancel.prevent="cancelExitRequest"><h2>确认退出房间？</h2><p>离开对局页面会按当前规则退出并结算席位，随后继续当前操作。若恰好断网，将先记录退出意图，重连后完成退出。</p><div class="dialog-actions"><button class="tool-button" type="button" @click="cancelExitRequest">继续对局</button><button class="primary-button" type="button" :disabled="leavingRoom" @click="confirmLeave">{{ leavingRoom ? '正在退出…' : '确认退出' }}</button></div></dialog>
     <dialog ref="inviteDialog" class="invite-copy-dialog">
       <div class="dialog-heading">
         <h2>{{ inviteCopyResult === 'copied' ? '邀请链接已复制' : inviteCopyResult === 'no-room' ? '暂无有效房间' : '请手动复制邀请链接' }}</h2>

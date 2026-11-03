@@ -20,8 +20,7 @@ function intent(requestId: string, version: number, pieceId: string, x: number, 
   return { requestId, version, pieceId, to: { x, y } };
 }
 
-function startedRoom() {
-  const service = new RoomService();
+function startedRoom(service = new RoomService()) {
   const first = receipt(service.createRoom('001234', '阿魏', 'socket-wei'));
   const second = receipt(service.joinRoom(first.roomCode, '阿蜀', 'socket-shu') as ReturnType<RoomService['createRoom']>);
   const third = receipt(service.joinRoom(first.roomCode, '阿吴', 'socket-wu') as ReturnType<RoomService['createRoom']>);
@@ -224,6 +223,64 @@ test('disconnect keeps the seat and a secret token resumes without duplicating i
   const resumed = service.resumeRoom(code, players[1].reconnectToken, 'socket-shu-new');
   assert.equal(resumed.ack.ok, true); assert.equal(room.players[1].online, true);
   assert.equal(room.players[1].socketId, 'socket-shu-new'); assert.equal(room.players.length, 3);
+  service.disconnect('socket-shu');
+  assert.equal(room.players[1].online, true);
+  assert.equal(room.players[1].socketId, 'socket-shu-new');
+});
+
+test('playing disconnect uses the game grace and expires as one resignation', async () => {
+  const service = new RoomService(() => {}, 20, 30);
+  const { code, room } = startedRoom(service);
+  const shuId = room.players[1].id;
+  service.disconnect('socket-shu');
+  assert.equal(room.players[1].online, false);
+  assert.ok(room.players[1].offlineUntil);
+  await new Promise(resolve => setTimeout(resolve, 45));
+  assert.equal(service.getRoom(code), room);
+  assert.equal(room.players.some(player => player.id === shuId), false);
+  assert.equal(room.game?.results.shu, 'lost');
+  assert.equal(room.phase, 'playing');
+});
+
+test('resume cancels the playing grace timer and preserves the seat', async () => {
+  const service = new RoomService(() => {}, 20, 35);
+  const { code, players, room } = startedRoom(service);
+  service.disconnect('socket-shu');
+  const resumed = service.resumeRoom(code, players[1].reconnectToken, 'socket-shu-returned');
+  assert.equal(resumed.ack.ok, true);
+  await new Promise(resolve => setTimeout(resolve, 55));
+  assert.equal(service.getRoom(code), room);
+  assert.equal(room.players.length, 3);
+  assert.equal(room.players[1].online, true);
+  assert.equal(room.game?.results.shu, 'playing');
+});
+
+test('all offline players abandon an active room without producing a winner', async () => {
+  const service = new RoomService(() => {}, 15, 25);
+  const { code, room } = startedRoom(service);
+  service.disconnect('socket-wei');
+  service.disconnect('socket-shu');
+  service.disconnect('socket-wu');
+  await new Promise(resolve => setTimeout(resolve, 55));
+  assert.equal(service.getRoom(code), undefined);
+  assert.equal(room.game?.winner, null);
+  assert.deepEqual(room.game?.results, { wei: 'playing', shu: 'playing', wu: 'playing' });
+});
+
+test('finished players expire without changing the recorded result', async () => {
+  const service = new RoomService(() => {}, 15, 25);
+  const { code, players, room } = startedRoom(service);
+  assert.equal((await service.resignRoom(code, players[0].reconnectToken, 'socket-wei')).ack.ok, true);
+  assert.equal((await service.resignRoom(code, players[1].reconnectToken, 'socket-shu')).ack.ok, true);
+  assert.equal(room.phase, 'finished');
+  const result = structuredClone(room.game?.results);
+  service.disconnect('socket-wei');
+  service.disconnect('socket-shu');
+  service.disconnect('socket-wu');
+  await new Promise(resolve => setTimeout(resolve, 55));
+  assert.equal(service.getRoom(code), undefined);
+  assert.deepEqual(room.game?.results, result);
+  assert.equal(room.game?.winner, 'wu');
 });
 
 test('waiting player leaves, frees faction and seat, and last exit deletes room', async () => {
@@ -291,6 +348,9 @@ test('resignation and active exit mark losses once, while finished game rejects 
   assert.equal(room.game?.results.shu, 'lost');
   assert.equal(room.game?.results.wu, 'won');
   assert.equal(room.game?.winner, 'wu');
+  assert.equal(room.players.length, 2);
+  failure(await service.leaveRoom(code, players[1].reconnectToken, 'socket-shu'), 'SESSION_NOT_FOUND');
+  assert.equal(room.game?.results.wu, 'won');
   assert.equal(room.players.length, 2);
   assert.equal((await service.submitMove(code, players[2].reconnectToken,
     intent('afterend01', room.version, 'wu-pawn-0-3', 0, 4), 'socket-wu')).ack.ok, false);

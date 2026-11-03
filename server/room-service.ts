@@ -57,10 +57,12 @@ export class RoomService {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly onRoomChanged: (room: Room) => void;
   private readonly lobbyGraceMs: number;
+  private readonly gameGraceMs: number;
 
-  constructor(onRoomChanged: (room: Room) => void = () => {}, lobbyGraceMs = 60_000) {
+  constructor(onRoomChanged: (room: Room) => void = () => {}, lobbyGraceMs = 60_000, gameGraceMs = 180_000) {
     this.onRoomChanged = onRoomChanged;
     this.lobbyGraceMs = lobbyGraceMs;
+    this.gameGraceMs = gameGraceMs;
     this.rooms.set(PUBLIC_ROOM_CODE, {
       code: PUBLIC_ROOM_CODE, phase: 'lobby', version: 1, round: 1, players: [], spectators: new Set(),
       game: null, drawOffer: null, listed: true, requests: new Map(),
@@ -161,6 +163,11 @@ export class RoomService {
     if (!room || this.tokenRoom.get(token) !== code) return { ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '重连凭证已失效，房间可能因服务器重启而丢失。' } };
     const player = room.players.find(item => item.token === token);
     if (!player) return { ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '无法恢复这个席位。' } };
+    if (!player.online && player.offlineUntil !== null && Date.now() >= player.offlineUntil) {
+      this.cancelExpiry(player.id);
+      this.removeDepartingPlayer(room, player);
+      return { room, ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '席位保留时间已结束。' } };
+    }
     const replacedSocketId = player.socketId && player.socketId !== socketId ? player.socketId : undefined;
     const changed = !player.online || player.socketId !== socketId;
     if (replacedSocketId) this.socketRoom.delete(replacedSocketId);
@@ -303,17 +310,7 @@ export class RoomService {
       const { room, player } = found;
       if (player.socketId && player.socketId !== socketId)
         return { ack: { ok: false, code: 'NOT_ACTIVE_CONNECTION', error: '席位已在另一连接上使用，请重新同步。' } };
-      if (room.phase === 'playing' && room.game && player.faction && !room.game.eliminated.includes(player.faction)) {
-        const result = resignFaction(room.game, player.faction);
-        if (result.ok) {
-          room.game = result.game;
-          room.drawOffer = null;
-          room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
-        }
-      }
-      const departedSocketId = player.socketId ?? undefined;
-      this.removePlayer(room, player);
-      if (room.players.length && room.phase === 'finished') this.nextLobby(room);
+      const departedSocketId = this.removeDepartingPlayer(room, player);
       return { room, departedSocketId, ack: { ok: true, data: undefined } };
     });
   }
@@ -338,9 +335,9 @@ export class RoomService {
     if (!found || found.player.socketId !== socketId) return undefined;
     const { room, player } = found;
     player.online = false; player.socketId = null; player.ready = false;
-    player.offlineUntil = room.phase === 'lobby' ? Date.now() + this.lobbyGraceMs : null;
+    player.offlineUntil = Date.now() + (room.phase === 'lobby' ? this.lobbyGraceMs : this.gameGraceMs);
     room.version++;
-    if (room.phase === 'lobby') this.scheduleExpiry(room, player);
+    this.scheduleExpiry(room, player);
     return room;
   }
 
@@ -456,12 +453,21 @@ export class RoomService {
 
   private scheduleExpiry(room: Room, player: Player): void {
     this.cancelExpiry(player.id);
+    const delay = room.phase === 'lobby' ? this.lobbyGraceMs : this.gameGraceMs;
     const timer = setTimeout(() => {
       this.expiryTimers.delete(player.id);
-      if (this.rooms.get(room.code) !== room || room.phase !== 'lobby' || player.online || !room.players.includes(player)) return;
-      this.removePlayer(room, player);
+      if (this.rooms.get(room.code) !== room || player.online || !room.players.includes(player)) return;
+      const now = Date.now();
+      if (room.players.every(item => !item.online)) {
+        if (room.players.every(item => item.offlineUntil !== null && item.offlineUntil <= now)) {
+          this.abandonRoom(room);
+          this.onRoomChanged(room);
+        }
+        return;
+      }
+      this.removeDepartingPlayer(room, player);
       this.onRoomChanged(room);
-    }, this.lobbyGraceMs);
+    }, delay);
     timer.unref?.();
     this.expiryTimers.set(player.id, timer);
   }
@@ -477,6 +483,33 @@ export class RoomService {
       if (room.code === PUBLIC_ROOM_CODE) this.resetPublicRoom(room);
       else this.rooms.delete(room.code);
     }
+  }
+
+  private removeDepartingPlayer(room: Room, player: Player): string | undefined {
+    if (room.phase === 'playing' && room.game && player.faction && !room.game.eliminated.includes(player.faction)) {
+      const result = resignFaction(room.game, player.faction);
+      if (result.ok) {
+        room.game = result.game;
+        room.drawOffer = null;
+        room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
+      }
+    }
+    const departedSocketId = player.socketId ?? undefined;
+    this.removePlayer(room, player);
+    if (room.players.length && room.phase === 'finished') this.nextLobby(room);
+    return departedSocketId;
+  }
+
+  private abandonRoom(room: Room): void {
+    for (const player of room.players) {
+      this.cancelExpiry(player.id);
+      this.tokenRoom.delete(player.token);
+      if (player.socketId) this.socketRoom.delete(player.socketId);
+    }
+    room.players = [];
+    room.version++;
+    if (room.code === PUBLIC_ROOM_CODE) this.resetPublicRoom(room);
+    else this.rooms.delete(room.code);
   }
 
   private resetPublicRoom(room: Room): void {

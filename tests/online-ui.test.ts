@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 import { io, type Socket } from 'socket.io-client';
 import { createOnlineServer } from '../server/create-server.ts';
+import { PENDING_LEAVES_KEY } from '../src/online.ts';
 import type { ClientAck, SessionReceipt } from '../src/online.ts';
 
 const server = createOnlineServer();
@@ -18,8 +19,9 @@ after(async () => {
   await new Promise<void>(resolve => server.io.close(() => resolve()));
 });
 
-const waitUntil = async (condition: () => boolean, message: string) => {
-  for (let attempt = 0; attempt < 50; attempt++) {
+const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 2500) => {
+  const attempts = Math.ceil(timeoutMs / 50);
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (condition()) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
@@ -112,7 +114,7 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
   }
 });
 
-test('a public lobby room updates live and accepts the final player without replacing their session on page switches', async () => {
+test('navigation away from an active room confirms exit and releases the server seat', async () => {
   localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/?mode=lobby`);
   const players: Socket[] = [];
   let wrapper: ReturnType<typeof mount> | null = null;
@@ -165,29 +167,84 @@ test('a public lobby room updates live and accepts the final player without repl
 
     const room = server.rooms.getRoom(a.roomCode)!;
     const appPlayer = room.players.find(player => player.nickname === '大厅吴')!;
-    const socketId = appPlayer.socketId;
-    const roomVersion = room.version;
-    await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
-    assert.ok(wrapper.find('.home-page').exists());
+    let latestRoomPlayers = room.players.length;
+    players[0].on('room:state', state => { latestRoomPlayers = state.players.length; });
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '设置')!.trigger('click');
+    await wrapper.get('.settings-dialog .dialog-close').trigger('click');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '玩法说明')!.trigger('click');
+    await wrapper.get('.rules-dialog .dialog-close').trigger('click');
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
-    await wrapper.findAll('button').find(button => button.text() === '返回对局')!.trigger('click');
-    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Return-to-room did not reopen the board');
-    assert.equal(appPlayer.socketId, socketId);
-    assert.equal(room.version, roomVersion);
-    await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
-    history.back();
-    window.dispatchEvent(new PopStateEvent('popstate'));
-    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Browser back did not restore the room page');
-    assert.equal(appPlayer.socketId, socketId);
-    assert.equal(server.rooms.getRoom(a.roomCode)?.game?.results.wei, 'playing');
-    history.forward();
-    window.dispatchEvent(new PopStateEvent('popstate'));
-    await waitUntil(() => wrapper!.find('.home-page').exists(), 'Browser forward did not restore the home page');
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('blur'));
+    await new Promise(resolve => setTimeout(resolve, 80));
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
+    assert.ok(localStorage.getItem('three-kingdoms-chess:online-session-v1'));
+    await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
+    assert.equal((wrapper.get('.reset-dialog[open]').element as HTMLDialogElement).open, true);
+    assert.match(wrapper.get('.reset-dialog[open]').text(), /确认退出房间/);
+    await wrapper.findAll('.reset-dialog[open] button').find(button => button.text() === '确认退出')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.home-page').exists(), 'Confirmed exit did not open the home page');
+    await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.length === 2, 'Active exit did not release the room seat');
+    await waitUntil(() => latestRoomPlayers === 2, 'Other player did not receive the released-seat update');
+    assert.equal(server.rooms.getRoom(a.roomCode)?.players.some(player => player.id === appPlayer.id), false);
+    assert.equal(server.rooms.getRoom(a.roomCode)?.game?.results.wu, 'lost');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    await wrapper!.findAll('.header-actions button').find(button => button.text() === '对战大厅')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.lobby-page').exists(), 'Lobby did not open after leaving the room');
+    assert.equal(wrapper!.find('.lobby-current-room').exists(), false);
+    await wrapper!.findAll('.header-actions button').find(button => button.text() === '好友组局')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('button').some(button =>
+      button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Could not join a new room after active exit');
+    await wrapper!.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('退房后新房');
+    await wrapper!.get('input[aria-label="创建房间号"]').setValue('401008');
+    await wrapper!.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'New room did not open after active exit');
+    assert.equal(server.rooms.getRoom('401008')?.players.length, 1);
   } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
 });
 
-test('leaving the room page keeps a real seat, while explicit exit clears an empty public table', async () => {
+test('browser back from an active game confirms exit and does not restore the old seat', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    for (let index = 0; index < 3; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '401005', nickname: '返回键魏' }));
+    const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '返回键蜀' }));
+    const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '返回键吴' }));
+    const receipts = [a, b, c];
+    for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
+      success(await send(players[index], 'room:choose-faction', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1,
+      }));
+    for (let index = 0; index < 3; index++)
+      success(await send(players[index], 'room:ready', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1,
+      }));
+    localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+      roomCode: a.roomCode, reconnectToken: a.reconnectToken, playerId: a.playerId, nickname: '返回键魏',
+    }));
+    history.replaceState({ page: 'home' }, '', `${origin}/three-chess/`);
+    history.pushState({ page: 'room' }, '', `${origin}/three-chess/?mode=online&room=${a.roomCode}`);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Active room did not restore before browser back');
+
+    history.back();
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitUntil(() => wrapper!.find('.reset-dialog[open]').exists(), 'Browser back did not request exit confirmation');
+    await wrapper.findAll('.reset-dialog[open] button').find(button => button.text() === '确认退出')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.home-page').exists(), 'Browser back did not complete room exit');
+    await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.length === 2, 'Browser back did not release the player seat');
+    assert.equal(server.rooms.getRoom(a.roomCode)?.game?.results.wei, 'lost');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
+});
+
+test('leaving a waiting room releases the seat and allows creating another room', async () => {
   localStorage.clear(); sessionStorage.clear();
   history.replaceState(null, '', `${origin}/three-chess/?mode=online`);
   const wrapper = mount(App, { attachTo: document.body });
@@ -203,26 +260,130 @@ test('leaving the room page keeps a real seat, while explicit exit clears an emp
     assert.equal(server.rooms.getRoom(code)?.players.length, 1);
 
     await wrapper.findAll('.header-actions button').find(button => button.text() === '首页')!.trigger('click');
-    assert.ok(wrapper.find('.home-page').exists());
-    assert.equal(server.rooms.getRoom(code)?.players.length, 1);
-
-    await wrapper.findAll('.header-actions button').find(button => button.text() === '对战大厅')!.trigger('click');
-    await waitUntil(() => wrapper.findAll('.chess-club-table').some(card => card.text().includes(code)),
-      'Room page switch removed the creator from the public table');
-    const occupiedTable = () => wrapper.findAll('.chess-club-table').find(card => card.text().includes(code))!;
-    assert.match(occupiedTable().text(), /临时房主/);
-    assert.match(occupiedTable().text(), /1\/3 席/);
-
-    await wrapper.get('.lobby-current-room .primary-button').trigger('click');
-    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'Return-to-room did not reopen the waiting area');
-    await wrapper.get('.room-lobby .leave-button').trigger('click');
-    await waitUntil(() => wrapper.find('.lobby-page').exists(), 'Explicit exit did not return to the lobby');
-    await waitUntil(() => server.rooms.getRoom(code) === undefined, 'Last player exit did not remove the empty room');
-    await waitUntil(() => !wrapper.findAll('.chess-club-table').some(card => card.text().includes(code)),
-      'Empty custom table remained visible in the lobby');
+    await waitUntil(() => wrapper.find('.home-page').exists(), 'Waiting-room navigation did not open the home page');
+    await waitUntil(() => server.rooms.getRoom(code) === undefined, 'Waiting-room exit did not remove the last seat');
     assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
-    assert.doesNotMatch(wrapper.text(), /原房间已失效|正在完成退出|已返回大厅/);
+
+    await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
+    await waitUntil(() => wrapper.findAll('button').some(button => button.text() === '创建房间' && button.attributes('disabled') === undefined),
+      'Could not create another room after leaving');
+    await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('新房主');
+    await wrapper.get('input[aria-label="创建房间号"]').setValue('401002');
+    await wrapper.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
+    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'New room did not open after leaving');
+    assert.ok(server.rooms.getRoom('401002')?.players.length === 1);
   } finally { wrapper.unmount(); }
+});
+
+test('leaving while disconnected queues the exit and flushes it before a new room', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  history.replaceState(null, '', `${origin}/three-chess/?mode=online`);
+  const wrapper = mount(App, { attachTo: document.body });
+  try {
+    await waitUntil(() => wrapper.findAll('button').some(button =>
+      button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
+    await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('断网离房');
+    await wrapper.get('input[aria-label="创建房间号"]').setValue('401006');
+    await wrapper.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
+    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'Offline-exit room did not open');
+    const player = server.rooms.getRoom('401006')!.players[0];
+    server.io.sockets.sockets.get(player.socketId!)?.disconnect(true);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '首页')!.trigger('click');
+    await waitUntil(() => wrapper.find('.home-page').exists(), 'Offline exit did not allow page navigation');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    assert.ok(JSON.parse(localStorage.getItem(PENDING_LEAVES_KEY) || '[]').length > 0);
+    await waitUntil(() => server.rooms.getRoom('401006') === undefined, 'Queued exit was not flushed after reconnect', 6_000);
+    assert.equal(localStorage.getItem(PENDING_LEAVES_KEY), null);
+
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '好友组局')!.trigger('click');
+    await waitUntil(() => wrapper.findAll('button').some(button =>
+      button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Could not create after queued exit');
+    await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('新房间玩家');
+    await wrapper.get('input[aria-label="创建房间号"]').setValue('401007');
+    await wrapper.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
+    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'New room did not open after queued exit');
+    assert.equal(server.rooms.getRoom('401007')?.players.length, 1);
+  } finally { wrapper.unmount(); }
+});
+
+test('browser back from a waiting room releases the seat and forward cannot revive it', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  history.replaceState(null, '', `${origin}/three-chess/`);
+  const wrapper = mount(App, { attachTo: document.body });
+  try {
+    await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
+    await waitUntil(() => wrapper.findAll('button').some(button =>
+      button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
+    await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('返回测试房主');
+    await wrapper.get('input[aria-label="创建房间号"]').setValue('401003');
+    await wrapper.findAll('button').find(button => button.text() === '创建房间')!.trigger('click');
+    await waitUntil(() => wrapper.find('.room-lobby').exists(), 'Room did not open before browser back');
+    assert.equal(server.rooms.getRoom('401003')?.players.length, 1);
+
+    history.back();
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitUntil(() => wrapper.find('.home-page').exists(), 'Browser back did not leave the waiting room');
+    await waitUntil(() => server.rooms.getRoom('401003') === undefined, 'Browser back did not release the waiting seat');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+
+    history.forward();
+    await new Promise(resolve => setTimeout(resolve, 80));
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    assert.equal(wrapper.find('.room-lobby').exists(), false);
+    history.pushState({ page: 'room' }, '', `${origin}/three-chess/?mode=online&room=401003`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitUntil(() => wrapper.find('.invite-page').exists(), 'Reopening the old room URL did not query the room again');
+    await waitUntil(() => wrapper.get('.invite-entry').text().includes('邀请已失效'), 'Old room URL was revived instead of rechecked');
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+    assert.equal(server.rooms.getRoom('401003'), undefined);
+  } finally { wrapper.unmount(); }
+});
+
+test('leaving a finished room to local play releases identity and keeps the result for others', async () => {
+  localStorage.clear(); sessionStorage.clear();
+  history.replaceState(null, '', `${origin}/three-chess/`);
+  const players: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    for (let index = 0; index < 3; index++) {
+      const socket = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      players.push(socket);
+      await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    }
+    const a = success(await send<SessionReceipt>(players[0], 'room:create', { roomCode: '401004', nickname: '结束后离房' }));
+    const b = success(await send<SessionReceipt>(players[1], 'room:join', { roomCode: a.roomCode, nickname: '结束蜀' }));
+    const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '结束吴' }));
+    const receipts = [a, b, c];
+    for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
+      success(await send(players[index], 'room:choose-faction', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1,
+      }));
+    for (let index = 0; index < 3; index++)
+      success(await send(players[index], 'room:ready', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1,
+      }));
+    localStorage.setItem('three-kingdoms-chess:online-session-v1', JSON.stringify({
+      roomCode: a.roomCode, reconnectToken: a.reconnectToken, playerId: a.playerId, nickname: '结束后离房',
+    }));
+    history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${a.roomCode}`);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Finished-room player did not resume');
+    success(await send(players[1], 'game:resign', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
+    success(await send(players[2], 'game:resign', { roomCode: a.roomCode, reconnectToken: c.reconnectToken }));
+    await waitUntil(() => wrapper!.find('.result-banner').exists(), 'Finished result did not render');
+
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '首页')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.home-page').exists(), 'Finished-room navigation did not open home');
+    await wrapper.findAll('.home-action-card').find(button => button.text() === '本地试玩')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.local-workbench').exists(), 'Home did not open local play');
+    await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.length === 2, 'Finished player identity was not released');
+    assert.equal(server.rooms.getRoom(a.roomCode)?.game?.winner, 'wei');
+    assert.equal(server.rooms.getRoom(a.roomCode)?.players.some(player => player.id === a.playerId), false);
+    assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
+  } finally { wrapper?.unmount(); players.forEach(socket => socket.disconnect()); }
 });
 
 test('expired reconnect credentials are cleared without an obsolete-room error', async () => {
@@ -417,8 +578,10 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
     await wrapper.findAll('button').find(button => button.text() === '退出观战')!.trigger('click');
     assert.equal(wrapper.find('.board-panel').exists(), false);
+    await waitUntil(() => wrapper!.find('.lobby-page').exists(), 'Exiting spectating did not finish navigation');
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
     await wrapper.findAll('button').find(button => button.text() === '观战')!.trigger('click');
+    await waitUntil(() => wrapper!.find('input[aria-label="观战房间号"]').exists(), 'Watch entry did not reopen');
     await wrapper.get('input[aria-label="观战房间号"]').setValue('FFFFFF');
     await wrapper.findAll('button').find(button => button.text() === '进入观战')!.trigger('click');
     await waitUntil(() => wrapper!.find('.connection-note.error').exists(), 'Missing room did not show an error');
@@ -471,11 +634,11 @@ test('Wei, Shu and Wu restore their own fixed view and a turn change never rotat
         assert.equal(wrapper.get('.board-svg').attributes('aria-label')?.includes('已翻转'), true);
         assert.equal(wrapper.get('.last-trail line').attributes('x1'), '490');
         await wrapper.findAll('button').find(button => button.text() === '首页')!.trigger('click');
-        assert.ok(wrapper.find('.home-page').exists());
-        assert.equal(server.rooms.getRoom(a.roomCode)!.game?.results.shu, 'playing');
-        await wrapper.findAll('button').find(button => button.text() === '返回对局')!.trigger('click');
-        await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Player did not return to the active room');
-        assert.equal(wrapper.find('.board-panel').exists(), true);
+        await wrapper.findAll('.reset-dialog[open] button').find(button => button.text() === '确认退出')!.trigger('click');
+        await waitUntil(() => wrapper!.find('.home-page').exists(), 'Player navigation did not open the home page');
+        assert.equal(server.rooms.getRoom(a.roomCode)!.game?.results.shu, 'lost');
+        assert.equal(server.rooms.getRoom(a.roomCode)!.players.some(player => player.id === b.playerId), false);
+        assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
       }
       wrapper.unmount(); wrapper = null;
     }
