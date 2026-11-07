@@ -41,6 +41,9 @@ test('game record labels unanimous draw results', () => {
   const record = buildGameRecord(result.game);
   assert.match(record, /对局状态：和棋/);
   assert.match(record, /曹操和棋；刘备和棋；孙权和棋/);
+  assert.match(record, /结束前待行棋方：曹操/);
+  assert.match(record, /"turnBeforeEnd": "wei"/);
+  assert.match(record, /"type": "draw"[\s\S]*"turnBeforeEnd": "wei"/);
 });
 
 test('game record rejects an invalid snapshot instead of exporting misleading data', () => {

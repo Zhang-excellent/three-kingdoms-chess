@@ -1,5 +1,5 @@
-import { ORDER, PLAYERS, at, inside, moveError, pieceName } from './game.ts';
-import type { Faction, Game, Kind, MoveRecord, Piece, Point } from './game.ts';
+import { ORDER, PLAYERS, TURN_CYCLE, at, inside, moveError, pieceName } from './game.ts';
+import type { Faction, Game, GameEvent, Kind, MoveRecord, Piece, Point, TurnSlot } from './game.ts';
 
 export const REPLAY_FORMAT = 'three-kingdoms-chess-record';
 export const REPLAY_FORMAT_VERSION = 1;
@@ -17,14 +17,7 @@ const TOKEN_KINDS: Record<string, Kind> = {
   炮: 'cannon', 兵: 'pawn', 卒: 'pawn', 锋: 'feng',
 };
 
-export interface ReplayEvent {
-  type: 'elimination' | 'resign' | 'draw' | 'result';
-  step: number;
-  faction?: Faction;
-  factions?: Faction[];
-  winner?: Faction | null;
-  results?: Record<Faction, 'playing' | 'lost' | 'won' | 'draw'>;
-}
+export type ReplayEvent = GameEvent;
 
 export interface ReplayWarning {
   message: string;
@@ -53,6 +46,7 @@ export type ReplayParseResult =
 interface RawMove {
   number: number;
   faction: Faction;
+  turnSlot?: TurnSlot;
   kind: Kind;
   pieceId?: string;
   from: Point;
@@ -189,10 +183,15 @@ function parseStructuredMoves(value: unknown, total: number): RawMove[] {
     if (move.number !== index + 1 || !ORDER.includes(move.faction as Faction) || !KINDS.includes(move.kind as Kind)
       || !move.from || !move.to || !inside(move.from) || !inside(move.to) || typeof move.pieceId !== 'string')
       throw new Error(`结构化第 ${index + 1} 步的步号、阵营、棋子或坐标无效。`);
+    if (move.turnSlot !== undefined && (!Number.isInteger(move.turnSlot) || move.turnSlot < 0 || move.turnSlot >= TURN_CYCLE.length
+      || TURN_CYCLE[move.turnSlot] !== move.faction))
+      throw new Error(`结构化第 ${index + 1} 步的轮次位置与行动方不一致。`);
     const captured = move.captured == null ? null : parseStructuredPiece(move.captured, index);
     return {
       number: index + 1,
       faction: move.faction as Faction,
+      turnSlot: Number.isInteger(move.turnSlot) && Number(move.turnSlot) >= 0 && Number(move.turnSlot) < TURN_CYCLE.length
+        ? move.turnSlot as TurnSlot : undefined,
       kind: move.kind as Kind,
       pieceId: move.pieceId,
       from: { ...move.from },
@@ -205,10 +204,10 @@ function parseStructuredMoves(value: unknown, total: number): RawMove[] {
 }
 
 function nextTurn(faction: Faction, eliminated: readonly Faction[]): { faction: Faction; turnSlot: 0 | 1 | 2 } | null {
-  const current = ORDER.indexOf(faction);
-  for (let offset = 1; offset <= ORDER.length; offset++) {
-    const index = (current + offset) % ORDER.length;
-    if (!eliminated.includes(ORDER[index])) return { faction: ORDER[index], turnSlot: index as 0 | 1 | 2 };
+  const current = TURN_CYCLE.indexOf(faction);
+  for (let offset = 1; offset <= TURN_CYCLE.length; offset++) {
+    const index = (current + offset) % TURN_CYCLE.length;
+    if (!eliminated.includes(TURN_CYCLE[index])) return { faction: TURN_CYCLE[index], turnSlot: index as 0 | 1 | 2 };
   }
   return null;
 }
@@ -233,6 +232,14 @@ function applyEliminations(game: Game, factions: readonly Faction[]): Faction[] 
   return applied;
 }
 
+function settleInitialTurnAfterEvents(game: Game): void {
+  if (game.status !== 'playing' || !game.turn || game.turnSlot === null) return;
+  if (!game.eliminated.includes(game.turn)) return;
+  const next = nextTurn(game.turn, game.eliminated);
+  if (!next) throw new Error('出局事件后没有可继续行棋的存活阵营。');
+  game.turn = next.faction; game.turnSlot = next.turnSlot;
+}
+
 function replayFrom(
   source: ReplayDocument['source'],
   formatVersion: number | null,
@@ -244,22 +251,43 @@ function replayFrom(
   declaredWinner: Faction | null,
   declaredFinalPieces: Piece[] | null,
   events: ReplayEvent[],
-  structuredFinalState?: { status?: unknown; winner?: unknown; results?: unknown; eliminated?: unknown },
+  structuredFinalState?: { status?: unknown; winner?: unknown; results?: unknown; eliminated?: unknown; turnBeforeEnd?: unknown },
 ): ReplayDocument {
   validateInitial(initialPieces, declaredCounts, rulesVersion);
-  const first = rawMoves[0]?.faction ?? 'wei';
   let game: Game = {
-    schema: 3, rulesVersion, pieces: clone(initialPieces), turn: first, turnSlot: ORDER.indexOf(first) as 0 | 1 | 2,
+    schema: 3, rulesVersion, pieces: clone(initialPieces), turn: 'wei', turnSlot: 0,
+    turnBeforeEnd: null, events: [],
     eliminated: [], results: { wei: 'playing', shu: 'playing', wu: 'playing' },
     history: [], lastMove: null, winner: null, status: 'playing',
   };
   const frames = [clone(game)];
+  const roundWarnings: string[] = [];
+  let roundKnown = true;
   const eliminationEvents = events.filter(event => event.type === 'elimination' || event.type === 'resign');
   for (const event of eliminationEvents.filter(item => item.step === 0)) {
     applyEliminations(game, event.faction ? [event.faction] : event.factions ?? []);
   }
+  settleInitialTurnAfterEvents(game);
   frames[0] = clone(game);
   for (const raw of rawMoves) {
+    if (game.status !== 'playing') throw new Error(`第 ${raw.number} 步之前对局已经结束。`);
+    let movedSlot: TurnSlot;
+    if (roundKnown) {
+      if (!game.turn || game.turnSlot === null) throw new Error(`第 ${raw.number} 步的待行棋方无法还原。`);
+      if (game.turn !== raw.faction) {
+        if (source === 'structured')
+          throw new Error(`第 ${raw.number} 步记录为${PLAYERS[raw.faction].name}行棋，但按出局和轮次应为${PLAYERS[game.turn].name}行棋。`);
+        roundKnown = false;
+        roundWarnings.push(`第 ${raw.number} 步记录为${PLAYERS[raw.faction].name}行棋，但旧棋谱未记录此前可能发生的认输或其他非走棋事件，无法继续可靠还原轮次。`);
+        movedSlot = ORDER.indexOf(raw.faction) as TurnSlot;
+      } else {
+        if (raw.turnSlot !== undefined && raw.turnSlot !== game.turnSlot)
+          throw new Error(`第 ${raw.number} 步的轮次位置与行动方不一致。`);
+        movedSlot = game.turnSlot;
+      }
+    } else {
+      movedSlot = ORDER.indexOf(raw.faction) as TurnSlot;
+    }
     const piece = at(game.pieces, raw.from);
     if (!piece) throw new Error(`第 ${raw.number} 步起点没有棋子。`);
     if (piece.faction !== raw.faction) throw new Error(`第 ${raw.number} 步记录为${PLAYERS[raw.faction].name}行棋，但起点棋子属于${PLAYERS[piece.faction].name}。`);
@@ -283,32 +311,45 @@ function replayFrom(
     }
     const applied = applyEliminations(game, eliminated);
     const record: MoveRecord = {
-      number: raw.number, faction: raw.faction, turnSlot: ORDER.indexOf(raw.faction) as 0 | 1 | 2,
+      number: raw.number, faction: raw.faction, turnSlot: movedSlot,
       pieceId: piece.id, kind: piece.kind, from: { ...raw.from }, to: { ...raw.to },
       captured: captured ? { ...captured } : null, eliminated: applied,
     };
     game.history.push(record); game.lastMove = record;
     if (game.status === 'playing') {
-      const next = nextTurn(raw.faction, game.eliminated);
-      game.turn = next?.faction ?? null; game.turnSlot = next?.turnSlot ?? null;
+      if (roundKnown) {
+        const next = nextTurn(TURN_CYCLE[movedSlot], game.eliminated);
+        if (!next) throw new Error(`第 ${raw.number} 步后没有可继续行棋的存活阵营。`);
+        game.turn = next.faction; game.turnSlot = next.turnSlot;
+      } else {
+        game.turn = null; game.turnSlot = null;
+      }
     }
     frames.push(clone(game));
   }
 
   const finalEvent = events.find(event => event.type === 'result');
   const drawEvent = events.find(event => event.type === 'draw');
+  const explicitTurnBeforeEnd = ORDER.includes(structuredFinalState?.turnBeforeEnd as Faction)
+    ? structuredFinalState!.turnBeforeEnd as Faction
+    : structuredFinalState?.turnBeforeEnd === null ? null : undefined;
+  const endingTurn = explicitTurnBeforeEnd !== undefined ? explicitTurnBeforeEnd
+    : game.status === 'playing' && game.turn ? game.turn : null;
   if (finalEvent) {
     game.results = finalEvent.results ? { ...finalEvent.results } : game.results;
     game.winner = finalEvent.winner ?? null;
+    game.turnBeforeEnd = game.winner === null ? endingTurn : null;
     game.status = 'finished'; game.turn = null; game.turnSlot = null;
     frames[frames.length - 1] = clone(game);
   } else if (drawEvent) {
     for (const faction of ORDER.filter(item => !game.eliminated.includes(item))) game.results[faction] = 'draw';
+    game.turnBeforeEnd = drawEvent.turnBeforeEnd ?? endingTurn;
     game.winner = null; game.status = 'finished'; game.turn = null; game.turnSlot = null;
     frames[frames.length - 1] = clone(game);
   } else if (source === 'structured' && structuredFinalState?.status === 'finished') {
     if (structuredFinalState.results && typeof structuredFinalState.results === 'object') game.results = { ...(structuredFinalState.results as Game['results']) };
     game.winner = ORDER.includes(structuredFinalState.winner as Faction) ? structuredFinalState.winner as Faction : null;
+    game.turnBeforeEnd = game.winner === null ? endingTurn : null;
     game.status = 'finished'; game.turn = null; game.turnSlot = null;
     frames[frames.length - 1] = clone(game);
   }
@@ -327,7 +368,13 @@ function replayFrom(
         `第 ${rawMoves.length} 步后：${countText(reconstructedCounts)}，${ORDER.filter(faction => game.pieces.some(piece => piece.faction === faction && piece.kind === 'king')).map(faction => PLAYERS[faction].name).join('、')}仍在棋盘上`,
         declaredFinalCounts ? `文件导出时子力：${countText(declaredFinalCounts)}` : '文件未提供可核对的最终子力。',
         '未按声明结果猜测或清空任何棋子。',
+        ...roundWarnings,
       ],
+    });
+  } else if (roundWarnings.length) {
+    warnings.push({
+      message: '旧棋谱缺少部分非走棋事件，轮次只能还原到记录明确的位置。',
+      details: [...roundWarnings, '未根据最后行动方猜测结束或后续待行棋方。'],
     });
   }
   return {
@@ -378,13 +425,19 @@ function parseStructured(markdown: string, source: unknown): ReplayParseResult {
       if (!value || typeof value !== 'object') throw new Error(`结构化事件第 ${index + 1} 项格式无效。`);
       const event = value as Record<string, unknown>;
       if (!['elimination', 'resign', 'draw', 'result'].includes(String(event.type))) throw new Error(`结构化事件第 ${index + 1} 项类型无效。`);
+      const step = Number(event.step);
+      if (!Number.isInteger(step) || step < 0 || step > total) throw new Error(`结构化事件第 ${index + 1} 项的步号无效。`);
+      if (event.turnBeforeEnd !== undefined && event.turnBeforeEnd !== null && !ORDER.includes(event.turnBeforeEnd as Faction))
+        throw new Error(`结构化事件第 ${index + 1} 项的结束前待行棋方无效。`);
       return {
         type: event.type as ReplayEvent['type'],
-        step: Number(event.step),
+        step,
         faction: ORDER.includes(event.faction as Faction) ? event.faction as Faction : undefined,
         factions: Array.isArray(event.factions) ? event.factions.filter((faction): faction is Faction => ORDER.includes(faction as Faction)) : undefined,
         winner: ORDER.includes(event.winner as Faction) ? event.winner as Faction : null,
         results: event.results && typeof event.results === 'object' ? event.results as ReplayEvent['results'] : undefined,
+        turnBeforeEnd: event.turnBeforeEnd === null ? null : ORDER.includes(event.turnBeforeEnd as Faction)
+          ? event.turnBeforeEnd as Faction : undefined,
       };
     });
     const declaredResult = markdown.match(/本局结果：(.+)/)?.[1]?.trim()

@@ -119,7 +119,7 @@ function playerStatuses(faction: Faction): Array<{ label: string; tone: PlayerSt
   else if (game.value.status === 'finished') {
     const result = game.value.results[faction];
     if (result !== 'playing') statuses.push({ label: result === 'won' ? '胜利' : result === 'draw' ? '和棋' : '失败', tone: 'result' });
-  } else if (isReplaying.value && replayCurrentStep.value?.faction === faction) statuses.push({ label: '本步', tone: 'active' });
+  }
   else if (!isReplaying.value && game.value.turn === faction) statuses.push({ label: '行棋中', tone: 'active' });
   return statuses;
 }
@@ -135,9 +135,11 @@ const drawEligibleNames = computed(() => drawOffer.value?.eligible.map(faction =
 const selected = computed(() => game.value.pieces.find(p => p.id === selectedId.value) ?? null);
 const moves = computed(() => selected.value ? legalMoves(game.value.pieces, selected.value) : []);
 const active = computed(() => game.value.turn ? PLAYERS[game.value.turn] : null);
-const highlightedFaction = computed<Faction | null>(() => isReplaying.value
-  ? replayCurrentStep.value?.faction ?? null
-  : game.value.status === 'playing' ? game.value.turn : null);
+const boardWaitingFaction = computed<Faction | null>(() => {
+  if (game.value.status === 'playing') return game.value.turn;
+  return game.value.status === 'finished' && game.value.winner === null ? game.value.turnBeforeEnd ?? null : null;
+});
+const highlightedFaction = computed<Faction | null>(() => boardWaitingFaction.value);
 const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
 const replayCurrentStep = computed(() => replayDocument.value && replayIndex.value > 0
@@ -149,6 +151,10 @@ const resultLabel = (current: Game, faction: Faction) => current.results[faction
   : current.results[faction] === 'lost' ? '失败' : current.results[faction] === 'draw' ? '和棋' : '对局中';
 const losersText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'lost').map(faction => playerDisplayName(faction)).join('、'));
 const drawingText = computed(() => ORDER.filter(faction => game.value.results[faction] === 'draw').map(faction => playerDisplayName(faction)).join('、'));
+const drawResultTitle = computed(() => ORDER.every(faction => game.value.results[faction] === 'draw') ? '三方和棋' : '本局和棋');
+const finishedDrawHeading = computed(() => boardWaitingFaction.value
+  ? `${drawResultTitle.value} · 结束前轮到${playerDisplayName(boardWaitingFaction.value)}`
+  : `${drawResultTitle.value} · 结束前轮次未记录`);
 const px = (x: number) => 50 + x * 55;
 const py = (y: number) => 50 + y * 55;
 const viewX = (x: number) => px(flipped.value ? 8 - x : x);
@@ -718,7 +724,7 @@ async function requestRematch() {
       </aside>
 
       <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online' && !isReplaying" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="isReplaying && replayCurrentStep">第 {{ replayIndex }} 步 · <span :style="{color: PLAYERS[replayCurrentStep.faction].color}">{{ PLAYERS[replayCurrentStep.faction].name }}</span> 行棋</h2><h2 v-else-if="isReplaying">初始局面</h2><h2 v-else-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2><h2 v-else-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">本局和棋</h2></div><span v-if="isReplaying" class="move-count">第 <strong>{{ replayIndex }}</strong> / {{ replayTotal }} 步</span><span v-else class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online' && !isReplaying" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">{{ finishedDrawHeading }}</h2><h2 v-else-if="isReplaying && replayIndex === 0 && boardWaitingFaction">初始局面 · 轮到<span :style="{color: PLAYERS[boardWaitingFaction].color}">{{ playerDisplayName(boardWaitingFaction) }}</span>行棋</h2><h2 v-else-if="isReplaying && replayCurrentStep && boardWaitingFaction">第 {{ replayIndex }} 步后 · 轮到<span :style="{color: PLAYERS[boardWaitingFaction].color}">{{ playerDisplayName(boardWaitingFaction) }}</span>行棋</h2><h2 v-else-if="isReplaying && replayCurrentStep">第 {{ replayIndex }} 步后 · 待行棋方未记录</h2><h2 v-else-if="isReplaying">初始局面 · 待行棋方未记录</h2><h2 v-else-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2></div><span v-if="isReplaying" class="move-count">第 <strong>{{ replayIndex }}</strong> / {{ replayTotal }} 步</span><span v-else class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
         <div v-if="mode === 'online' && connection !== 'online'" class="network-banner" role="alert">连接中断，正在重连…</div>
         <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则、旧初始布局或名次存档不能按当前规则安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
         <div v-if="drawOffer" class="draw-offer-card" role="status" aria-live="polite">
@@ -766,7 +772,7 @@ async function requestRematch() {
           </div>
         </div>
         <p v-if="feedbackError || (!isReplaying && mode === 'local' && !!message)" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
-        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : '和棋' }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。本局共 {{ game.history.length }} 步。</span></div>
+        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : drawResultTitle }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。{{ boardWaitingFaction ? `结束前轮到${playerDisplayName(boardWaitingFaction)}。` : '结束前轮次未记录。' }}本局共 {{ game.history.length }} 步。</span></div>
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">

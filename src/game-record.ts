@@ -1,7 +1,6 @@
 import { ORDER, PLAYERS, newGame, pieceName, validGame } from './game.ts';
-import type { Faction, Game, Piece } from './game.ts';
+import type { Faction, Game, GameEvent, Piece } from './game.ts';
 import { REPLAY_FORMAT, REPLAY_FORMAT_VERSION } from './game-replay.ts';
-import type { ReplayEvent } from './game-replay.ts';
 
 const coordinate = (point: { x: number; y: number }) => `(${point.x + 1}, ${point.y + 1})`;
 const resultLabel = (game: Game, faction: Faction) =>
@@ -31,9 +30,9 @@ export function gameRecordFileName(exportedAt = new Date()): string {
   return `三国象棋棋谱-${stamp}.md`;
 }
 
-export function buildGameRecord(game: Game, exportedAt = new Date(), recordedEvents: ReplayEvent[] = []): string {
+export function buildGameRecord(game: Game, exportedAt = new Date(), recordedEvents: GameEvent[] = []): string {
   if (!validGame(game)) throw new Error('无法导出无效棋局。');
-  const derivedEvents: ReplayEvent[] = game.history
+  const derivedEvents: GameEvent[] = game.history
     .filter(record => record.eliminated.length)
     .map(record => ({ type: 'elimination', step: record.number, factions: [...record.eliminated] }));
   if (game.status === 'finished') {
@@ -44,8 +43,8 @@ export function buildGameRecord(game: Game, exportedAt = new Date(), recordedEve
       results: { ...game.results },
     });
   }
-  const eventKey = (event: ReplayEvent) => JSON.stringify(event);
-  const structuredEvents = [...recordedEvents, ...derivedEvents]
+  const eventKey = (event: GameEvent) => JSON.stringify(event);
+  const structuredEvents = [...(game.events ?? []), ...recordedEvents, ...derivedEvents]
     .filter((event, index, all) => all.findIndex(item => eventKey(item) === eventKey(event)) === index);
   const structured = {
     format: REPLAY_FORMAT,
@@ -62,6 +61,7 @@ export function buildGameRecord(game: Game, exportedAt = new Date(), recordedEve
       winner: game.winner,
       results: toPlain(game.results),
       eliminated: [...game.eliminated],
+      ...(game.turnBeforeEnd !== undefined ? { turnBeforeEnd: game.turnBeforeEnd } : {}),
     },
   };
   const moveLines = game.history.length
@@ -82,6 +82,7 @@ export function buildGameRecord(game: Game, exportedAt = new Date(), recordedEve
     `- 对局状态：${gameStatus(game)}`,
     `- 总步数：${game.history.length}`,
     `- 本局结果：${ORDER.map(faction => `${PLAYERS[faction].name}${resultLabel(game, faction)}`).join('；')}`,
+    ...(game.status === 'finished' && game.turnBeforeEnd ? [`- 结束前待行棋方：${PLAYERS[game.turnBeforeEnd].name}`] : []),
     '',
     '## 行棋记录',
     '',

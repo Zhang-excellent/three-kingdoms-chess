@@ -2,12 +2,29 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { newGame, resignFaction } from '../src/game.ts';
+import { drawGame, newGame, playMove, resignFaction } from '../src/game.ts';
+import type { Game } from '../src/game.ts';
 import { buildGameRecord } from '../src/game-record.ts';
 import { parseGameRecord } from '../src/game-replay.ts';
 import type { ReplayEvent } from '../src/game-replay.ts';
 
 const fixture = readFileSync(resolve('tests/fixtures/三国象棋棋谱-20261029-234542.md'), 'utf8');
+
+function playOscillatingMoves(count: number): Game {
+  let game = newGame();
+  for (let index = 0; index < count; index++) {
+    const cycle = Math.floor(index / 3), faction = index % 3;
+    const action = faction === 0
+      ? { pieceId: 'wei-rook-0-9', to: cycle % 2 === 0 ? { x: 0, y: 8 } : { x: 0, y: 9 } }
+      : faction === 1
+        ? { pieceId: 'shu-rook-8-0', to: cycle % 2 === 0 ? { x: 8, y: 1 } : { x: 8, y: 0 } }
+        : { pieceId: 'wu-rook-0-0', to: cycle % 2 === 0 ? { x: 0, y: 1 } : { x: 0, y: 0 } };
+    const result = playMove(game, action.pieceId, action.to);
+    if (!result.ok) assert.fail(result.error);
+    game = result.game;
+  }
+  return game;
+}
 
 test('legacy 60-step record restores its own initial layout and preserves incomplete final events', () => {
   const parsed = parseGameRecord(fixture);
@@ -42,6 +59,80 @@ test('legacy replay snapshots restore captures and support arbitrary jumps', () 
   assert.equal(frames[60].history.length, 60);
   assert.equal(frames[60].lastMove?.number, 60);
   assert.equal(frames[0].history.length, 0);
+});
+
+test('structured replay separates the 43rd move actor from the draw-ending waiting faction', () => {
+  const afterMoves = playOscillatingMoves(43);
+  assert.equal(afterMoves.turn, 'shu');
+  const drawn = drawGame(afterMoves);
+  assert.equal(drawn.ok, true);
+  if (!drawn.ok) return;
+  assert.equal(drawn.game.turn, null);
+  assert.equal(drawn.game.turnBeforeEnd, 'shu');
+
+  const parsed = parseGameRecord(buildGameRecord(drawn.game, new Date(2026, 10, 7, 10, 0, 0)));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  const replay = parsed.replay;
+  assert.equal(replay.moves.length, 43);
+  assert.equal(replay.moves[42].faction, 'wei');
+  assert.equal(replay.moves[42].kind, 'rook');
+  assert.equal(replay.frames[0].turn, 'wei');
+  assert.equal(replay.frames[0].turnSlot, 0);
+  assert.equal(replay.frames[42].status, 'playing');
+  assert.equal(replay.frames[42].turn, 'wei');
+  assert.equal(replay.frames[43].status, 'finished');
+  assert.equal(replay.frames[43].winner, null);
+  assert.equal(replay.frames[43].turn, null);
+  assert.equal(replay.frames[43].turnBeforeEnd, 'shu');
+  assert.deepEqual(replay.frames[43].results, { wei: 'draw', shu: 'draw', wu: 'draw' });
+});
+
+test('draw replay can reconstruct the ending waiting faction when older metadata omits it', () => {
+  const drawn = drawGame(playOscillatingMoves(43));
+  assert.equal(drawn.ok, true);
+  if (!drawn.ok) return;
+  const older = buildGameRecord(drawn.game).replace(/,\s*"turnBeforeEnd": "shu"/g, '');
+  const parsed = parseGameRecord(older);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.replay.frames[43].turnBeforeEnd, 'shu');
+});
+
+test('replay applies resignations between moves and skips the eliminated faction in later rounds', () => {
+  const move = playMove(newGame(), 'wei-pawn-0-6', { x: 0, y: 5 });
+  assert.equal(move.ok, true);
+  if (!move.ok) return;
+  const resigned = resignFaction(move.game, 'wu');
+  assert.equal(resigned.ok, true);
+  if (!resigned.ok) return;
+  assert.equal(resigned.game.turn, 'shu');
+  const shuMove = playMove(resigned.game, 'shu-pawn-6-3', { x: 6, y: 4 });
+  assert.equal(shuMove.ok, true);
+  if (!shuMove.ok) return;
+  assert.equal(shuMove.game.turn, 'wei');
+
+  const parsed = parseGameRecord(buildGameRecord(shuMove.game));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.replay.frames[1].turn, 'shu');
+  assert.equal(parsed.replay.frames[1].turnSlot, 1);
+  assert.equal(parsed.replay.frames[2].turn, 'wei');
+  assert.equal(parsed.replay.frames[2].turnSlot, 0);
+  assert.deepEqual(parsed.replay.frames[2].eliminated, ['wu']);
+});
+
+test('replay rejects a missing non-move event instead of inventing the next round', () => {
+  const afterResign = resignFaction(newGame(), 'wei');
+  assert.equal(afterResign.ok, true);
+  if (!afterResign.ok) return;
+  const move = playMove(afterResign.game, 'shu-pawn-6-3', { x: 6, y: 4 });
+  assert.equal(move.ok, true);
+  if (!move.ok) return;
+  const withoutResign = buildGameRecord({ ...move.game, events: move.game.events?.filter(event => event.type !== 'resign') ?? [] });
+  const parsed = parseGameRecord(withoutResign);
+  assert.equal(parsed.ok, false);
+  if (!parsed.ok) assert.match(parsed.error, /第 1 步记录为刘备行棋，但按出局和轮次应为曹操行棋/);
 });
 
 test('structured version-one records replay real resignation and final result events', () => {

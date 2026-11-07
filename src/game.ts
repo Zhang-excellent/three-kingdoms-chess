@@ -4,12 +4,22 @@ export type TurnSlot = 0 | 1 | 2;
 export type FactionResult = 'playing' | 'lost' | 'won' | 'draw';
 export interface Point { x: number; y: number }
 export interface Piece extends Point { id: string; faction: Faction; kind: Kind }
+export interface GameEvent {
+  type: 'elimination' | 'resign' | 'draw' | 'result';
+  step: number;
+  faction?: Faction;
+  factions?: Faction[];
+  winner?: Faction | null;
+  results?: Record<Faction, FactionResult>;
+  turnBeforeEnd?: Faction | null;
+}
 export interface MoveRecord {
   number: number; faction: Faction; turnSlot: TurnSlot; pieceId: string; kind: Kind;
   from: Point; to: Point; captured: Piece | null; eliminated: Faction[];
 }
 export interface Game {
   schema: 3; rulesVersion: string; pieces: Piece[]; turn: Faction | null; turnSlot: TurnSlot | null; eliminated: Faction[];
+  turnBeforeEnd?: Faction | null; events?: GameEvent[];
   results: Record<Faction, FactionResult>;
   history: MoveRecord[]; lastMove: MoveRecord | null;
   winner: Faction | null; status: 'playing' | 'finished';
@@ -46,7 +56,9 @@ export function newGame(): Game {
   add('wu', 'rook', 0, 0); add('wu', 'king', 2, 0);
   add('wu', 'cannon', 1, 2); add('wu', 'feng', 3, 2);
   [0, 2, 4].forEach(x => add('wu', 'pawn', x, 3));
-  return { schema: 3, rulesVersion: RULES_VERSION, pieces, turn: 'wei', turnSlot: 0, eliminated: [], results: { wei: 'playing', shu: 'playing', wu: 'playing' }, history: [], lastMove: null, winner: null, status: 'playing' };
+  return { schema: 3, rulesVersion: RULES_VERSION, pieces, turn: 'wei', turnSlot: 0, eliminated: [],
+    turnBeforeEnd: null, events: [], results: { wei: 'playing', shu: 'playing', wu: 'playing' },
+    history: [], lastMove: null, winner: null, status: 'playing' };
 }
 
 export const at = (pieces: Piece[], p: Point): Piece | undefined => pieces.find(q => q.x === p.x && q.y === p.y);
@@ -156,12 +168,14 @@ function settleNextTurn(game: Game, previousSlot: TurnSlot, notices: string[]): 
 export function resignFaction(current: Game, faction: Faction): MoveResult {
   if (current.status !== 'playing' || current.eliminated.includes(faction))
     return { ok: false, error: '该阵营已经出局或对局已经结束。' };
-  const game: Game = structuredClone(current);
+  const game: Game = structuredClone(current), turnBeforeEnd = current.turn;
   const notices: string[] = [];
   eliminate(game, faction);
   notices.push(`${PLAYERS[faction].name}认输失败，${PLAYERS[faction].nation}军全部撤出。`);
   if (game.turn === faction) settleNextTurn(game, current.turnSlot!, notices);
   else finishIfWinner(game);
+  game.events = [...(game.events ?? []), { type: 'resign', step: game.history.length, faction }];
+  if (game.status === 'finished') game.turnBeforeEnd = turnBeforeEnd;
   if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获胜。`);
   else notices.push(`轮到${PLAYERS[game.turn!].name}行棋。`);
   return { ok: true, game, notices };
@@ -200,6 +214,8 @@ export function drawGame(current: Game): MoveResult {
   if (active.length < 2) return { ok: false, error: '至少需要两个存活阵营才能和棋。' };
   const game: Game = structuredClone(current);
   for (const faction of active) game.results[faction] = 'draw';
+  game.turnBeforeEnd = current.turn;
+  game.events = [...(game.events ?? []), { type: 'draw', step: game.history.length, factions: active, turnBeforeEnd: current.turn }];
   game.winner = null; game.status = 'finished'; game.turn = null; game.turnSlot = null;
   return { ok: true, game, notices: [`${active.map(faction => PLAYERS[faction].name).join('、')}同意和棋。`] };
 }
@@ -228,6 +244,14 @@ export function validGame(value: unknown): value is Game {
   if (game.status === 'playing' && (!game.turn || !ORDER.includes(game.turn) || game.eliminated.includes(game.turn) || game.winner !== null
     || !isTurnSlot(game.turnSlot) || TURN_CYCLE[game.turnSlot] !== game.turn)) return false;
   if (game.status === 'finished' && (game.turn !== null || game.turnSlot !== null)) return false;
+  if (game.turnBeforeEnd !== undefined && game.turnBeforeEnd !== null && !ORDER.includes(game.turnBeforeEnd)) return false;
+  if (game.status === 'playing' && game.turnBeforeEnd != null) return false;
+  if (game.events !== undefined && (!Array.isArray(game.events) || game.events.some(event =>
+    !event || !['elimination', 'resign', 'draw', 'result'].includes(event.type)
+    || !Number.isInteger(event.step) || event.step < 0 || event.step > game.history.length
+    || (event.faction !== undefined && !ORDER.includes(event.faction))
+    || (event.factions !== undefined && (!Array.isArray(event.factions) || event.factions.some(faction => !ORDER.includes(faction))))
+    || (event.turnBeforeEnd !== undefined && event.turnBeforeEnd !== null && !ORDER.includes(event.turnBeforeEnd))))) return false;
   const ids = new Set<string>(), positions = new Set<string>();
   const kinds: Kind[] = ['king', 'rook', 'horse', 'elephant', 'advisor', 'cannon', 'pawn', 'feng'];
   for (const piece of game.pieces) {

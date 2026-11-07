@@ -18,9 +18,11 @@ test('resigning current or waiting faction keeps turn, history and results consi
   assert.equal(afterWu.turn, 'wei'); assert.equal(afterWu.turnSlot, 0);
   assert.equal(afterWu.results.wu, 'lost'); assert.equal(afterWu.results.wei, 'playing'); assert.equal(afterWu.history.length, 0);
   assert.equal(afterWu.pieces.some(piece => piece.faction === 'wu'), false);
+  assert.deepEqual(afterWu.events, [{ type: 'resign', step: 0, faction: 'wu' }]);
   assert.equal(validGame(afterWu), true);
   const afterWei = success(resignFaction(afterWu, 'wei'));
   assert.equal(afterWei.status, 'finished'); assert.equal(afterWei.winner, 'shu');
+  assert.equal(afterWei.turnBeforeEnd, 'wei');
   assert.deepEqual(afterWei.results, { wu: 'lost', wei: 'lost', shu: 'won' });
   assert.equal(validGame(afterWei), true);
   assert.equal(resignFaction(afterWei, 'shu').ok, false);
@@ -43,6 +45,8 @@ test('unanimous draws finish active factions while preserving earlier eliminatio
   assert.equal(result.game.winner, null);
   assert.equal(result.game.turn, null);
   assert.equal(result.game.turnSlot, null);
+  assert.equal(result.game.turnBeforeEnd, 'wei');
+  assert.deepEqual(result.game.events, [{ type: 'draw', step: 0, factions: ['wei', 'shu', 'wu'], turnBeforeEnd: 'wei' }]);
   assert.deepEqual(result.game.results, { wei: 'draw', shu: 'draw', wu: 'draw' });
   assert.equal(result.game.history.length, 0);
   assert.equal(validGame(result.game), true);
@@ -52,6 +56,7 @@ test('unanimous draws finish active factions while preserving earlier eliminatio
   assert.equal(twoPlayerDraw.ok, true);
   if (!twoPlayerDraw.ok) return;
   assert.deepEqual(twoPlayerDraw.game.results, { wei: 'draw', shu: 'draw', wu: 'lost' });
+  assert.equal(twoPlayerDraw.game.turnBeforeEnd, 'wei');
   assert.equal(validGame(twoPlayerDraw.game), true);
   assert.equal(drawGame(twoPlayerDraw.game).ok, false);
 });

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
+import { drawGame, newGame, playMove, resignFaction } from '../src/game.ts';
+import type { Game } from '../src/game.ts';
+import { buildGameRecord } from '../src/game-record.ts';
 
 const origin = 'http://localhost:5173';
 GlobalRegistrator.register({ url: origin });
@@ -24,6 +27,21 @@ function markdownFile(name: string, content: string): File {
   if (typeof file.text !== 'function')
     Object.defineProperty(file, 'text', { configurable: true, value: async () => content });
   return file;
+}
+function playOscillatingMoves(count: number): Game {
+  let game = newGame();
+  for (let index = 0; index < count; index++) {
+    const cycle = Math.floor(index / 3), faction = index % 3;
+    const action = faction === 0
+      ? { pieceId: 'wei-rook-0-9', to: cycle % 2 === 0 ? { x: 0, y: 8 } : { x: 0, y: 9 } }
+      : faction === 1
+        ? { pieceId: 'shu-rook-8-0', to: cycle % 2 === 0 ? { x: 8, y: 1 } : { x: 8, y: 0 } }
+        : { pieceId: 'wu-rook-0-0', to: cycle % 2 === 0 ? { x: 0, y: 1 } : { x: 0, y: 0 } };
+    const result = playMove(game, action.pieceId, action.to);
+    if (!result.ok) assert.fail(result.error);
+    game = result.game;
+  }
+  return game;
 }
 async function importFile(wrapper: ReturnType<typeof mount>, file: File) {
   const input = wrapper.get('input.replay-file-input');
@@ -59,7 +77,7 @@ test('local replay imports the legacy 60-step record, jumps through snapshots, a
   await wrapper.findAll('.replay-move-list li')[12].trigger('click');
   assert.match(wrapper.get('.replay-console-head').text(), /第 13 步 \/ 共 60 步/);
   assert.match(wrapper.get('.last-move-card').text(), /曹操 · 兵.*\(7, 7\).*\(7, 6\).*吃掉吴方卒/);
-  assert.equal(wrapper.findAll('.player-card .player-status').map(item => item.text()).filter(text => text === '本步').length, 1);
+  assert.equal(wrapper.findAll('.player-card .player-status').length, 0);
   assert.doesNotMatch(wrapper.get('.player-cards').text(), /行棋中/);
   assert.equal(wrapper.find('g.piece[aria-label="吴方卒，第7路第6线"]').exists(), false);
   assert.ok(wrapper.find('.last-trail').exists());
@@ -110,4 +128,56 @@ test('local replay imports the legacy 60-step record, jumps through snapshots, a
   assert.equal(wrapper.get('.player-card.active h2').text(), '刘备');
   assert.equal(wrapper.findAll('.move-list li').length, 1);
   assert.equal(localStorage.getItem('three-kingdoms-chess:win-loss-v1'), liveSave);
+});
+
+test('replay headings and player highlights follow the waiting faction, while move cards keep the actor', async t => {
+  localStorage.clear();
+  history.replaceState(null, '', `${origin}/?mode=local`);
+  const wrapper = mount(App, { attachTo: document.body });
+  t.after(() => wrapper.unmount());
+  await wrapper.findAll('.local-view-tabs button').find(button => button.text() === '棋谱复盘')!.trigger('click');
+
+  const activeCardName = () => wrapper.get('.player-card.active h2').text();
+  const openReplay = async (record: string) => {
+    await importFile(wrapper, markdownFile('第43步复盘.md', record));
+    await waitUntil(() => wrapper.find('.replay-console').exists(), 'Replay console did not open');
+  };
+
+  await openReplay(buildGameRecord(playOscillatingMoves(43), new Date(2026, 10, 7, 10, 0, 0)));
+  assert.equal(wrapper.get('.board-heading h2').text(), '初始局面 · 轮到曹操行棋');
+  assert.equal(activeCardName(), '曹操');
+  await wrapper.findAll('.replay-move-list li')[42].trigger('click');
+  assert.equal(wrapper.get('.board-heading h2').text(), '第 43 步后 · 轮到刘备行棋');
+  assert.equal(activeCardName(), '刘备');
+  assert.match(wrapper.get('.last-move-card').text(), /曹操 · 车.*\(1, 10\).*\(1, 9\)/);
+  assert.equal(wrapper.findAll('.player-card .player-status').length, 0);
+
+  const drawn = drawGame(playOscillatingMoves(43));
+  assert.equal(drawn.ok, true);
+  if (!drawn.ok) return;
+  await openReplay(buildGameRecord(drawn.game, new Date(2026, 10, 7, 10, 5, 0)));
+  await wrapper.findAll('.replay-move-list li')[42].trigger('click');
+  assert.equal(wrapper.get('.board-heading h2').text(), '三方和棋 · 结束前轮到刘备');
+  assert.equal(activeCardName(), '刘备');
+  assert.match(wrapper.get('.last-move-card').text(), /曹操 · 车/);
+  assert.doesNotMatch(wrapper.get('.player-cards').text(), /行棋中/);
+  assert.equal(wrapper.findAll('.player-card .status-result').filter(item => item.text() === '和棋').length, 3);
+
+  await wrapper.findAll('.replay-controls button').find(button => button.text() === '上一步')!.trigger('click');
+  assert.equal(wrapper.get('.board-heading h2').text(), '第 42 步后 · 轮到曹操行棋');
+  assert.equal(activeCardName(), '曹操');
+  await wrapper.findAll('.replay-controls button').find(button => button.text() === '下一步')!.trigger('click');
+  assert.equal(wrapper.get('.board-heading h2').text(), '三方和棋 · 结束前轮到刘备');
+
+  const firstResign = resignFaction(newGame(), 'shu');
+  assert.equal(firstResign.ok, true);
+  if (!firstResign.ok) return;
+  const finished = resignFaction(firstResign.game, 'wu');
+  assert.equal(finished.ok, true);
+  if (!finished.ok) return;
+  await openReplay(buildGameRecord(finished.game));
+  assert.equal(wrapper.get('.board-heading h2').text(), '曹操 获胜');
+  assert.equal(wrapper.find('.player-card.active').exists(), false);
+  assert.doesNotMatch(wrapper.get('.board-heading').text(), /结束前轮到|行棋/);
+  assert.doesNotMatch(wrapper.get('.player-cards').text(), /行棋中/);
 });
