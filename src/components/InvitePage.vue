@@ -12,6 +12,7 @@ const props = defineProps<{
   connection: 'offline' | 'connecting' | 'online' | 'replaced';
   busy: boolean;
   existingRoomCode: string | null;
+  accountName: string | null;
 }>();
 const emit = defineEmits<{
   join: [faction: Faction, nickname: string];
@@ -44,10 +45,11 @@ watch(() => props.room, room => {
     selectedFaction.value = choices[0] ?? null;
 }, { immediate: true });
 watch(() => props.roomCode, () => { nickname.value = ''; selectedFaction.value = null; });
+watch(() => props.accountName, value => { nickname.value = value ?? ''; }, { immediate: true });
 
 function submit() {
   if (!canJoin.value || !selectedFaction.value) return;
-  emit('join', selectedFaction.value, nickname.value.trim());
+  emit('join', selectedFaction.value, (props.accountName ?? nickname.value).trim());
 }
 </script>
 
@@ -103,7 +105,7 @@ function submit() {
         </div>
         <div class="invite-player-list">
           <span v-for="(player, index) in room.players" :key="index">
-            {{ player.nickname }} · {{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}
+            {{ player.identity === 'guest' ? '游客 · ' : '' }}{{ player.nickname }} · {{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}
           </span>
           <span v-for="slot in room.maxPlayers - room.playerCount" :key="`empty-${slot}`" class="empty">{{ slot === 1 ? '还有一个席位' : `还有 ${slot} 个席位` }}</span>
         </div>
@@ -127,7 +129,8 @@ function submit() {
               </button>
             </div>
           </div>
-          <label>昵称<input v-model="nickname" maxlength="16" autocomplete="nickname"></label>
+          <label>昵称<input :value="accountName ?? nickname" maxlength="16" autocomplete="nickname" :readonly="!!accountName" @input="nickname = ($event.target as HTMLInputElement).value"></label>
+          <span v-if="accountName" class="invite-account-name">使用账号昵称</span>
           <p v-if="error" class="connection-note error" role="status">{{ error }}</p>
           <div class="entry-actions">
             <button class="primary-button" type="submit" :disabled="!canJoin || busy || connection !== 'online'">加入房间</button>
@@ -151,6 +154,7 @@ function submit() {
 .invite-factions{margin:2px 0}.invite-entry label{display:grid;gap:7px;font-size:13px;font-weight:600;color:#625444}
 .invite-entry input{border:1px solid #d8cab4;background:#fffefb;border-radius:8px;padding:11px 12px;outline:none;font:inherit;font-size:14px;font-weight:500;color:#43382d}
 .invite-entry input::placeholder{color:#8c7a66;font-weight:500;opacity:1}.invite-entry input:focus{border-color:#a78147;box-shadow:0 0 0 3px #a781471b}
+.invite-account-name{font-size:10px;color:#8b7b67}
 .invite-back{justify-self:start;color:#7f705c;border-bottom:1px solid #d2c3aa}
 @media(max-width:720px){.invite-entry{padding:20px}.invite-entry h2{font-size:23px}.invite-room-heading>strong{font-size:19px}.entry-actions{display:grid;grid-template-columns:1fr}.entry-actions button{width:100%}}
 </style>

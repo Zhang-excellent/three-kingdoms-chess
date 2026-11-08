@@ -10,6 +10,9 @@ WorkingDirectory=/opt/three-kingdoms-chess/current
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=3000
+Environment=THREE_CHESS_DATA_DIR=/opt/three-kingdoms-chess/data
+Environment=THREE_CHESS_COOKIE_SECURE=1
+Environment=TRUST_PROXY=1
 ExecStart=/opt/three-kingdoms-chess/runtime/node-v24.22.1-linux-x64/bin/node /opt/three-kingdoms-chess/current/node_modules/tsx/dist/cli.mjs server/index.ts
 Restart=on-failure
 RestartSec=3

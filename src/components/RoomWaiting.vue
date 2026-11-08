@@ -37,7 +37,7 @@ const description = (record: MoveRecord) => `${pieceName(record)} ${coordinate(r
     <div class="lobby-players">
       <article v-for="player in room.players" :key="player.id" :class="{ self: player.id === room.selfId }">
         <span class="online-dot" :class="{ off: !player.online }"></span>
-        <div><strong>{{ player.nickname }}</strong><small>{{ player.id === room.selfId ? '这是你' : player.online ? '在线' : '已断线，席位最多保留 60 秒' }}</small></div>
+        <div><strong>{{ player.nickname }} <i v-if="player.identity === 'guest'" class="guest-identity">游客</i></strong><small>{{ player.id === room.selfId ? '这是你' : player.online ? '在线' : '已断线，席位最多保留 60 秒' }}</small></div>
         <b>{{ player.faction ? `${PLAYERS[player.faction].nation}方` : '未选阵营' }}</b>
         <em>{{ player.ready ? '已准备' : '未准备' }}</em>
         <button v-if="!player.online && player.id !== room.selfId" class="tool-button release-button" :disabled="connection !== 'online'" @click="emit('releaseOffline', player.id)">释放席位</button>
@@ -70,3 +70,7 @@ const description = (record: MoveRecord) => `${pieceName(record)} ${coordinate(r
     </div>
   </section>
 </template>
+
+<style scoped>
+.guest-identity{display:inline-block;margin-left:5px;padding:1px 5px;border:1px solid #d5c8b5;border-radius:999px;background:#f2ece2;color:#80715e;font:500 9px/1.5 inherit;font-style:normal;vertical-align:1px}
+</style>

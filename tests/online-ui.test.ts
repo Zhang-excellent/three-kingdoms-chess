@@ -778,3 +778,44 @@ test('all three factions use their default orientation and make a legal move', a
     players.forEach(socket => socket.disconnect());
   }
 });
+
+test('account registration, password visibility, recovery code, logout, and invitation URL retention work in the Vue UI', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
+  let wrapper: ReturnType<typeof mount> | null = null;
+  const guest = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+  try {
+    await new Promise<void>((resolve, reject) => { guest.once('connect', resolve); guest.once('connect_error', reject); });
+    const invitation = success(await send<SessionReceipt>(guest, 'room:create', {
+      roomCode: '411007', nickname: '邀请房主', listed: false,
+    }));
+    history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${invitation.roomCode}`);
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.find('.invite-page').exists(), 'Invitation page did not open');
+    const invitationUrl = location.href;
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '登录 / 注册')!.trigger('click');
+    await wrapper.findAll('.auth-tabs button').find(button => button.text() === '注册')!.trigger('click');
+    await wrapper.get('.auth-dialog input[autocomplete="username"]').setValue('界面注册甲');
+    const passwordInput = wrapper.get('.auth-dialog input[autocomplete="new-password"]');
+    await passwordInput.setValue('1234');
+    assert.equal(passwordInput.attributes('type'), 'password');
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '显示')!.trigger('click');
+    assert.equal(wrapper.get('.auth-dialog input[autocomplete="new-password"]').attributes('type'), 'text');
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '注册并登录')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '界面注册甲'), 'Registered account did not appear');
+    assert.equal(location.href, invitationUrl);
+    assert.match(wrapper.get('.recovery-card').text(), /TK-/);
+    assert.equal(JSON.stringify(localStorage).includes('1234'), false);
+    assert.equal(JSON.stringify(localStorage).includes('three_chess_session'), false);
+    await wrapper.get('.auth-dialog .dialog-close').trigger('click');
+    const nicknameInput = wrapper.get('.invite-page input[autocomplete="nickname"]');
+    assert.equal(nicknameInput.attributes('readonly'), '');
+    assert.equal((nicknameInput.element as HTMLInputElement).value, '界面注册甲');
+
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '界面注册甲')!.trigger('click');
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '退出登录')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '登录 / 注册'), 'Logout did not clear the account');
+  } finally {
+    wrapper?.unmount();
+    guest.disconnect();
+  }
+});

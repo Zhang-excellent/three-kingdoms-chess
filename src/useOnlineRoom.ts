@@ -77,8 +77,10 @@ export function useOnlineRoom() {
   }
   function save(receipt: SessionReceipt) {
     if (!validReceipt(receipt)) { error.value = '服务器房间号不一致，请重新同步。'; return false; }
+    const serverNickname = receipt.state.players.find(player => player.id === receipt.playerId)?.nickname;
+    if (serverNickname) nickname.value = serverNickname;
     session.value = { roomCode: receipt.roomCode, reconnectToken: receipt.reconnectToken,
-      playerId: receipt.playerId, nickname: nickname.value.trim() || initialSession?.nickname || '' };
+      playerId: receipt.playerId, nickname: serverNickname ?? (nickname.value.trim() || initialSession?.nickname || '') };
     sessionStorage.removeItem(REPLACED_SESSION_KEY);
     localStorage.setItem(ONLINE_SESSION_KEY, JSON.stringify(session.value));
     room.value = receipt.state;
@@ -280,6 +282,24 @@ export function useOnlineRoom() {
     mode.value = 'local';
   }
 
+  async function authChanged(): Promise<void> {
+    if (session.value) {
+      if (room.value?.players.find(player => player.id === room.value?.selfId)?.identity === 'account')
+        return;
+    }
+    epoch++;
+    connection.value = 'offline';
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+      socket = null;
+    }
+    if (mode.value === 'online' || lobbySubscribed || session.value || pending().length) {
+      openSocket();
+      await recovery;
+    }
+  }
+
   async function enter(event: 'room:create' | 'room:join', listed = true) {
     if (busy.value) return;
     const code = event === 'room:create' ? createCode.value.trim() : joinCode.value.trim().toUpperCase();
@@ -408,6 +428,6 @@ export function useOnlineRoom() {
     hasSession, savedRoomCode, lobbyRooms, lobbyLoaded, inviteRoom, inviteLookup, inviteLookupError, inviteUrl,
     subscribeLobby, unsubscribeLobby, inspectInvite,
     spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
-    connect, useLocal, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
+    connect, useLocal, authChanged, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
     releaseOffline, leaveRoom, forgetSession };
 }

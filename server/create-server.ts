@@ -4,15 +4,57 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { RoomService, type InternalRoom } from './room-service.ts';
+import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
+import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
+import type { AuthUser } from '../src/auth.ts';
 import type { ClientAck, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from '../src/online.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
+const AUTH_COOKIE = 'three_chess_session';
 
-export function createOnlineServer() {
+export interface OnlineServerOptions {
+  authService?: AuthService;
+  authDbPath?: string;
+  cookieSecure?: boolean;
+  now?: () => number;
+}
+
+function authCookie(token: string, remember: boolean, secure: boolean): string {
+  const parts = [`${AUTH_COOKIE}=${token}`, 'Path=/three-chess', 'HttpOnly', 'SameSite=Lax'];
+  if (remember) parts.push(`Max-Age=${REMEMBER_SESSION_SECONDS}`);
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function clearAuthCookie(secure: boolean): string {
+  return `${authCookie('', false, secure)}; Max-Age=0`;
+}
+
+function cookieToken(header: string | string[] | undefined): string | null {
+  const value = Array.isArray(header) ? header.join('; ') : header;
+  if (!value) return null;
+  for (const item of value.split(';')) {
+    const separator = item.indexOf('=');
+    if (separator < 0 || item.slice(0, separator).trim() !== AUTH_COOKIE) continue;
+    const token = item.slice(separator + 1).trim();
+    return token || null;
+  }
+  return null;
+}
+
+export function createOnlineServer(options: OnlineServerOptions = {}) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, { path: '/three-chess/socket.io', cors: { origin: true, credentials: true } });
+  const dataRoot = process.env.THREE_CHESS_DATA_DIR
+    ? resolve(process.env.THREE_CHESS_DATA_DIR)
+    : resolve(root, '.data');
+  const authService = options.authService ?? new AuthService(
+    options.authDbPath ?? (process.env.NODE_ENV === 'test' ? ':memory:' : resolve(dataRoot, 'auth.sqlite')),
+    { now: options.now },
+  );
+  const cookieSecure = options.cookieSecure ?? (process.env.NODE_ENV === 'production' && process.env.THREE_CHESS_COOKIE_SECURE !== '0');
   let lobbyTimer: ReturnType<typeof setTimeout> | null = null;
   const lobbySnapshot = (): PublicLobbySnapshot => ({ rooms: rooms.publicRooms(10) });
   const flushLobby = () => {
@@ -43,7 +85,78 @@ export function createOnlineServer() {
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
 
   app.disable('x-powered-by');
-  app.get('/three-chess/api/health', (_request, response) => response.json({ ok: true, service: 'three-kingdoms-chess', storage: 'memory' }));
+  if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+  app.use('/three-chess/api/auth', express.json({ limit: '16kb', type: 'application/json' }));
+  app.use('/three-chess/api/auth', (_request, response, next) => {
+    response.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+  const requestUser = (request: express.Request): AuthUser | null =>
+    authService.authenticate(cookieToken(request.headers.cookie));
+  const sendAuthFailure = (response: express.Response, result: AuthFailure) => {
+    if (result.retryAfterSeconds) response.setHeader('Retry-After', String(result.retryAfterSeconds));
+    response.status(result.status).json({ ok: false, code: result.code, error: result.error });
+  };
+  const sendAuthSuccess = (response: express.Response, result: AuthResult) => {
+    if (!result.ok) return sendAuthFailure(response, result);
+    if (result.sessionToken) response.setHeader('Set-Cookie',
+      authCookie(result.sessionToken, result.remember === true, cookieSecure));
+    response.json({ ok: true, user: result.user, ...(result.recoveryCode ? { recoveryCode: result.recoveryCode } : {}) });
+  };
+  app.get('/three-chess/api/auth/me', (request, response) => {
+    const user = requestUser(request);
+    if (!user && cookieToken(request.headers.cookie)) response.setHeader('Set-Cookie', clearAuthCookie(cookieSecure));
+    response.json({ ok: true, user });
+  });
+  app.post('/three-chess/api/auth/register', async (request, response, next) => {
+    try {
+      const result = await authService.register(request.body?.username, request.body?.password,
+        request.body?.remember === true, request.ip ?? 'unknown');
+      sendAuthSuccess(response, result);
+    } catch (error) { next(error); }
+  });
+  app.post('/three-chess/api/auth/login', async (request, response, next) => {
+    try {
+      const result = await authService.login(request.body?.username, request.body?.password, request.body?.remember === true, request.ip ?? 'unknown');
+      sendAuthSuccess(response, result);
+    } catch (error) { next(error); }
+  });
+  app.post('/three-chess/api/auth/logout', (request, response) => {
+    authService.logout(cookieToken(request.headers.cookie));
+    response.setHeader('Set-Cookie', clearAuthCookie(cookieSecure));
+    response.json({ ok: true });
+  });
+  app.post('/three-chess/api/auth/password', async (request, response, next) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    try {
+      const result = await authService.changePassword(user, request.body?.currentPassword, request.body?.newPassword,
+        request.body?.remember === true);
+      sendAuthSuccess(response, result);
+    } catch (error) { next(error); }
+  });
+  app.post('/three-chess/api/auth/recovery/regenerate', async (request, response, next) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    try {
+      sendAuthSuccess(response, await authService.regenerateRecovery(user, request.body?.password));
+    } catch (error) { next(error); }
+  });
+  app.post('/three-chess/api/auth/recovery/reset', async (request, response, next) => {
+    try {
+      const result = await authService.resetWithRecovery(request.body?.username, request.body?.recoveryCode,
+        request.body?.newPassword, request.body?.remember === true, request.ip ?? 'unknown');
+      sendAuthSuccess(response, result);
+    } catch (error) { next(error); }
+  });
+  app.use('/three-chess/api/auth', (_request, response) => response.status(404).json({ ok: false, code: 'NOT_FOUND', error: '接口不存在。' }));
+  app.use('/three-chess/api/auth', (error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+    console.error('Authentication request failed', error);
+    response.status(500).json({ ok: false, code: 'INTERNAL_ERROR', error: '账号服务暂时不可用，请稍后重试。' });
+  });
+  app.get('/three-chess/api/health', (_request, response) => response.json({
+    ok: true, service: 'three-kingdoms-chess', storage: 'memory', accounts: 'sqlite',
+  }));
   const sendIndex = (_request: express.Request, response: express.Response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.sendFile(resolve(root, 'dist/index.html'));
@@ -55,8 +168,15 @@ export function createOnlineServer() {
   app.get('/three-chess/{*path}', sendIndex);
 
   io.on('connection', socket => {
+    const currentUser = (): AuthUser | null => {
+      const user = authService.authenticate(cookieToken(socket.handshake.headers.cookie));
+      rooms.setSocketAccount(socket.id, user?.id ?? null);
+      return user;
+    };
+    currentUser();
     socket.on('lobby:subscribe', (_payload: unknown, done: (ack: ClientAck<PublicLobbySnapshot>) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       socket.join(PUBLIC_LOBBY);
       done({ ok: true, data: lobbySnapshot() });
     });
@@ -67,6 +187,7 @@ export function createOnlineServer() {
     });
     socket.on('room:watch', (payload: { roomCode?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       const result = rooms.watchRoom(payload?.roomCode, socket.id);
       if (result.ack.ok) {
         const { state, previousCode } = result.ack.data;
@@ -77,25 +198,29 @@ export function createOnlineServer() {
     });
     socket.on('room:unwatch', (payload: { roomCode?: string }, done: (ack: ClientAck) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       const code = rooms.unwatch(socket.id, payload?.roomCode);
       if (code) socket.leave(code);
       done({ ok: true, data: undefined });
     });
     socket.on('room:create', (payload: { roomCode?: unknown; nickname?: unknown; listed?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
       if (typeof done !== 'function') return;
-      const result = rooms.createRoom(payload?.roomCode, payload?.nickname, socket.id, payload?.listed);
+      const user = currentUser();
+      const result = rooms.createRoom(payload?.roomCode, user?.username ?? payload?.nickname, socket.id, payload?.listed);
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:join', (payload: { roomCode?: unknown; nickname?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
       if (typeof done !== 'function') return;
-      const result = rooms.joinRoom(payload?.roomCode, payload?.nickname, socket.id);
+      const user = currentUser();
+      const result = rooms.joinRoom(payload?.roomCode, user?.username ?? payload?.nickname, socket.id);
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:inspect', (payload: { roomCode?: unknown }, done: (ack: ClientAck<PublicRoomSummary>) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         done(rooms.inspectRoom(payload?.roomCode).ack);
       } catch { internalError(done); }
     });
@@ -103,13 +228,16 @@ export function createOnlineServer() {
       done: (ack: ClientAck<SessionReceipt>) => void) => {
       if (typeof done !== 'function') return;
       try {
-        const result = await rooms.claimSeat(payload?.roomCode, payload?.nickname, payload?.faction, payload?.listed, socket.id);
+        const user = currentUser();
+        const result = await rooms.claimSeat(payload?.roomCode, user?.username ?? payload?.nickname,
+          payload?.faction, payload?.listed, socket.id);
         if (result.ack.ok) socket.join(result.ack.data.roomCode);
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
     });
     socket.on('room:resume', (payload: { roomCode?: unknown; reconnectToken?: unknown }, done: (ack: ClientAck<SessionReceipt>) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       const result = rooms.resumeRoom(payload?.roomCode, payload?.reconnectToken, socket.id);
       if (result.ack.ok) socket.join(result.ack.data.roomCode);
       if (result.replacedSocketId) {
@@ -120,11 +248,13 @@ export function createOnlineServer() {
     });
     socket.on('room:choose-faction', (payload: { roomCode?: unknown; reconnectToken?: unknown; faction?: unknown; round?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       const result = rooms.chooseFaction(payload?.roomCode, payload?.reconnectToken, payload?.faction, payload?.round, socket.id);
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:ready', (payload: { roomCode?: unknown; reconnectToken?: unknown; ready?: unknown; round?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       const result = rooms.setReady(payload?.roomCode, payload?.reconnectToken, payload?.ready, payload?.round, socket.id);
       done(result.ack); broadcast(result.room);
     });
@@ -132,6 +262,7 @@ export function createOnlineServer() {
       done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         const result = await rooms.rematchRoom(payload?.roomCode, payload?.reconnectToken, payload?.version, socket.id);
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
@@ -139,12 +270,14 @@ export function createOnlineServer() {
     socket.on('room:release-offline', (payload: { roomCode?: unknown; reconnectToken?: unknown; playerId?: unknown },
       done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
+      currentUser();
       const result = rooms.releaseOffline(payload?.roomCode, payload?.reconnectToken, payload?.playerId, socket.id);
       done(result.ack); broadcast(result.room);
     });
     socket.on('room:leave', async (payload: { roomCode?: unknown; reconnectToken?: unknown }, done: (ack: ClientAck) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         const result = await rooms.leaveRoom(payload?.roomCode, payload?.reconnectToken, socket.id);
         if (result.ack.ok && result.room) socket.leave(result.room.code);
         done(result.ack); broadcast(result.room);
@@ -154,6 +287,7 @@ export function createOnlineServer() {
       done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         const result = await rooms.resignRoom(payload?.roomCode, payload?.reconnectToken, socket.id);
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
@@ -162,6 +296,7 @@ export function createOnlineServer() {
       done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         const result = await rooms.offerDraw(payload?.roomCode, payload?.reconnectToken, socket.id);
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
@@ -170,6 +305,7 @@ export function createOnlineServer() {
       done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         const result = await rooms.respondDraw(payload?.roomCode, payload?.reconnectToken, payload?.offerId, payload?.vote, socket.id);
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
@@ -177,6 +313,7 @@ export function createOnlineServer() {
     socket.on('game:move', async (payload: { roomCode?: unknown; reconnectToken?: unknown; intent?: MoveIntent }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       try {
+        currentUser();
         const result = await rooms.submitMove(payload?.roomCode, payload?.reconnectToken, payload?.intent, socket.id);
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
@@ -184,5 +321,5 @@ export function createOnlineServer() {
     socket.on('disconnect', () => broadcast(rooms.disconnect(socket.id)));
   });
 
-  return { app, httpServer, io, rooms };
+  return { app, httpServer, io, rooms, authService };
 }

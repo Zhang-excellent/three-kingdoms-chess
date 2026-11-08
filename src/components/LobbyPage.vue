@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { PLAYERS } from '../game.ts';
 import type { Faction } from '../game.ts';
 import { PUBLIC_ROOM_CODE } from '../online.ts';
@@ -9,6 +9,7 @@ const props = defineProps<{
   mode: 'public' | 'friends';
   rooms: PublicRoomSummary[];
   nickname: string;
+  accountName: string | null;
   createCode: string;
   joinCode: string;
   listed: boolean;
@@ -37,6 +38,7 @@ const emit = defineEmits<{
 }>();
 
 const online = computed(() => props.connection === 'online');
+const effectiveNickname = computed(() => props.accountName ?? props.nickname);
 const phaseLabel = (phase: RoomPhase) => phase === 'lobby' ? '等待中' : phase === 'playing' ? '对局中' : '已结束';
 const title = computed(() => props.mode === 'public' ? '公开对战大厅' : '好友对弈');
 const publicRoom = computed(() => props.rooms.find(room => room.code === PUBLIC_ROOM_CODE) ?? null);
@@ -44,6 +46,10 @@ const tableSlots = computed(() => Array.from({ length: 9 }, (_, index) =>
   props.rooms.filter(room => room.code !== PUBLIC_ROOM_CODE)[index] ?? null));
 const playerAt = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) =>
   room?.players.find(player => player.faction === faction) ?? null;
+const playerLabel = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) => {
+  const player = playerAt(room, faction);
+  return player ? `${player.identity === 'guest' ? '游客 · ' : ''}${player.nickname}` : '空位';
+};
 const unassignedPlayers = (room: PublicRoomSummary | null) =>
   room?.players.filter(player => !player.faction) ?? [];
 const tableDialog = ref<HTMLDialogElement | null>(null);
@@ -72,7 +78,7 @@ function openTableDialog(room: PublicRoomSummary | null, faction: Faction, table
   selectedRoom.value = room;
   selectedFaction.value = faction;
   selectedTableNumber.value = tableNumber;
-  tableNickname.value = props.nickname;
+  tableNickname.value = effectiveNickname.value;
   tableRoomCode.value = '';
   tableError.value = '';
   tableDialog.value?.showModal();
@@ -105,10 +111,13 @@ function submitTableDialog() {
     tableError.value = '房间号需要是 6 位数字。';
     return;
   }
+  const submittedNickname = (props.accountName ?? tableNickname.value).trim();
   if (tableIntent.value === 'join' && selectedRoom.value)
-    emit('joinSeat', selectedRoom.value.code, selectedFaction.value, tableNickname.value.trim());
-  else emit('createTable', selectedFaction.value, tableNickname.value.trim(), tableRoomCode.value);
+    emit('joinSeat', selectedRoom.value.code, selectedFaction.value, submittedNickname);
+  else emit('createTable', selectedFaction.value, submittedNickname, tableRoomCode.value);
 }
+
+watch(effectiveNickname, value => { tableNickname.value = value; });
 </script>
 
 <template>
@@ -140,7 +149,8 @@ function submitTableDialog() {
           <h2>创建房间</h2>
         </header>
         <div class="friend-task-fields">
-          <label>昵称：<input :value="nickname" maxlength="16" autocomplete="nickname" @input="emit('updateNickname', ($event.target as HTMLInputElement).value)"></label>
+          <label>昵称：<input :value="effectiveNickname" maxlength="16" autocomplete="nickname" :readonly="!!accountName" @input="emit('updateNickname', ($event.target as HTMLInputElement).value)"></label>
+          <span v-if="accountName" class="friend-field-note">使用账号昵称</span>
           <label>房间号：<input :value="createCode" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" aria-label="创建房间号" placeholder="例如 001234" :class="{ 'is-invalid': createRoomInvalid }" :aria-invalid="createRoomInvalid ? 'true' : undefined" @input="emit('updateCreateCode', ($event.target as HTMLInputElement).value.replace(/[^0-9]/g, ''))"></label>
           <span class="friend-field-note">6 位数字，前导零会保留</span>
         </div>
@@ -174,7 +184,7 @@ function submitTableDialog() {
       <div class="chess-club-tables">
         <article class="chess-club-table public-table" :class="{ active: publicRoom?.playerCount }">
           <button type="button" class="club-seat wei" :class="{ occupied: playerAt(publicRoom, 'wei') }" :disabled="hasRoom || busy || !online || !!playerAt(publicRoom, 'wei')" @click="openTableDialog(publicRoom, 'wei', 1)">
-            <span class="club-seat-mark">曹</span><span><strong>曹操</strong><small>{{ playerAt(publicRoom, 'wei')?.nickname ?? '空位' }}</small></span>
+            <span class="club-seat-mark">曹</span><span><strong>曹操</strong><small>{{ playerLabel(publicRoom, 'wei') }}</small></span>
           </button>
           <div class="club-table-center" :class="{ watchable: publicRoom && !publicRoom.joinable }" @click="publicRoom && !publicRoom.joinable && emit('watch', publicRoom.code)">
             <span class="club-table-label">常驻棋桌</span>
@@ -189,10 +199,10 @@ function submitTableDialog() {
             </div>
           </div>
           <button type="button" class="club-seat shu" :class="{ occupied: playerAt(publicRoom, 'shu') }" :disabled="hasRoom || busy || !online || !!playerAt(publicRoom, 'shu')" @click="openTableDialog(publicRoom, 'shu', 1)">
-            <span class="club-seat-mark">刘</span><span><strong>刘备</strong><small>{{ playerAt(publicRoom, 'shu')?.nickname ?? '空位' }}</small></span>
+            <span class="club-seat-mark">刘</span><span><strong>刘备</strong><small>{{ playerLabel(publicRoom, 'shu') }}</small></span>
           </button>
           <button type="button" class="club-seat wu" :class="{ occupied: playerAt(publicRoom, 'wu') }" :disabled="hasRoom || busy || !online || !!playerAt(publicRoom, 'wu')" @click="openTableDialog(publicRoom, 'wu', 1)">
-            <span class="club-seat-mark">孙</span><span><strong>孙权</strong><small>{{ playerAt(publicRoom, 'wu')?.nickname ?? '空位' }}</small></span>
+            <span class="club-seat-mark">孙</span><span><strong>孙权</strong><small>{{ playerLabel(publicRoom, 'wu') }}</small></span>
           </button>
         </article>
 
@@ -202,7 +212,7 @@ function submitTableDialog() {
               :disabled="hasRoom || busy || !online || !!playerAt(room, faction) || (!!room && !room.joinable)"
               @click="openTableDialog(room, faction, index + 2)">
               <span class="club-seat-mark">{{ PLAYERS[faction].initial }}</span>
-              <span><strong>{{ PLAYERS[faction].name }}</strong><small>{{ playerAt(room, faction)?.nickname ?? '空位' }}</small></span>
+              <span><strong>{{ PLAYERS[faction].name }}</strong><small>{{ playerLabel(room, faction) }}</small></span>
             </button>
             <div v-if="faction === 'wei'" class="club-table-center" :class="{ watchable: room && !room.joinable }" @click="room && !room.joinable && emit('watch', room.code)">
               <span class="club-table-label">第 {{ index + 2 }} 桌</span>
@@ -254,7 +264,7 @@ function submitTableDialog() {
           </div>
         </section>
         <div class="seat-dialog-fields" :class="{ 'is-create': tableIntent === 'create' }">
-          <label>昵称：<input v-model="tableNickname" maxlength="16" autocomplete="nickname"></label>
+          <label>昵称：<input :value="effectiveNickname" maxlength="16" autocomplete="nickname" :readonly="!!accountName" @input="tableNickname = ($event.target as HTMLInputElement).value"></label>
           <label v-if="tableIntent === 'create'">房间号：<input v-model="tableRoomCode" maxlength="6" inputmode="numeric" autocomplete="off" placeholder="输入 6 位数字房间号" :class="{ 'is-invalid': tableRoomCodeInvalid }" :aria-invalid="tableRoomCodeInvalid ? 'true' : undefined" @input="tableRoomCode = tableRoomCode.replace(/[^0-9]/g, '')"></label>
         </div>
         <p v-if="tableError || error" class="seat-dialog-error" role="alert">{{ tableError || error }}</p>

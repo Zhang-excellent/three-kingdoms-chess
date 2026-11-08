@@ -4,6 +4,7 @@ import { ORDER, PLAYERS, RULES_VERSION, at, legalMoves, newGame, pieceName, play
 import type { Faction, Game, MoveRecord, Piece, Point } from './game.ts';
 import { screenPoint } from './board-view.ts';
 import { useOnlineRoom } from './useOnlineRoom.ts';
+import { useAuth } from './useAuth.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
 import { musicTrack } from './music-catalog.ts';
 import { buildGameRecord, gameRecordFileName } from './game-record.ts';
@@ -15,6 +16,7 @@ import HomePage from './components/HomePage.vue';
 import LobbyPage from './components/LobbyPage.vue';
 import InvitePage from './components/InvitePage.vue';
 import RoomWaiting from './components/RoomWaiting.vue';
+import AuthDialog from './components/AuthDialog.vue';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
 const legacyStorageKeys = ['three-kingdoms-chess:independent-v1', 'three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
@@ -51,6 +53,9 @@ const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLD
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const inviteDialog = ref<HTMLDialogElement | null>(null), inviteLinkInput = ref<HTMLTextAreaElement | null>(null);
+const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null);
+const auth = useAuth(), authRecoveryCode = ref(''), authNotice = ref('');
+const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
 const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-room'>('manual');
 const pendingRoomNavigation = ref<{ next: AppPage; code: string | null; method: 'push' | 'replace' | 'none'; href?: string } | null>(null);
 const leavingRoom = ref(false), inviteActionError = ref('');
@@ -68,6 +73,7 @@ const resumeRememberedMusic = () => {
     void playSelectedMusic();
 };
 onMounted(() => {
+  void auth.refresh();
   if (audioSettings.value.musicEnabled) document.addEventListener('pointerdown', resumeRememberedMusic, { once: true });
   window.addEventListener('popstate', syncPageFromLocation);
   void activatePage(initialRoute.page, initialRoute.roomCode, true);
@@ -85,6 +91,10 @@ const requestedRoomCode = ref(initialRoute.roomCode), lobbyListed = ref(true);
 const { mode, nickname, createCode, joinCode, room, self, connection, error: onlineError, busy: onlineBusy,
   spectating, watchCode, watchingCode, hasSession, savedRoomCode, lobbyRooms, lobbyLoaded,
   inviteRoom, inviteLookup, inviteLookupError, inviteUrl } = online;
+const accountRoomLocked = computed(() => hasSession.value && self.value?.identity === 'account');
+watch(auth.user, user => {
+  if (user) nickname.value = user.username;
+});
 const fallbackGame = newGame();
 const liveGame = computed(() => online.mode.value === 'online' ? (online.room.value?.game ?? fallbackGame) : localGame.value);
 const isReplaying = computed(() => online.mode.value === 'local' && localPanel.value === 'replay' && !!replayDocument.value);
@@ -110,10 +120,11 @@ const playerDisplayName = (faction: Faction) => mode.value === 'online'
   : PLAYERS[faction].name;
 const activePlayerName = computed(() => game.value.turn ? playerDisplayName(game.value.turn) : '');
 const winnerDisplayName = computed(() => game.value.winner ? playerDisplayName(game.value.winner) : '');
-type PlayerStatusTone = 'active' | 'offline' | 'result' | 'out';
+type PlayerStatusTone = 'active' | 'offline' | 'result' | 'out' | 'guest';
 function playerStatuses(faction: Faction): Array<{ label: string; tone: PlayerStatusTone }> {
   const statuses: Array<{ label: string; tone: PlayerStatusTone }> = [];
   const player = mode.value === 'online' ? roomPlayer(faction) : undefined;
+  if (player?.identity === 'guest') statuses.push({ label: '游客', tone: 'guest' });
   if (player && !player.online) statuses.push({ label: '离线', tone: 'offline' });
   if (game.value.eliminated.includes(faction)) statuses.push({ label: '已出局', tone: 'out' });
   else if (game.value.status === 'finished') {
@@ -264,6 +275,55 @@ function openLobbyPage() { void navigatePage('lobby'); }
 function openFriendsPage() { void navigatePage('friends'); }
 function openSpectateEntry() { void navigatePage('spectate', null, 'replace'); }
 function openLocalPage() { void navigatePage('local'); }
+function openAuthDialog() {
+  authNotice.value = '';
+  authDialog.value?.open();
+}
+async function afterAuthChange(message: string): Promise<void> {
+  authNotice.value = message;
+  if (auth.user.value) nickname.value = auth.user.value.username;
+  await online.authChanged();
+}
+async function loginAccount(username: string, password: string, remember: boolean) {
+  const result = await auth.login(username, password, remember);
+  if (result.ok) await afterAuthChange('');
+}
+async function registerAccount(username: string, password: string, remember: boolean) {
+  const result = await auth.register(username, password, remember);
+  if (!result.ok) return;
+  authRecoveryCode.value = result.recoveryCode ?? '';
+  await afterAuthChange('注册成功，已自动登录。请保存下面的恢复码。');
+}
+async function resetAccountPassword(username: string, recoveryCode: string, newPassword: string, remember: boolean) {
+  const result = await auth.resetWithRecovery(username, recoveryCode, newPassword, remember);
+  if (!result.ok) return;
+  authRecoveryCode.value = result.recoveryCode ?? '';
+  await afterAuthChange('密码已重设。旧恢复码和旧登录会话已经失效。');
+}
+async function changeAccountPassword(currentPassword: string, newPassword: string) {
+  const result = await auth.changePassword(currentPassword, newPassword, false);
+  if (!result.ok) return;
+  authNotice.value = '密码已修改，其他旧登录会话已经失效。';
+  await online.authChanged();
+}
+async function regenerateAccountRecovery(password: string) {
+  const result = await auth.regenerateRecovery(password);
+  if (!result.ok) return;
+  authRecoveryCode.value = result.recoveryCode ?? '';
+  authNotice.value = '恢复码已更新，旧恢复码已经失效。';
+}
+async function logoutAccount() {
+  if (accountRoomLocked.value) {
+    auth.setError('请先退出当前房间，再退出账号。');
+    return;
+  }
+  const result = await auth.logout();
+  if (!result.ok) return;
+  authRecoveryCode.value = '';
+  authNotice.value = '';
+  if (!hasSession.value) nickname.value = '';
+  await online.authChanged();
+}
 function openCurrentRoom() {
   const code = room.value?.code ?? savedRoomCode.value;
   void navigatePage('room', code, 'replace');
@@ -604,6 +664,8 @@ async function requestRematch() {
         <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友组局</button>
         <button class="plain-button" :class="{ active: page === 'spectate' }" @click="openSpectateEntry">观战</button>
         <button v-if="hasSession && page !== 'room'" class="plain-button room-return-button" @click="openCurrentRoom">{{ resumeRoomLabel }}</button>
+        <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
+        <button v-else class="plain-button account-button" @click="openAuthDialog">登录 / 注册</button>
         <button class="plain-button" @click="settingsDialog?.showModal()">设置</button>
         <button class="plain-button" @click="rulesDialog?.showModal()">玩法说明</button>
       </div>
@@ -613,7 +675,7 @@ async function requestRematch() {
     <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
       @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @resume="openCurrentRoom" />
 
-    <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname"
+    <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname" :account-name="authUser?.username ?? null"
       :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
       :error="onlineError || (roomRouteMismatch ? `你仍在房间 ${room?.code}。请先返回原房间并退出，再加入 ${requestedRoomCode}。` : '')"
       :loaded="lobbyLoaded" :has-room="hasSession"
@@ -625,7 +687,7 @@ async function requestRematch() {
 
     <InvitePage v-else-if="showInvitePage && requestedRoomCode" :room-code="requestedRoomCode"
       :room="inviteRoom" :lookup="inviteLookup" :error="inviteActionError || inviteLookupError || onlineError"
-      :connection="connection" :busy="onlineBusy"
+      :connection="connection" :busy="onlineBusy" :account-name="authUser?.username ?? null"
       :existing-room-code="roomRouteMismatch ? (room?.code ?? savedRoomCode) : null"
       @join="joinInvitedRoom" @watch="watchInvitedRoom" @retry="retryInvite" @lobby="openLobbyPage"
       @return-room="openCurrentRoom" @exit-room="requestInviteExit" />
@@ -634,7 +696,7 @@ async function requestRematch() {
       <section class="online-entry watch-entry">
         <h2>{{ room ? `正在观战 · 房间 ${room.code}` : '输入房间号观战' }}</h2>
         <p v-if="room">{{ room.phase === 'lobby' ? '等待玩家准备' : '棋局正在进行' }}</p>
-        <div v-if="room" class="lobby-players"><article v-for="player in room.players" :key="player.id"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.nickname }}</strong><small>{{ player.online ? '在线' : '离线' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em></article></div>
+        <div v-if="room" class="lobby-players"><article v-for="player in room.players" :key="player.id"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.identity === 'guest' ? '游客 · ' : '' }}{{ player.nickname }}</strong><small>{{ player.online ? '在线' : '离线' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em></article></div>
         <div v-if="room" class="room-heading-actions"><button class="tool-button" @click="exitWatchingToLobby">退出观战</button><button class="tool-button" @click="exitWatchingToLobby">更换房间</button></div>
         <form v-else class="join-row watch-join" @submit.prevent="watchOnlineRoom()"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" type="button" :disabled="onlineBusy || connection !== 'online'" @click="watchOnlineRoom()">进入观战</button></form>
         <button v-if="!room" class="tool-button" @click="openLobbyPage">返回联机大厅</button>
@@ -811,6 +873,11 @@ async function requestRematch() {
         <button class="primary-button" type="button" @click="inviteDialog?.close()">关闭</button>
       </div>
     </dialog>
+    <AuthDialog ref="authDialog" :user="authUser" :busy="authBusy" :error="authError"
+      :recovery-code="authRecoveryCode" :notice="authNotice" :logout-blocked="accountRoomLocked"
+      @login="loginAccount" @register="registerAccount" @reset="resetAccountPassword"
+      @change-password="changeAccountPassword" @regenerate-recovery="regenerateAccountRecovery"
+      @logout="logoutAccount" @clear-error="auth.clearError" />
   </div>
 </template>
 
@@ -846,6 +913,7 @@ async function requestRematch() {
 .player-status.status-offline{border-color:#cfc5b7;background:#f0ece5;color:#786e61}
 .player-status.status-out{border-color:#cfb9ad;background:#f6ebe6;color:#9c4f43}
 .player-status.status-result{border-color:#cbbd9e;background:#f4eddf;color:#755f3c}
+.player-status.status-guest{border-color:#d7cab8;background:#f4eee4;color:#7d705f}
 .ranking-card{margin-top:18px}
 .board-heading{align-items:flex-end;margin-bottom:14px}
 .board-heading-copy{display:grid;gap:5px;min-width:0}

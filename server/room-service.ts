@@ -8,6 +8,7 @@ interface Player {
   id: string;
   token: string;
   nickname: string;
+  accountId: string | null;
   faction: Faction | null;
   ready: boolean;
   online: boolean;
@@ -52,6 +53,7 @@ export class RoomService {
   private readonly rooms = new Map<string, Room>();
   private readonly tokenRoom = new Map<string, string>();
   private readonly socketRoom = new Map<string, { code: string; playerId: string }>();
+  private readonly socketAccounts = new Map<string, string | null>();
   private readonly spectatorRoom = new Map<string, string>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -74,6 +76,8 @@ export class RoomService {
     const code = cleanCode(codeValue);
     if (!validNewCode(code)) return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '请输入 6 位数字房间号。' } };
     const existing = this.playerForSocket(socketId);
+    if (existing && !this.accountMatches(existing.player, socketId))
+      return { ack: { ok: false, code: 'AUTH_MISMATCH', error: '当前账号与房间席位不一致，请先退出房间。' } };
     if (existing) return existing.room.code === code
       ? { room: existing.room, ack: { ok: true, data: this.receipt(existing.room, existing.player) } }
       : { ack: { ok: false, code: 'ALREADY_IN_ROOM', error: `请先退出房间 ${existing.room.code}。` } };
@@ -93,6 +97,8 @@ export class RoomService {
     const code = cleanCode(codeValue), nickname = cleanNickname(nicknameValue), room = this.rooms.get(code);
     if (!validExistingCode(code)) return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '请输入 6 位房间号。' } };
     const existing = this.playerForSocket(socketId);
+    if (existing && !this.accountMatches(existing.player, socketId))
+      return { ack: { ok: false, code: 'AUTH_MISMATCH', error: '当前账号与房间席位不一致，请先退出房间。' } };
     if (existing) return existing.room.code === code
       ? { room: existing.room, ack: { ok: true, data: this.receipt(existing.room, existing.player) } }
       : { ack: { ok: false, code: 'ALREADY_IN_ROOM', error: `请先退出房间 ${existing.room.code}。` } };
@@ -122,6 +128,8 @@ export class RoomService {
       if (this.spectatorRoom.has(socketId))
         return { ack: { ok: false, code: 'SPECTATOR_ACTIVE', error: '请先退出观战，再加入房间。' } };
       const existing = this.playerForSocket(socketId);
+      if (existing && !this.accountMatches(existing.player, socketId))
+        return { ack: { ok: false, code: 'AUTH_MISMATCH', error: '当前账号与房间席位不一致，请先退出房间。' } };
       if (existing) return { ack: { ok: false, code: 'ALREADY_IN_ROOM', error: `请先退出房间 ${existing.room.code}。` } };
       if (!validExistingCode(code)) return { ack: { ok: false, code: 'INVALID_ROOM_CODE', error: '请输入 6 位房间号。' } };
       if (!isFaction(factionValue)) return { ack: { ok: false, code: 'INVALID_FACTION', error: '请选择魏、蜀或吴。' } };
@@ -163,6 +171,8 @@ export class RoomService {
     if (!room || this.tokenRoom.get(token) !== code) return { ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '重连凭证已失效，房间可能因服务器重启而丢失。' } };
     const player = room.players.find(item => item.token === token);
     if (!player) return { ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '无法恢复这个席位。' } };
+    if (!this.accountMatches(player, socketId))
+      return { ack: { ok: false, code: 'AUTH_MISMATCH', error: '当前账号与房间席位不一致，请使用原账号登录后重试。' } };
     if (!player.online && player.offlineUntil !== null && Date.now() >= player.offlineUntil) {
       this.cancelExpiry(player.id);
       this.removeDepartingPlayer(room, player);
@@ -332,6 +342,7 @@ export class RoomService {
     this.unwatch(socketId);
     const found = this.playerForSocket(socketId);
     this.socketRoom.delete(socketId);
+    this.socketAccounts.delete(socketId);
     if (!found || found.player.socketId !== socketId) return undefined;
     const { room, player } = found;
     player.online = false; player.socketId = null; player.ready = false;
@@ -435,7 +446,17 @@ export class RoomService {
     if (!room || !player) return { ok: false, ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '席位凭证无效，请重新加入房间。' } };
     if (socketId !== undefined && player.socketId !== socketId)
       return { ok: false, ack: { ok: false, code: 'NOT_ACTIVE_CONNECTION', error: '席位已在另一连接上使用，请重新同步。' } };
+    if (socketId !== undefined && !this.accountMatches(player, socketId))
+      return { ok: false, ack: { ok: false, code: 'AUTH_MISMATCH', error: '当前账号与房间席位不一致，请先退出房间。' } };
     return { ok: true, room, player };
+  }
+
+  setSocketAccount(socketId: string, accountId: string | null): void {
+    this.socketAccounts.set(socketId, accountId);
+  }
+
+  private accountMatches(player: Player, socketId: string): boolean {
+    return player.accountId === null || player.accountId === (this.socketAccounts.get(socketId) ?? null);
   }
 
   private playerForSocket(socketId: string): { room: Room; player: Player } | null {
@@ -476,7 +497,10 @@ export class RoomService {
     this.cancelExpiry(player.id);
     this.tokenRoom.delete(player.token);
     room.requests.delete(player.id);
-    if (player.socketId) this.socketRoom.delete(player.socketId);
+    if (player.socketId) {
+      this.socketRoom.delete(player.socketId);
+      this.socketAccounts.delete(player.socketId);
+    }
     room.players = room.players.filter(item => item !== player);
     room.version++;
     if (!room.players.length) {
@@ -536,6 +560,7 @@ export class RoomService {
   private newPlayer(nickname: string, socketId: string): Player {
     const id = randomUUID();
     return { id, token: randomBytes(32).toString('base64url'), nickname: nickname || `游客${id.slice(0, 4).toUpperCase()}`,
+      accountId: this.socketAccounts.get(socketId) ?? null,
       faction: null, ready: false, online: true, offlineUntil: null, socketId };
   }
 
@@ -549,7 +574,8 @@ export class RoomService {
       phase: room.phase,
       playerCount: room.players.length,
       maxPlayers: 3,
-      players: room.players.map(({ nickname, faction, ready, online }) => ({ nickname, faction, ready, online })),
+      players: room.players.map(({ nickname, accountId, faction, ready, online }) =>
+        ({ nickname, identity: accountId ? 'account' : 'guest', faction, ready, online })),
       joinable: this.canJoin(room),
       watchable: true,
     };
@@ -560,15 +586,15 @@ export class RoomService {
   }
 
   private view(room: Room, self: Player): RoomView {
-    const players: RoomPlayerView[] = room.players.map(({ id, nickname, faction, ready, online, offlineUntil }) =>
-      ({ id, nickname, faction, ready, online, offlineUntil }));
+    const players: RoomPlayerView[] = room.players.map(({ id, nickname, accountId, faction, ready, online, offlineUntil }) =>
+      ({ id, nickname, identity: accountId ? 'account' : 'guest', faction, ready, online, offlineUntil }));
     return { code: room.code, phase: room.phase, version: room.version, round: room.round, players, game: room.game ? structuredClone(room.game) : null,
       drawOffer: room.drawOffer ? structuredClone(room.drawOffer) : null, selfId: self.id };
   }
 
   private publicView(room: Room): RoomView {
-    const players: RoomPlayerView[] = room.players.map(({ id, nickname, faction, ready, online, offlineUntil }) =>
-      ({ id, nickname, faction, ready, online, offlineUntil }));
+    const players: RoomPlayerView[] = room.players.map(({ id, nickname, accountId, faction, ready, online, offlineUntil }) =>
+      ({ id, nickname, identity: accountId ? 'account' : 'guest', faction, ready, online, offlineUntil }));
     return { code: room.code, phase: room.phase, version: room.version, round: room.round, players,
       game: room.game ? structuredClone(room.game) : null, drawOffer: room.drawOffer ? structuredClone(room.drawOffer) : null, selfId: null };
   }

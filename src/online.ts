@@ -1,10 +1,12 @@
 import type { Faction, Game, Point } from './game.ts';
 
 export type RoomPhase = 'lobby' | 'playing' | 'finished';
+export type PlayerIdentity = 'account' | 'guest';
 
 export interface RoomPlayerView {
   id: string;
   nickname: string;
+  identity: PlayerIdentity;
   faction: Faction | null;
   ready: boolean;
   online: boolean;
@@ -33,6 +35,7 @@ export interface RoomView {
 
 export interface PublicRoomPlayer {
   nickname: string;
+  identity: PlayerIdentity;
   faction: Faction | null;
   ready: boolean;
   online: boolean;
