@@ -1,5 +1,6 @@
 import { ORDER, PLAYERS, TURN_CYCLE, at, inside, moveError, pieceName } from './game.ts';
 import type { Faction, Game, GameEvent, Kind, MoveRecord, Piece, Point, TurnSlot } from './game.ts';
+import type { ArchivedGameRecord } from './game-history.ts';
 
 export const REPLAY_FORMAT = 'three-kingdoms-chess-record';
 export const REPLAY_FORMAT_VERSION = 1;
@@ -436,6 +437,8 @@ function parseStructured(markdown: string, source: unknown): ReplayParseResult {
         factions: Array.isArray(event.factions) ? event.factions.filter((faction): faction is Faction => ORDER.includes(faction as Faction)) : undefined,
         winner: ORDER.includes(event.winner as Faction) ? event.winner as Faction : null,
         results: event.results && typeof event.results === 'object' ? event.results as ReplayEvent['results'] : undefined,
+        cause: ['resignation', 'exit', 'timeout'].includes(String(event.cause))
+          ? event.cause as ReplayEvent['cause'] : undefined,
         turnBeforeEnd: event.turnBeforeEnd === null ? null : ORDER.includes(event.turnBeforeEnd as Faction)
           ? event.turnBeforeEnd as Faction : undefined,
       };
@@ -462,6 +465,39 @@ export function parseGameRecord(markdown: string): ReplayParseResult {
     return parseStructured(markdown, JSON.parse(json[1]));
   } catch (error) {
     return { ok: false, error: `结构化棋谱 JSON 无法解析：${error instanceof Error ? error.message : '格式错误'}` };
+  }
+}
+
+export function replayArchivedGame(record: ArchivedGameRecord): ReplayParseResult {
+  try {
+    const initialCounts = counts(record.initialPieces);
+    const moves: RawMove[] = record.moves.map(move => ({
+      number: move.number,
+      faction: move.faction,
+      turnSlot: move.turnSlot,
+      kind: move.kind,
+      pieceId: move.pieceId,
+      from: { ...move.from },
+      to: { ...move.to },
+      captured: move.captured ? { ...move.captured } : null,
+      declaredCapture: move.captured ? { faction: move.captured.faction, kind: move.captured.kind } : null,
+      eliminated: [...move.eliminated],
+    }));
+    const declaredResult = resultText(record.finalState.results);
+    return {
+      ok: true,
+      replay: replayFrom('structured', REPLAY_FORMAT_VERSION, record.rulesVersion, record.initialPieces,
+        initialCounts, moves, declaredResult, record.finalState.winner, record.finalPieces, record.events,
+        {
+          status: record.finalState.status,
+          winner: record.finalState.winner,
+          results: record.finalState.results,
+          eliminated: record.finalState.eliminated,
+          turnBeforeEnd: record.finalState.turnBeforeEnd,
+        }),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : '历史对局无法复盘。' };
   }
 }
 

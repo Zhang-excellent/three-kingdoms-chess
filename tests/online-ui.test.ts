@@ -779,7 +779,7 @@ test('all three factions use their default orientation and make a legal move', a
   }
 });
 
-test('account registration, password visibility, recovery code, logout, and invitation URL retention work in the Vue UI', async () => {
+test('account registration, compact profile, password visibility, logout, and invitation URL retention work in the Vue UI', async () => {
   localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
   let wrapper: ReturnType<typeof mount> | null = null;
   const guest = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
@@ -794,6 +794,8 @@ test('account registration, password visibility, recovery code, logout, and invi
     const invitationUrl = location.href;
     await wrapper.findAll('.header-actions button').find(button => button.text() === '登录 / 注册')!.trigger('click');
     await wrapper.findAll('.auth-tabs button').find(button => button.text() === '注册')!.trigger('click');
+    assert.equal(wrapper.findAll('.auth-tabs button').some(button => button.text() === '找回密码'), false);
+    assert.match(wrapper.get('.auth-dialog').text(), /请记住密码，当前暂不提供找回/);
     await wrapper.get('.auth-dialog input[autocomplete="username"]').setValue('界面注册甲');
     const passwordInput = wrapper.get('.auth-dialog input[autocomplete="new-password"]');
     await passwordInput.setValue('1234');
@@ -803,9 +805,15 @@ test('account registration, password visibility, recovery code, logout, and invi
     await wrapper.findAll('.auth-dialog button').find(button => button.text() === '注册并登录')!.trigger('click');
     await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '界面注册甲'), 'Registered account did not appear');
     assert.equal(location.href, invitationUrl);
-    assert.match(wrapper.get('.recovery-card').text(), /TK-/);
+    assert.equal((wrapper.get('.auth-dialog').element as HTMLDialogElement).open, false);
     assert.equal(JSON.stringify(localStorage).includes('1234'), false);
     assert.equal(JSON.stringify(localStorage).includes('three_chess_session'), false);
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '界面注册甲')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.recent-state')?.text().includes('完成一盘联机对局后') ?? false, 'Empty recent game state did not render');
+    assert.doesNotMatch(wrapper.get('.profile-hero').text(), /当前账号|固定用户 ID/);
+    assert.equal(wrapper.find('.settings-form').exists(), false);
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '账号设置')!.trigger('click');
+    assert.ok(wrapper.find('.settings-form').exists());
     await wrapper.get('.auth-dialog .dialog-close').trigger('click');
     const nicknameInput = wrapper.get('.invite-page input[autocomplete="nickname"]');
     assert.equal(nicknameInput.attributes('readonly'), '');
@@ -817,5 +825,77 @@ test('account registration, password visibility, recovery code, logout, and invi
   } finally {
     wrapper?.unmount();
     guest.disconnect();
+  }
+});
+
+test('account profile lists the latest server game and opens it with the shared replay controls', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
+  const account = await server.authService.register('历史界面账号', '1234', true, '127.0.0.1');
+  assert.equal(account.ok, true);
+  if (!account.ok || !account.sessionToken) assert.fail('history account registration failed');
+  const sockets: Socket[] = [];
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    const owner = io(origin, {
+      path: '/three-chess/socket.io', forceNew: true, reconnection: false,
+      extraHeaders: { Cookie: `three_chess_session=${account.sessionToken}` },
+    });
+    sockets.push(owner);
+    for (let index = 0; index < 2; index++) {
+      const guest = io(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+      sockets.push(guest);
+    }
+    await Promise.all(sockets.map(socket => new Promise<void>((resolveConnect, rejectConnect) => {
+      socket.once('connect', resolveConnect);
+      socket.once('connect_error', rejectConnect);
+    })));
+    const a = success(await send<SessionReceipt>(sockets[0], 'room:create', {
+      roomCode: '411108', nickname: '伪造历史昵称', listed: false,
+    }));
+    const b = success(await send<SessionReceipt>(sockets[1], 'room:join', { roomCode: a.roomCode, nickname: '历史对手一' }));
+    const c = success(await send<SessionReceipt>(sockets[2], 'room:join', { roomCode: a.roomCode, nickname: '历史对手二' }));
+    const receipts = [a, b, c];
+    for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
+      success(await send(sockets[index], 'room:choose-faction', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1,
+      }));
+    for (let index = 0; index < 3; index++)
+      success(await send(sockets[index], 'room:ready', {
+        roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1,
+      }));
+    const started = server.rooms.getRoom(a.roomCode)!;
+    success(await send(sockets[0], 'game:move', {
+      roomCode: a.roomCode, reconnectToken: a.reconnectToken,
+      intent: { requestId: 'historyui01', version: started.version, pieceId: 'wei-pawn-0-6', to: { x: 0, y: 5 } },
+    }));
+    success(await send(sockets[2], 'game:resign', { roomCode: a.roomCode, reconnectToken: c.reconnectToken }));
+    success(await send(sockets[1], 'game:resign', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
+    assert.equal(server.rooms.getRoom(a.roomCode)?.game?.status, 'finished');
+
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '登录 / 注册'), 'Home account entry did not render');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '登录 / 注册')!.trigger('click');
+    await wrapper.get('.auth-dialog input[autocomplete="username"]').setValue('历史界面账号');
+    await wrapper.get('.auth-dialog input[autocomplete="current-password"]').setValue('1234');
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '登录' && button.classes().includes('auth-submit'))!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '历史界面账号'), 'History account did not log in');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '历史界面账号')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.recent-list li').length === 1, 'Recent game did not render');
+    const row = wrapper.get('.recent-list li');
+    assert.match(row.text(), /魏 · 曹操/);
+    assert.match(row.text(), /历史对手一、历史对手二/);
+    assert.match(row.text(), /胜利/);
+    assert.match(row.text(), /1 步/);
+    await row.get('.replay-history').trigger('click');
+    await waitUntil(() => wrapper!.find('.replay-console').exists(), 'Historical replay did not open');
+    assert.match(wrapper.get('.board-heading').text(), /初始局面 · 轮到曹操行棋/);
+    await wrapper.findAll('.replay-controls button').find(button => button.text() === '最后一步')!.trigger('click');
+    assert.match(wrapper.get('.board-heading').text(), /曹操 获胜/);
+    assert.match(wrapper.get('.last-move-card').text(), /曹操 · 兵/);
+    assert.equal(wrapper.findAll('.replay-controls button').find(button => button.text() === '初始局面')?.attributes('disabled'), undefined);
+    assert.equal(wrapper.findAll('.replay-controls button').find(button => button.text() === '最后一步')?.attributes('disabled'), '');
+  } finally {
+    wrapper?.unmount();
+    sockets.forEach(socket => socket.disconnect());
   }
 });

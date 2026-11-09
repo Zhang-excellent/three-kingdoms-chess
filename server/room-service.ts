@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { ORDER, drawGame, newGame, playMove, resignFaction } from '../src/game.ts';
-import type { Faction, Game, Point } from '../src/game.ts';
+import type { Faction, Game, GameEvent, Piece, Point } from '../src/game.ts';
+import type { ArchivedGameRecord, GameEndReason, GameParticipant } from '../src/game-history.ts';
 import { PUBLIC_ROOM_CODE } from '../src/online.ts';
 import type { ClientAck, DrawOfferView, DrawVote, MoveIntent, PublicRoomSummary, RoomPhase, RoomPlayerView, RoomView, SessionReceipt } from '../src/online.ts';
 
@@ -32,6 +33,10 @@ interface Room {
   drawOffer: DrawOfferView | null;
   listed: boolean;
   requests: Map<string, Map<string, StoredAck>>;
+  gameId: string | null;
+  gameStartedAt: number | null;
+  gameInitialPieces: Piece[] | null;
+  gameParticipants: Array<Omit<GameParticipant, 'result' | 'eliminated'>> | null;
 }
 
 interface RoomActionResult<T = undefined> {
@@ -60,14 +65,20 @@ export class RoomService {
   private readonly onRoomChanged: (room: Room) => void;
   private readonly lobbyGraceMs: number;
   private readonly gameGraceMs: number;
+  private readonly onGameCompleted: (record: ArchivedGameRecord) => void;
+  private readonly now: () => number;
 
-  constructor(onRoomChanged: (room: Room) => void = () => {}, lobbyGraceMs = 60_000, gameGraceMs = 180_000) {
+  constructor(onRoomChanged: (room: Room) => void = () => {}, lobbyGraceMs = 60_000, gameGraceMs = 180_000,
+    onGameCompleted: (record: ArchivedGameRecord) => void = () => {}, now: () => number = Date.now) {
     this.onRoomChanged = onRoomChanged;
     this.lobbyGraceMs = lobbyGraceMs;
     this.gameGraceMs = gameGraceMs;
+    this.onGameCompleted = onGameCompleted;
+    this.now = now;
     this.rooms.set(PUBLIC_ROOM_CODE, {
       code: PUBLIC_ROOM_CODE, phase: 'lobby', version: 1, round: 1, players: [], spectators: new Set(),
       game: null, drawOffer: null, listed: true, requests: new Map(),
+      gameId: null, gameStartedAt: null, gameInitialPieces: null, gameParticipants: null,
     });
   }
 
@@ -86,7 +97,8 @@ export class RoomService {
     if (this.rooms.has(code)) return { ack: { ok: false, code: 'ROOM_CODE_TAKEN', error: '这个房间号已被使用，请换一个号码。' } };
     const player = this.newPlayer(nickname, socketId);
     const room: Room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(),
-      game: null, drawOffer: null, listed: listedValue !== false, requests: new Map() };
+      game: null, drawOffer: null, listed: listedValue !== false, requests: new Map(),
+      gameId: null, gameStartedAt: null, gameInitialPieces: null, gameParticipants: null };
     this.rooms.set(code, room); this.tokenRoom.set(player.token, code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
     return { room, ack: { ok: true, data: this.receipt(room, player) } };
@@ -105,6 +117,8 @@ export class RoomService {
     if (!room) return { ack: { ok: false, code: 'ROOM_NOT_FOUND', error: '没有找到这个房间，请检查房间号。' } };
     if (room.phase !== 'lobby') return { ack: { ok: false, code: 'GAME_STARTED', error: '该房间已经开局，不能再加入。' } };
     if (!this.canJoin(room)) return { ack: { ok: false, code: 'ROOM_FULL', error: '房间已满，最多三名玩家。' } };
+    if (this.accountAlreadySeated(room, socketId))
+      return { ack: { ok: false, code: 'ACCOUNT_ALREADY_SEATED', error: '这个账号已经在该房间占有一个席位。' } };
     const player = this.newPlayer(nickname, socketId);
     room.players.push(player); room.version++; this.tokenRoom.set(player.token, room.code);
     this.socketRoom.set(socketId, { code, playerId: player.id });
@@ -140,7 +154,8 @@ export class RoomService {
         const player = this.newPlayer(nickname, socketId);
         player.faction = factionValue;
         room = { code, phase: 'lobby', version: 1, round: 1, players: [player], spectators: new Set(),
-          game: null, drawOffer: null, listed: listedValue !== false, requests: new Map() };
+          game: null, drawOffer: null, listed: listedValue !== false, requests: new Map(),
+          gameId: null, gameStartedAt: null, gameInitialPieces: null, gameParticipants: null };
         this.rooms.set(code, room);
         this.tokenRoom.set(player.token, code);
         this.socketRoom.set(socketId, { code, playerId: player.id });
@@ -148,6 +163,8 @@ export class RoomService {
       }
       if (room.phase !== 'lobby') return { ack: { ok: false, code: 'GAME_STARTED', error: '该房间已经开局，不能中途入座。' } };
       if (!this.canJoin(room)) return { ack: { ok: false, code: 'ROOM_FULL', error: '这个房间已经坐满。' } };
+      if (this.accountAlreadySeated(room, socketId))
+        return { ack: { ok: false, code: 'ACCOUNT_ALREADY_SEATED', error: '这个账号已经在该房间占有一个席位。' } };
       if (room.players.some(player => player.faction === factionValue))
         return { ack: { ok: false, code: 'SEAT_TAKEN', error: '这个阵营席位刚刚已被其他玩家选择。' } };
       const player = this.newPlayer(nickname, socketId);
@@ -175,7 +192,7 @@ export class RoomService {
       return { ack: { ok: false, code: 'AUTH_MISMATCH', error: '当前账号与房间席位不一致，请使用原账号登录后重试。' } };
     if (!player.online && player.offlineUntil !== null && Date.now() >= player.offlineUntil) {
       this.cancelExpiry(player.id);
-      this.removeDepartingPlayer(room, player);
+      this.removeDepartingPlayer(room, player, 'timeout');
       return { room, ack: { ok: false, code: 'SESSION_NOT_FOUND', error: '席位保留时间已结束。' } };
     }
     const replacedSocketId = player.socketId && player.socketId !== socketId ? player.socketId : undefined;
@@ -212,7 +229,8 @@ export class RoomService {
     player.ready = readyValue; room.version++;
     if (room.players.length === 3 && room.players.every(item => item.online && item.faction && item.ready)
       && new Set(room.players.map(item => item.faction)).size === 3) {
-      room.game = newGame(); room.phase = 'playing'; room.drawOffer = null; room.version++;
+      this.beginGame(room);
+      room.phase = 'playing'; room.drawOffer = null; room.version++;
       room.requests.clear();
     }
     return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
@@ -244,11 +262,12 @@ export class RoomService {
       const { room, player } = found;
       if (room.phase !== 'playing' || !room.game || !player.faction || room.game.eliminated.includes(player.faction))
         return { ack: { ok: false, code: 'CANNOT_RESIGN', error: '该阵营已出局或对局已结束。', state: this.view(room, player) } };
-      const result = resignFaction(room.game, player.faction);
+      const result = resignFaction(room.game, player.faction, 'resignation');
       if (!result.ok) return { ack: { ok: false, code: 'CANNOT_RESIGN', error: result.error, state: this.view(room, player) } };
       room.game = result.game;
       room.drawOffer = null;
       room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
+      if (room.game.status === 'finished') this.archiveCompletedGame(room, 'resignation');
       room.version++;
       return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
     });
@@ -305,6 +324,7 @@ export class RoomService {
         const result = drawGame(room.game);
         if (!result.ok) return { ack: { ok: false, code: 'CANNOT_DRAW', error: result.error, state: this.view(room, player) } };
         room.game = result.game; room.phase = 'finished'; room.drawOffer = null;
+        this.archiveCompletedGame(room, 'agreement_draw');
       }
       room.version++;
       return { room, ack: { ok: true, data: { state: this.view(room, player) } } };
@@ -320,7 +340,7 @@ export class RoomService {
       const { room, player } = found;
       if (player.socketId && player.socketId !== socketId)
         return { ack: { ok: false, code: 'NOT_ACTIVE_CONNECTION', error: '席位已在另一连接上使用，请重新同步。' } };
-      const departedSocketId = this.removeDepartingPlayer(room, player);
+      const departedSocketId = this.removeDepartingPlayer(room, player, 'exit');
       return { room, departedSocketId, ack: { ok: true, data: undefined } };
     });
   }
@@ -429,6 +449,7 @@ export class RoomService {
     const result = playMove(room.game, intent.pieceId, intent.to);
     if (!result.ok) return reject('ILLEGAL_MOVE', result.error);
     room.game = result.game; room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
+    if (room.game.status === 'finished') this.archiveCompletedGame(room, 'elimination');
     room.drawOffer = null; room.version++;
     const ack: ClientAck<{ state: RoomView }> = { ok: true, data: { state: this.view(room, player) } };
     playerRequests.set(intent.requestId, { fingerprint, ack });
@@ -486,7 +507,7 @@ export class RoomService {
         }
         return;
       }
-      this.removeDepartingPlayer(room, player);
+      this.removeDepartingPlayer(room, player, 'timeout');
       this.onRoomChanged(room);
     }, delay);
     timer.unref?.();
@@ -509,13 +530,14 @@ export class RoomService {
     }
   }
 
-  private removeDepartingPlayer(room: Room, player: Player): string | undefined {
+  private removeDepartingPlayer(room: Room, player: Player, cause: 'exit' | 'timeout'): string | undefined {
     if (room.phase === 'playing' && room.game && player.faction && !room.game.eliminated.includes(player.faction)) {
-      const result = resignFaction(room.game, player.faction);
+      const result = resignFaction(room.game, player.faction, cause);
       if (result.ok) {
         room.game = result.game;
         room.drawOffer = null;
         room.phase = room.game.status === 'finished' ? 'finished' : 'playing';
+        if (room.game.status === 'finished') this.archiveCompletedGame(room, cause);
       }
     }
     const departedSocketId = player.socketId ?? undefined;
@@ -542,12 +564,20 @@ export class RoomService {
     room.game = null;
     room.drawOffer = null;
     room.requests.clear();
+    room.gameId = null;
+    room.gameStartedAt = null;
+    room.gameInitialPieces = null;
+    room.gameParticipants = null;
     room.version++;
   }
 
   private nextLobby(room: Room): void {
     room.phase = 'lobby'; room.round++; room.drawOffer = null; room.version++;
     room.requests.clear();
+    room.gameId = null;
+    room.gameStartedAt = null;
+    room.gameInitialPieces = null;
+    room.gameParticipants = null;
     for (const player of room.players) {
       player.ready = false;
       if (!player.online) {
@@ -557,11 +587,79 @@ export class RoomService {
     }
   }
 
+  private beginGame(room: Room): void {
+    const game = newGame();
+    const participants = room.players.map(player => {
+      if (!player.faction) throw new Error('开局时每个席位都必须有阵营。');
+      return {
+        playerId: player.id,
+        userId: player.accountId,
+        nickname: player.nickname,
+        faction: player.faction,
+      };
+    });
+    room.game = game;
+    room.gameId = randomUUID();
+    room.gameStartedAt = this.now();
+    room.gameInitialPieces = structuredClone(game.pieces);
+    room.gameParticipants = participants;
+  }
+
+  private archiveCompletedGame(room: Room, endReason: GameEndReason): void {
+    const game = room.game;
+    if (!game || game.status !== 'finished' || !room.gameId || room.gameStartedAt === null
+      || !room.gameInitialPieces || !room.gameParticipants) return;
+    const events: GameEvent[] = [
+      ...(game.events ?? []),
+      ...game.history.filter(record => record.eliminated.length)
+        .map(record => ({ type: 'elimination' as const, step: record.number, factions: [...record.eliminated] })),
+      { type: 'result', step: game.history.length, winner: game.winner, results: { ...game.results } },
+    ];
+    const uniqueEvents = events.filter((event, index, all) =>
+      all.findIndex(item => JSON.stringify(item) === JSON.stringify(event)) === index);
+    const participants: GameParticipant[] = room.gameParticipants.map(participant => ({
+      ...participant,
+      result: game.results[participant.faction],
+      eliminated: game.eliminated.includes(participant.faction),
+    }));
+    this.onGameCompleted({
+      id: room.gameId,
+      roomCode: room.code,
+      round: room.round,
+      startedAt: room.gameStartedAt,
+      endedAt: this.now(),
+      rulesVersion: game.rulesVersion,
+      initialPieces: structuredClone(room.gameInitialPieces),
+      participants,
+      moves: structuredClone(game.history),
+      events: uniqueEvents,
+      finalPieces: structuredClone(game.pieces),
+      finalState: {
+        status: 'finished',
+        winner: game.winner,
+        results: { ...game.results },
+        eliminated: [...game.eliminated],
+        turnBeforeEnd: game.turnBeforeEnd ?? null,
+      },
+      endReason,
+      moveCount: game.history.length,
+    });
+    room.gameId = null;
+    room.gameStartedAt = null;
+    room.gameInitialPieces = null;
+    room.gameParticipants = null;
+  }
+
   private newPlayer(nickname: string, socketId: string): Player {
     const id = randomUUID();
     return { id, token: randomBytes(32).toString('base64url'), nickname: nickname || `游客${id.slice(0, 4).toUpperCase()}`,
       accountId: this.socketAccounts.get(socketId) ?? null,
       faction: null, ready: false, online: true, offlineUntil: null, socketId };
+  }
+
+  private accountAlreadySeated(room: Room, socketId: string): boolean {
+    const accountId = this.socketAccounts.get(socketId);
+    return !!accountId && room.players.some(player => player.accountId === accountId);
   }
 
   private canJoin(room: Room): boolean {

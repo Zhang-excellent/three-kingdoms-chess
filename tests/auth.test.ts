@@ -107,7 +107,7 @@ test('registration validates exact password and username rules, normalizes case,
     assert.match(fourCharacterPassword.setCookie ?? '', /HttpOnly/);
     assert.match(fourCharacterPassword.setCookie ?? '', /SameSite=Lax/);
     assert.equal((fourCharacterPassword.body.user as { username: string }).username, '测试玩家_甲');
-    assert.match(String(fourCharacterPassword.body.recoveryCode), /^TK-/);
+    assert.equal('recoveryCode' in fourCharacterPassword.body, false);
     const duplicate = await api(origin, 'register', 'POST', { username: '测试玩家_甲', password: '5678' });
     assert.equal(duplicate.status, 409);
     assert.equal(duplicate.body.error, '这个昵称已经有人使用，请换一个');
@@ -122,7 +122,7 @@ test('registration validates exact password and username rules, normalizes case,
     database.close();
     assert.match(stored.password_hash, /^scrypt\$/);
     assert.equal(stored.password_hash.includes('1234'), false);
-    assert.equal(stored.recovery_hash.includes(String(fourCharacterPassword.body.recoveryCode)), false);
+    assert.equal(stored.recovery_hash, 'disabled');
   } finally {
     await closeServer(server);
   }
@@ -201,40 +201,43 @@ test('sessions expire after seven days and survive a Node service restart', asyn
   }
 });
 
-test('recovery codes require username plus code, reset once, rotate immediately, and revoke old sessions', async () => {
-  const { server, origin } = await startServer();
+test('recovery user flow is removed while the legacy recovery column remains intact', async () => {
+  const authDbPath = tempPath();
+  const legacy = new DatabaseSync(authDbPath);
+  legacy.exec(`
+    CREATE TABLE auth_users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      username_key TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      recovery_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    INSERT INTO auth_users VALUES ('legacy-user', '兼容玩家', '兼容玩家', 'scrypt$legacy', 'legacy-preserved', 1, 1);
+    PRAGMA user_version = 1;
+  `);
+  legacy.close();
+  const authService = new AuthService(authDbPath);
+  const { server, origin } = await startServer({ authService });
   try {
-    const registered = await register(origin, '恢复玩家', '1234');
-    const oldCookie = registered.cookie!;
-    const oldCode = String(registered.body.recoveryCode);
-    const missingCode = await api(origin, 'recovery/reset', 'POST', {
-      username: '恢复玩家', newPassword: '5678', remember: false,
-    });
-    assert.equal(missingCode.status, 400);
-    const regenerated = await api(origin, 'recovery/regenerate', 'POST', {
-      password: '1234',
-    }, oldCookie);
-    assert.equal(regenerated.status, 200);
-    const regeneratedCode = String(regenerated.body.recoveryCode);
-    assert.notEqual(regeneratedCode, oldCode);
-    assert.equal((await api(origin, 'recovery/reset', 'POST', {
-      username: '恢复玩家', recoveryCode: oldCode, newPassword: '5678', remember: false,
-    })).status, 401);
-    const reset = await api(origin, 'recovery/reset', 'POST', {
-      username: ' 恢复玩家 ', recoveryCode: regeneratedCode, newPassword: '5678', remember: false,
-    });
-    assert.equal(reset.status, 200);
-    const newCode = String(reset.body.recoveryCode);
-    assert.notEqual(newCode, regeneratedCode);
-    assert.equal((await api(origin, 'me', 'GET', undefined, oldCookie)).body.user, null);
-    const reused = await api(origin, 'recovery/reset', 'POST', {
-      username: '恢复玩家', recoveryCode: oldCode, newPassword: '9999', remember: false,
-    });
-    assert.equal(reused.status, 401);
-    const nextReset = await api(origin, 'recovery/reset', 'POST', {
-      username: '恢复玩家', recoveryCode: newCode, newPassword: '9999', remember: false,
-    });
-    assert.equal(nextReset.status, 200);
+    assert.equal((await api(origin, 'recovery/reset', 'POST', {})).status, 404);
+    assert.equal((await api(origin, 'recovery/regenerate', 'POST', {})).status, 404);
+    const verification = new DatabaseSync(authDbPath, { readOnly: true });
+    const version = verification.prepare('PRAGMA user_version').get() as unknown as { user_version: number };
+    const rawRow = verification.prepare('SELECT recovery_hash FROM auth_users WHERE id = ?').get('legacy-user');
+    const row = rawRow as unknown as { recovery_hash: string };
+    const gameTable = verification.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_records'").get();
+    verification.close();
+    assert.equal(version.user_version, 3);
+    assert.equal(row.recovery_hash, 'legacy-preserved');
+    assert.ok(gameTable);
   } finally {
     await closeServer(server);
   }
@@ -276,7 +279,7 @@ test('authenticated Socket.IO rooms use the server account nickname and reject a
   }
 });
 
-test('login and registration endpoints enforce short fixed-window rate limits without locking accounts', async () => {
+test('login attempts enforce short fixed-window rate limits without permanently locking accounts', async () => {
   let currentTime = Date.now();
   const authService = new AuthService(':memory:', { now: () => currentTime });
   const { server, origin } = await startServer({ authService, now: () => currentTime });
@@ -292,6 +295,29 @@ test('login and registration endpoints enforce short fixed-window rate limits wi
     currentTime += 15 * 60 * 1000 + 1;
     assert.equal((await api(origin, 'login', 'POST', {
       username: '限流玩家', password: '1234', remember: false,
+    })).status, 200);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('registration rate limits are configurable for shared networks and use server-side time windows', async () => {
+  let currentTime = Date.now();
+  const now = () => currentTime;
+  const authService = new AuthService(':memory:', {
+    now,
+    rateLimits: { registerAttempts: 3, registerWindowMs: 1_000 },
+  });
+  const { server, origin } = await startServer({ authService, now });
+  try {
+    for (let index = 0; index < 3; index++)
+      await register(origin, `共享设备账号${index}`, '1234');
+    const limited = await api(origin, 'register', 'POST', { username: '共享设备账号4', password: '1234', remember: false });
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.body.retryAfterSeconds ?? 1) >= 1);
+    currentTime += 1_001;
+    assert.equal((await api(origin, 'register', 'POST', {
+      username: '共享设备账号4', password: '1234', remember: false,
     })).status, 200);
   } finally {
     await closeServer(server);

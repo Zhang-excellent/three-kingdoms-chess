@@ -16,6 +16,7 @@ for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthD
   const componentOutput = resolve(root, 'tests', `.compiled-${name}.mts`);
   writeFileSync(componentOutput, compiledComponent.content
     .replaceAll("'../auth.ts'", "'../src/auth.ts'")
+    .replaceAll("'../game-history.ts'", "'../src/game-history.ts'")
     .replaceAll("'../game.ts'", "'../src/game.ts'")
     .replaceAll("'../online.ts'", "'../src/online.ts'"));
   componentOutputs.push(componentOutput);
@@ -31,6 +32,7 @@ writeFileSync(output, result.content
   .replaceAll("'./components/RoomWaiting.vue'", "'./.compiled-RoomWaiting.mts'")
   .replaceAll("'./components/AuthDialog.vue'", "'./.compiled-AuthDialog.mts'")
   .replaceAll("'./game.ts'", "'../src/game.ts'")
+  .replaceAll("'./game-history.ts'", "'../src/game-history.ts'")
   .replaceAll("'./board-view.ts'", "'../src/board-view.ts'")
   .replaceAll("'./audio.ts'", "'../src/audio.ts'")
   .replaceAll("'./music-catalog.ts'", "'../src/music-catalog.ts'")
@@ -41,7 +43,7 @@ writeFileSync(output, result.content
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/game.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/navigation.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
+  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/navigation.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
     cwd: root, stdio: 'inherit', env: { ...process.env, NODE_ENV: 'test' },
   });
   status = run.status ?? 1;

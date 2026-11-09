@@ -8,7 +8,7 @@ import { useAuth } from './useAuth.ts';
 import { AUDIO_SETTINGS_KEY, GameAudio, MoveSoundTracker, loadAudioSettings } from './audio.ts';
 import { musicTrack } from './music-catalog.ts';
 import { buildGameRecord, gameRecordFileName } from './game-record.ts';
-import { parseGameRecord } from './game-replay.ts';
+import { parseGameRecord, replayArchivedGame } from './game-replay.ts';
 import type { ReplayDocument } from './game-replay.ts';
 import { appRouteUrl, parseAppRoute } from './navigation.ts';
 import type { AppPage } from './navigation.ts';
@@ -54,8 +54,11 @@ const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLD
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const inviteDialog = ref<HTMLDialogElement | null>(null), inviteLinkInput = ref<HTMLTextAreaElement | null>(null);
 const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null);
-const auth = useAuth(), authRecoveryCode = ref(''), authNotice = ref('');
+const auth = useAuth(), authNotice = ref('');
 const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
+const authRecentGames = auth.recentGames, authRecentLoading = auth.recentLoading, authRecentError = auth.recentError;
+const pendingHistoricalReplay = ref<{ replay: ReplayDocument; fileName: string } | null>(null);
+const historicalGameId = ref<string | null>(null);
 const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-room'>('manual');
 const pendingRoomNavigation = ref<{ next: AppPage; code: string | null; method: 'push' | 'replace' | 'none'; href?: string } | null>(null);
 const leavingRoom = ref(false), inviteActionError = ref('');
@@ -218,12 +221,14 @@ async function completeRoomDeparture(): Promise<void> {
       if (!ack.ok) {
         onlineError.value = ack.error;
         pendingRoomNavigation.value = null;
+        pendingHistoricalReplay.value = null;
         return;
       }
     }
     pendingRoomNavigation.value = null;
     leavingRoom.value = false;
     await applyNavigation(target);
+    showPendingHistoricalReplay();
   } finally {
     leavingRoom.value = false;
   }
@@ -286,31 +291,21 @@ async function afterAuthChange(message: string): Promise<void> {
 }
 async function loginAccount(username: string, password: string, remember: boolean) {
   const result = await auth.login(username, password, remember);
-  if (result.ok) await afterAuthChange('');
+  if (!result.ok) return;
+  authDialog.value?.close();
+  await afterAuthChange('');
 }
 async function registerAccount(username: string, password: string, remember: boolean) {
   const result = await auth.register(username, password, remember);
   if (!result.ok) return;
-  authRecoveryCode.value = result.recoveryCode ?? '';
-  await afterAuthChange('注册成功，已自动登录。请保存下面的恢复码。');
-}
-async function resetAccountPassword(username: string, recoveryCode: string, newPassword: string, remember: boolean) {
-  const result = await auth.resetWithRecovery(username, recoveryCode, newPassword, remember);
-  if (!result.ok) return;
-  authRecoveryCode.value = result.recoveryCode ?? '';
-  await afterAuthChange('密码已重设。旧恢复码和旧登录会话已经失效。');
+  authDialog.value?.close();
+  await afterAuthChange('注册成功，已自动登录。');
 }
 async function changeAccountPassword(currentPassword: string, newPassword: string) {
   const result = await auth.changePassword(currentPassword, newPassword, false);
   if (!result.ok) return;
   authNotice.value = '密码已修改，其他旧登录会话已经失效。';
   await online.authChanged();
-}
-async function regenerateAccountRecovery(password: string) {
-  const result = await auth.regenerateRecovery(password);
-  if (!result.ok) return;
-  authRecoveryCode.value = result.recoveryCode ?? '';
-  authNotice.value = '恢复码已更新，旧恢复码已经失效。';
 }
 async function logoutAccount() {
   if (accountRoomLocked.value) {
@@ -319,10 +314,47 @@ async function logoutAccount() {
   }
   const result = await auth.logout();
   if (!result.ok) return;
-  authRecoveryCode.value = '';
   authNotice.value = '';
+  if (replayFileName.value.startsWith('历史对局')) {
+    replayDocument.value = null;
+    replayIndex.value = 0;
+    replayFileName.value = '';
+    localPanel.value = 'play';
+  }
+  historicalGameId.value = null;
   if (!hasSession.value) nickname.value = '';
   await online.authChanged();
+}
+function showPendingHistoricalReplay() {
+  if (!pendingHistoricalReplay.value || page.value !== 'local') return;
+  stopReplayPlayback();
+  replayDocument.value = pendingHistoricalReplay.value.replay;
+  replayFileName.value = pendingHistoricalReplay.value.fileName;
+  replayIndex.value = 0;
+  localPanel.value = 'replay';
+  selectedId.value = null;
+  pendingHistoricalReplay.value = null;
+}
+async function openHistoricalReplay(gameId: string) {
+  auth.clearError();
+  const result = await auth.loadGame(gameId);
+  if (!result.ok) {
+    auth.setError(result.error);
+    return;
+  }
+  const parsed = replayArchivedGame(result.game);
+  if (!parsed.ok) {
+    auth.setError(parsed.error);
+    return;
+  }
+  authDialog.value?.close();
+  historicalGameId.value = gameId;
+  pendingHistoricalReplay.value = {
+    replay: parsed.replay,
+    fileName: `历史对局 ${result.game.roomCode} · ${new Date(result.game.endedAt).toLocaleDateString('zh-CN')}`,
+  };
+  await navigatePage('local', null, 'replace');
+  if (!pendingRoomNavigation.value) showPendingHistoricalReplay();
 }
 function openCurrentRoom() {
   const code = room.value?.code ?? savedRoomCode.value;
@@ -441,6 +473,7 @@ async function importReplayFile(file: File) {
     replayDocument.value = result.replay;
     replayIndex.value = 0;
     replayFileName.value = file.name;
+    historicalGameId.value = null;
     localPanel.value = 'replay';
     selectedId.value = null;
   } catch {
@@ -617,6 +650,7 @@ function confirmLeave() {
 }
 function cancelExitRequest() {
   pendingRoomNavigation.value = null;
+  pendingHistoricalReplay.value = null;
   exitDialog.value?.close();
 }
 function exitWatchingToLobby() {
@@ -874,10 +908,11 @@ async function requestRematch() {
       </div>
     </dialog>
     <AuthDialog ref="authDialog" :user="authUser" :busy="authBusy" :error="authError"
-      :recovery-code="authRecoveryCode" :notice="authNotice" :logout-blocked="accountRoomLocked"
-      @login="loginAccount" @register="registerAccount" @reset="resetAccountPassword"
-      @change-password="changeAccountPassword" @regenerate-recovery="regenerateAccountRecovery"
-      @logout="logoutAccount" @clear-error="auth.clearError" />
+      :notice="authNotice" :logout-blocked="accountRoomLocked"
+      :recent-games="authRecentGames" :recent-loading="authRecentLoading" :recent-error="authRecentError"
+      @login="loginAccount" @register="registerAccount" @change-password="changeAccountPassword"
+      @logout="logoutAccount" @replay="openHistoricalReplay" @refresh-recent="auth.loadRecent"
+      @clear-error="auth.clearError" />
   </div>
 </template>
 

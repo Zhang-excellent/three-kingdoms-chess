@@ -1,30 +1,25 @@
 import { ref } from 'vue';
 import type { AuthUser } from './auth.ts';
+import type { ArchivedGameRecord, RecentGameSummary } from './game-history.ts';
 
-interface AuthApiSuccess {
-  ok: true;
-  user: AuthUser | null;
-  recoveryCode?: string;
-}
-
-interface AuthApiFailure {
+interface ApiFailure {
   ok: false;
   code: string;
   error: string;
 }
 
-type AuthApiResult = AuthApiSuccess | AuthApiFailure;
-type AuthActionResult = { ok: true; user: AuthUser; recoveryCode?: string } | AuthApiFailure;
+type ApiResult<T> = ({ ok: true } & T) | ApiFailure;
+type UserResult = ApiResult<{ user: AuthUser }>;
 
-async function request(path: string, body?: Record<string, unknown>): Promise<AuthApiResult> {
+async function request<T>(path: string, body?: Record<string, unknown>): Promise<ApiResult<T>> {
   try {
-    const response = await fetch(`/three-chess/api/auth/${path}`, {
+    const response = await fetch(`/three-chess/api/${path}`, {
       method: body ? 'POST' : 'GET',
       credentials: 'same-origin',
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
-    const result = await response.json() as AuthApiResult;
+    const result = await response.json() as ApiResult<T>;
     if (!response.ok && result.ok) return { ok: false, code: 'INVALID_RESPONSE', error: '账号服务返回了无效响应。' };
     return result;
   } catch {
@@ -37,50 +32,71 @@ export function useAuth() {
   const ready = ref(false);
   const busy = ref(false);
   const error = ref('');
+  const recentGames = ref<RecentGameSummary[]>([]);
+  const recentLoading = ref(false);
+  const recentError = ref('');
 
   async function refresh(): Promise<void> {
-    const result = await request('me');
+    const result = await request<{ user: AuthUser | null }>('auth/me');
     if (result.ok) user.value = result.user;
     else error.value = result.error;
     ready.value = true;
+    if (user.value) await loadRecent();
   }
 
-  async function run(action: () => Promise<AuthApiResult>): Promise<AuthActionResult> {
+  async function run(action: () => Promise<UserResult>): Promise<UserResult> {
     if (busy.value) return { ok: false, code: 'BUSY', error: '正在处理上一项账号操作，请稍候。' };
     busy.value = true; error.value = '';
     try {
       const result = await action();
-      if (!result.ok || !result.user) {
-        const failure = result.ok ? { ok: false as const, code: 'INVALID_RESPONSE', error: '账号服务没有返回用户信息。' } : result;
-        error.value = failure.error;
-        return failure;
+      if (!result.ok) error.value = result.error;
+      else {
+        user.value = result.user;
+        await loadRecent();
       }
-      user.value = result.user;
-      return { ok: true, user: result.user, recoveryCode: result.recoveryCode };
+      return result;
     } finally {
       busy.value = false;
     }
   }
 
   const login = (username: string, password: string, remember: boolean) =>
-    run(() => request('login', { username, password, remember }));
+    run(() => request<{ user: AuthUser }>('auth/login', { username, password, remember }));
   const register = (username: string, password: string, remember: boolean) =>
-    run(() => request('register', { username, password, remember }));
+    run(() => request<{ user: AuthUser }>('auth/register', { username, password, remember }));
   const changePassword = (currentPassword: string, newPassword: string, remember: boolean) =>
-    run(() => request('password', { currentPassword, newPassword, remember }));
-  const regenerateRecovery = (password: string) =>
-    run(() => request('recovery/regenerate', { password }));
-  const resetWithRecovery = (username: string, recoveryCode: string, newPassword: string, remember: boolean) =>
-    run(() => request('recovery/reset', { username, recoveryCode, newPassword, remember }));
+    run(() => request<{ user: AuthUser }>('auth/password', { currentPassword, newPassword, remember }));
 
-  async function logout(): Promise<AuthActionResult> {
+  async function loadRecent(): Promise<void> {
+    if (!user.value) {
+      recentGames.value = [];
+      recentError.value = '';
+      return;
+    }
+    recentLoading.value = true; recentError.value = '';
+    try {
+      const result = await request<{ games: RecentGameSummary[] }>('games/recent');
+      if (result.ok) recentGames.value = result.games.slice(0, 5);
+      else recentError.value = result.error;
+    } finally {
+      recentLoading.value = false;
+    }
+  }
+
+  async function loadGame(gameId: string): Promise<ApiResult<{ game: ArchivedGameRecord }>> {
+    return request<{ game: ArchivedGameRecord }>(`games/${encodeURIComponent(gameId)}`);
+  }
+
+  async function logout(): Promise<ApiResult<Record<string, never>>> {
     if (busy.value) return { ok: false, code: 'BUSY', error: '正在处理上一项账号操作，请稍候。' };
     busy.value = true; error.value = '';
     try {
-      const result = await request('logout', {});
+      const result = await request<Record<string, never>>('auth/logout', {});
       if (!result.ok) { error.value = result.error; return result; }
       user.value = null;
-      return { ok: true, user: { id: '', username: '' } };
+      recentGames.value = [];
+      recentError.value = '';
+      return result;
     } finally {
       busy.value = false;
     }
@@ -94,6 +110,8 @@ export function useAuth() {
     error.value = value;
   }
 
-  return { user, ready, busy, error, refresh, login, register, changePassword, regenerateRecovery,
-    resetWithRecovery, logout, clearError, setError };
+  return {
+    user, ready, busy, error, recentGames, recentLoading, recentError,
+    refresh, login, register, changePassword, loadRecent, loadGame, logout, clearError, setError,
+  };
 }

@@ -12,6 +12,7 @@ export interface GameEvent {
   winner?: Faction | null;
   results?: Record<Faction, FactionResult>;
   turnBeforeEnd?: Faction | null;
+  cause?: 'resignation' | 'exit' | 'timeout';
 }
 export interface MoveRecord {
   number: number; faction: Faction; turnSlot: TurnSlot; pieceId: string; kind: Kind;
@@ -165,7 +166,8 @@ function settleNextTurn(game: Game, previousSlot: TurnSlot, notices: string[]): 
 }
 
 /** A player may resign outside their turn; the current turn only advances if that player was due to move. */
-export function resignFaction(current: Game, faction: Faction): MoveResult {
+export function resignFaction(current: Game, faction: Faction,
+  cause: 'resignation' | 'exit' | 'timeout' = 'resignation'): MoveResult {
   if (current.status !== 'playing' || current.eliminated.includes(faction))
     return { ok: false, error: '该阵营已经出局或对局已经结束。' };
   const game: Game = structuredClone(current), turnBeforeEnd = current.turn;
@@ -174,7 +176,7 @@ export function resignFaction(current: Game, faction: Faction): MoveResult {
   notices.push(`${PLAYERS[faction].name}认输失败，${PLAYERS[faction].nation}军全部撤出。`);
   if (game.turn === faction) settleNextTurn(game, current.turnSlot!, notices);
   else finishIfWinner(game);
-  game.events = [...(game.events ?? []), { type: 'resign', step: game.history.length, faction }];
+  game.events = [...(game.events ?? []), { type: 'resign', step: game.history.length, faction, cause }];
   if (game.status === 'finished') game.turnBeforeEnd = turnBeforeEnd;
   if (game.status === 'finished') notices.push(`${PLAYERS[game.winner!].name}获胜。`);
   else notices.push(`轮到${PLAYERS[game.turn!].name}行棋。`);
@@ -251,7 +253,8 @@ export function validGame(value: unknown): value is Game {
     || !Number.isInteger(event.step) || event.step < 0 || event.step > game.history.length
     || (event.faction !== undefined && !ORDER.includes(event.faction))
     || (event.factions !== undefined && (!Array.isArray(event.factions) || event.factions.some(faction => !ORDER.includes(faction))))
-    || (event.turnBeforeEnd !== undefined && event.turnBeforeEnd !== null && !ORDER.includes(event.turnBeforeEnd))))) return false;
+    || (event.turnBeforeEnd !== undefined && event.turnBeforeEnd !== null && !ORDER.includes(event.turnBeforeEnd))
+    || (event.cause !== undefined && !['resignation', 'exit', 'timeout'].includes(event.cause))))) return false;
   const ids = new Set<string>(), positions = new Set<string>();
   const kinds: Kind[] = ['king', 'rook', 'horse', 'elephant', 'advisor', 'cannon', 'pawn', 'feng'];
   for (const piece of game.pieces) {

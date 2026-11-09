@@ -35,11 +35,3 @@ export function passwordError(value: unknown): string | null {
     return `密码需要 ${PASSWORD_MIN_LENGTH}～${PASSWORD_MAX_LENGTH} 个字符。`;
   return null;
 }
-
-export function recoveryCodeKey(value: unknown): string {
-  return typeof value === 'string' ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
-}
-
-export function recoveryCodeError(value: unknown): string | null {
-  return recoveryCodeKey(value).length >= 20 ? null : '请输入完整恢复码。';
-}

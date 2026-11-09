@@ -18,7 +18,7 @@ test('resigning current or waiting faction keeps turn, history and results consi
   assert.equal(afterWu.turn, 'wei'); assert.equal(afterWu.turnSlot, 0);
   assert.equal(afterWu.results.wu, 'lost'); assert.equal(afterWu.results.wei, 'playing'); assert.equal(afterWu.history.length, 0);
   assert.equal(afterWu.pieces.some(piece => piece.faction === 'wu'), false);
-  assert.deepEqual(afterWu.events, [{ type: 'resign', step: 0, faction: 'wu' }]);
+  assert.deepEqual(afterWu.events, [{ type: 'resign', step: 0, faction: 'wu', cause: 'resignation' }]);
   assert.equal(validGame(afterWu), true);
   const afterWei = success(resignFaction(afterWu, 'wei'));
   assert.equal(afterWei.status, 'finished'); assert.equal(afterWei.winner, 'shu');

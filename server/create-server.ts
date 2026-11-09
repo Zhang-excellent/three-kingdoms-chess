@@ -50,9 +50,22 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const dataRoot = process.env.THREE_CHESS_DATA_DIR
     ? resolve(process.env.THREE_CHESS_DATA_DIR)
     : resolve(root, '.data');
+  const now = options.now ?? Date.now;
+  const envNumber = (name: string, fallback: number) => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
   const authService = options.authService ?? new AuthService(
     options.authDbPath ?? (process.env.NODE_ENV === 'test' ? ':memory:' : resolve(dataRoot, 'auth.sqlite')),
-    { now: options.now },
+    {
+      now,
+      rateLimits: {
+        registerAttempts: envNumber('THREE_CHESS_REGISTER_LIMIT', 20),
+        registerWindowMs: envNumber('THREE_CHESS_REGISTER_WINDOW_MINUTES', 60) * 60 * 1000,
+        loginAttempts: envNumber('THREE_CHESS_LOGIN_LIMIT', 10),
+        loginWindowMs: envNumber('THREE_CHESS_LOGIN_WINDOW_MINUTES', 15) * 60 * 1000,
+      },
+    },
   );
   const cookieSecure = options.cookieSecure ?? (process.env.NODE_ENV === 'production' && process.env.THREE_CHESS_COOKIE_SECURE !== '0');
   let lobbyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,7 +93,8 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     }
     scheduleLobby();
   };
-  const rooms = new RoomService(broadcast);
+  const rooms = new RoomService(broadcast, 60_000, 180_000,
+    record => authService.saveCompletedGame(record), now);
   const internalError = <T>(done: (ack: ClientAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
 
@@ -101,7 +115,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     if (!result.ok) return sendAuthFailure(response, result);
     if (result.sessionToken) response.setHeader('Set-Cookie',
       authCookie(result.sessionToken, result.remember === true, cookieSecure));
-    response.json({ ok: true, user: result.user, ...(result.recoveryCode ? { recoveryCode: result.recoveryCode } : {}) });
+    response.json({ ok: true, user: result.user });
   };
   app.get('/three-chess/api/auth/me', (request, response) => {
     const user = requestUser(request);
@@ -135,24 +149,30 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       sendAuthSuccess(response, result);
     } catch (error) { next(error); }
   });
-  app.post('/three-chess/api/auth/recovery/regenerate', async (request, response, next) => {
-    const user = requestUser(request);
-    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
-    try {
-      sendAuthSuccess(response, await authService.regenerateRecovery(user, request.body?.password));
-    } catch (error) { next(error); }
-  });
-  app.post('/three-chess/api/auth/recovery/reset', async (request, response, next) => {
-    try {
-      const result = await authService.resetWithRecovery(request.body?.username, request.body?.recoveryCode,
-        request.body?.newPassword, request.body?.remember === true, request.ip ?? 'unknown');
-      sendAuthSuccess(response, result);
-    } catch (error) { next(error); }
-  });
   app.use('/three-chess/api/auth', (_request, response) => response.status(404).json({ ok: false, code: 'NOT_FOUND', error: '接口不存在。' }));
   app.use('/three-chess/api/auth', (error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     console.error('Authentication request failed', error);
     response.status(500).json({ ok: false, code: 'INTERNAL_ERROR', error: '账号服务暂时不可用，请稍后重试。' });
+  });
+  app.use('/three-chess/api/games', (_request, response, next) => {
+    response.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+  app.get('/three-chess/api/games/recent', (request, response) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    response.json({ ok: true, games: authService.recentGames(user.id, 5) });
+  });
+  app.get('/three-chess/api/games/:gameId', (request, response) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    const game = authService.gameForUser(user.id, request.params.gameId);
+    if (!game) return response.status(404).json({ ok: false, code: 'GAME_NOT_FOUND', error: '没有找到这盘历史对局。' });
+    response.json({ ok: true, game });
+  });
+  app.use('/three-chess/api/games', (error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+    console.error('Game history request failed', error);
+    response.status(500).json({ ok: false, code: 'INTERNAL_ERROR', error: '历史对局暂时无法读取。' });
   });
   app.get('/three-chess/api/health', (_request, response) => response.json({
     ok: true, service: 'three-kingdoms-chess', storage: 'memory', accounts: 'sqlite',
