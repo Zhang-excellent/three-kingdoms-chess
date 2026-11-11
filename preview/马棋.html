@@ -1,0 +1,968 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#e2c58f">
+  <title>马棋 · 九马夺帅</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #29231d;
+      --muted: #766858;
+      --paper: #f4ead7;
+      --wood: #d9b46f;
+      --wood-dark: #ba8c49;
+      --line: #4b3524;
+      --red: #b74436;
+      --red-dark: #7e2b23;
+      --black: #293b3d;
+      --black-dark: #172526;
+      --gold: #d2a451;
+      --focus: #6f4a22;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.8), transparent 28rem),
+        radial-gradient(circle at 88% 90%, rgba(139, 93, 43, 0.14), transparent 32rem),
+        #eee0c4;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      width: min(1040px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 36px;
+    }
+
+    .masthead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin: 0 0 20px;
+    }
+
+    .eyebrow {
+      margin-bottom: 4px;
+      color: var(--red-dark);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.32em;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(34px, 6vw, 54px);
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      line-height: 1;
+    }
+
+    .intro {
+      max-width: 470px;
+      margin: 0 0 3px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.75;
+      text-align: right;
+    }
+
+    .game-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 258px;
+      align-items: start;
+      gap: 24px;
+    }
+
+    .board-shell {
+      position: relative;
+      width: min(100%, 680px);
+      justify-self: center;
+      padding: 9px;
+      border: 1px solid rgba(76, 48, 22, 0.38);
+      border-radius: 14px;
+      background: #8e6338;
+      box-shadow:
+        0 22px 50px rgba(63, 40, 18, 0.22),
+        0 3px 8px rgba(63, 40, 18, 0.22),
+        inset 0 1px rgba(255, 255, 255, 0.35);
+    }
+
+    .board {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 9 / 10;
+      overflow: hidden;
+      border-radius: 7px;
+      isolation: isolate;
+      background:
+        radial-gradient(ellipse at 18% 10%, rgba(255, 248, 220, 0.4), transparent 38%),
+        repeating-linear-gradient(93deg, rgba(91, 57, 22, 0.028) 0 1px, transparent 1px 8px),
+        linear-gradient(135deg, #e5c47f, #d5ab62 56%, #e1bd77);
+      box-shadow:
+        inset 0 0 0 1px rgba(82, 51, 21, 0.32),
+        inset 0 0 40px rgba(105, 66, 26, 0.14);
+      container-type: inline-size;
+      touch-action: manipulation;
+    }
+
+    .board::after {
+      position: absolute;
+      z-index: 4;
+      inset: 6px;
+      border: 1px solid rgba(79, 48, 22, 0.18);
+      border-radius: 4px;
+      content: "";
+      pointer-events: none;
+    }
+
+    .board-svg {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .points {
+      position: absolute;
+      z-index: 2;
+      inset: 0;
+    }
+
+    .point {
+      position: absolute;
+      width: 10.4%;
+      aspect-ratio: 1;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      outline: none;
+      background: transparent;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .point:focus-visible {
+      box-shadow: 0 0 0 3px rgba(255, 249, 226, 0.9), 0 0 0 6px var(--focus);
+    }
+
+    .piece {
+      position: absolute;
+      z-index: 3;
+      top: 50%;
+      left: 50%;
+      display: grid;
+      width: 80%;
+      aspect-ratio: 1;
+      place-items: center;
+      border: max(1px, 0.34cqw) solid currentColor;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 38% 31%, rgba(255, 255, 255, 0.9), transparent 24%),
+        linear-gradient(145deg, #fff9e9, #e8d5ae);
+      box-shadow:
+        0 max(0.6cqw, 2px) max(1.1cqw, 4px) rgba(61, 39, 16, 0.38),
+        inset 0 0 0 max(0.35cqw, 1px) #a37942,
+        inset 0 0 0 max(0.95cqw, 3px) rgba(255, 251, 234, 0.9);
+      font-size: clamp(17px, 5.2cqw, 36px);
+      font-weight: 800;
+      line-height: 1;
+      text-shadow: 0 1px rgba(255, 255, 255, 0.5);
+      transform: translate(-50%, -50%);
+      transition: transform 130ms ease, filter 130ms ease, box-shadow 130ms ease;
+      pointer-events: none;
+    }
+
+    .piece.red {
+      color: var(--red);
+    }
+
+    .piece.black {
+      color: var(--black);
+    }
+
+    .point:hover .piece {
+      transform: translate(-50%, -52%) scale(1.035);
+    }
+
+    .point.selected .piece {
+      filter: saturate(1.12) brightness(1.04);
+      transform: translate(-50%, -54%) scale(1.08);
+      box-shadow:
+        0 0 0 max(0.55cqw, 2px) rgba(255, 246, 207, 0.96),
+        0 0 0 max(1.25cqw, 4px) var(--gold),
+        0 max(0.8cqw, 2px) max(1.4cqw, 5px) rgba(61, 39, 16, 0.38),
+        inset 0 0 0 max(0.35cqw, 1px) #a37942;
+    }
+
+    .point.last-to .piece {
+      box-shadow:
+        0 0 0 max(0.42cqw, 2px) rgba(46, 108, 83, 0.55),
+        0 max(0.6cqw, 2px) max(1.1cqw, 4px) rgba(61, 39, 16, 0.38),
+        inset 0 0 0 max(0.35cqw, 1px) #a37942,
+        inset 0 0 0 max(0.95cqw, 3px) rgba(255, 251, 234, 0.9);
+    }
+
+    .move-cue {
+      position: absolute;
+      z-index: 5;
+      top: 50%;
+      left: 50%;
+      width: 19%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: rgba(48, 91, 72, 0.78);
+      box-shadow: 0 0 0 max(0.3cqw, 1px) rgba(255, 250, 230, 0.9);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .move-cue.capture {
+      width: 91%;
+      border: max(0.55cqw, 2px) solid rgba(165, 51, 39, 0.9);
+      background: transparent;
+      box-shadow: inset 0 0 0 max(0.3cqw, 1px) rgba(255, 250, 230, 0.85);
+    }
+
+    .point.target {
+      z-index: 3;
+    }
+
+    .point.target::before {
+      position: absolute;
+      inset: 1%;
+      border: max(0.25cqw, 1px) dashed rgba(119, 64, 22, 0.72);
+      border-radius: 8%;
+      background: rgba(255, 226, 151, 0.1);
+      content: "";
+      pointer-events: none;
+    }
+
+    .target-label {
+      position: absolute;
+      z-index: 7;
+      top: -1%;
+      right: -2%;
+      display: grid;
+      min-width: 31%;
+      height: 31%;
+      place-items: center;
+      border: 1px solid rgba(71, 44, 20, 0.35);
+      border-radius: 50%;
+      background: #f7eacf;
+      box-shadow: 0 1px 3px rgba(69, 42, 16, 0.28);
+      font-size: clamp(8px, 1.55cqw, 11px);
+      font-weight: 800;
+      line-height: 1;
+      pointer-events: none;
+    }
+
+    .target-label.red {
+      color: var(--red);
+    }
+
+    .target-label.black {
+      color: var(--black);
+    }
+
+    .river-label {
+      fill: rgba(60, 39, 21, 0.76);
+      font-family: "Noto Serif SC", "Songti SC", SimSun, serif;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 8px;
+    }
+
+    .panel {
+      display: grid;
+      gap: 14px;
+      align-self: stretch;
+    }
+
+    .card {
+      padding: 18px;
+      border: 1px solid rgba(96, 68, 34, 0.18);
+      border-radius: 13px;
+      background: rgba(251, 244, 229, 0.78);
+      box-shadow: 0 10px 24px rgba(70, 45, 20, 0.08);
+      backdrop-filter: blur(8px);
+    }
+
+    .status-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 11px;
+    }
+
+    .turn {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 19px;
+      font-weight: 800;
+    }
+
+    .turn-mark {
+      display: block;
+      width: 17px;
+      aspect-ratio: 1;
+      border: 2px solid rgba(105, 68, 29, 0.4);
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: inset 0 0 0 2px #f8eed8;
+    }
+
+    .turn-mark.black {
+      background: var(--black);
+    }
+
+    .move-count {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .status-text {
+      min-height: 44px;
+      margin: 0;
+      color: #5f5142;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .status-text.alert {
+      color: var(--red-dark);
+    }
+
+    .status-text.win {
+      color: #25684e;
+      font-weight: 700;
+    }
+
+    .panel-title {
+      margin: 0 0 12px;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+    }
+
+    .goals {
+      display: grid;
+      gap: 9px;
+    }
+
+    .goal {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 9px;
+      background: rgba(226, 205, 166, 0.34);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .goal-seal {
+      display: grid;
+      width: 29px;
+      aspect-ratio: 1;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      background: #fbf2df;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .goal-seal.red {
+      color: var(--red);
+    }
+
+    .goal-seal.black {
+      color: var(--black);
+    }
+
+    .goal strong {
+      display: block;
+      margin-bottom: 1px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .rules {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: #665749;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .rules li {
+      position: relative;
+      padding-left: 15px;
+    }
+
+    .rules li::before {
+      position: absolute;
+      top: 0.64em;
+      left: 1px;
+      width: 5px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: #a97f48;
+      content: "";
+    }
+
+    .restart {
+      width: 100%;
+      min-height: 45px;
+      border: 1px solid #8a2f26;
+      border-radius: 9px;
+      color: #fff8eb;
+      background: linear-gradient(#bd4b3d, #9f342a);
+      box-shadow: 0 5px 12px rgba(128, 45, 35, 0.18);
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      transition: transform 120ms ease, filter 120ms ease;
+    }
+
+    .restart:hover {
+      filter: brightness(1.06);
+    }
+
+    .restart:active {
+      transform: translateY(1px);
+    }
+
+    .victory {
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      border-radius: 7px;
+      background: rgba(40, 31, 22, 0.38);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 180ms ease, visibility 180ms ease;
+      backdrop-filter: blur(2px);
+    }
+
+    .victory.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .victory-card {
+      width: min(280px, 88%);
+      padding: 24px 20px;
+      border: 1px solid rgba(112, 70, 27, 0.28);
+      border-radius: 13px;
+      background:
+        radial-gradient(circle at 50% 0, rgba(255, 255, 255, 0.9), transparent 55%),
+        #f9efd9;
+      box-shadow: 0 20px 50px rgba(34, 23, 14, 0.35);
+      text-align: center;
+      transform: translateY(8px) scale(0.98);
+      transition: transform 180ms ease;
+    }
+
+    .victory.show .victory-card {
+      transform: translateY(0) scale(1);
+    }
+
+    .victory-kicker {
+      margin-bottom: 8px;
+      color: var(--red-dark);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.28em;
+    }
+
+    .victory-title {
+      margin: 0 0 12px;
+      font-size: 29px;
+      font-weight: 800;
+    }
+
+    .victory-copy {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .victory .restart {
+      width: min(190px, 100%);
+    }
+
+    .hint {
+      margin: 17px 0 0;
+      color: rgba(92, 72, 50, 0.72);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100% - 20px, 560px);
+        padding-top: 18px;
+      }
+
+      .masthead {
+        display: block;
+        margin-bottom: 14px;
+      }
+
+      .intro {
+        margin-top: 9px;
+        text-align: left;
+      }
+
+      .game-layout {
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .board-shell {
+        width: min(94vw, 590px);
+      }
+
+      .panel {
+        grid-template-columns: 1fr 1fr;
+        align-items: stretch;
+      }
+
+      .card.status-card {
+        grid-column: 1 / -1;
+      }
+
+      .card.restart-card {
+        display: flex;
+        align-items: end;
+      }
+
+      .restart-card .restart {
+        min-height: 50px;
+      }
+    }
+
+    @media (max-width: 470px) {
+      .page {
+        width: calc(100% - 14px);
+      }
+
+      .board-shell {
+        width: 100%;
+        padding: 6px;
+        border-radius: 11px;
+      }
+
+      .panel {
+        gap: 10px;
+      }
+
+      .card {
+        padding: 14px;
+      }
+
+      .rules-card {
+        display: none;
+      }
+
+      .turn {
+        font-size: 17px;
+      }
+
+      .status-text {
+        min-height: 37px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <div>
+        <div class="eyebrow">九 马 夺 帅</div>
+        <h1>马棋</h1>
+      </div>
+      <p class="intro">双方各九匹马，马走日、马腿受阻挡。踏入对方中央底线老将位，立即获胜。</p>
+    </header>
+
+    <section class="game-layout" aria-label="马棋游戏">
+      <div class="board-shell">
+        <div class="board" id="board">
+          <svg class="board-svg" viewBox="0 0 720 800" aria-hidden="true">
+            <g fill="none" stroke="#4b3524" stroke-linecap="square">
+              <rect x="30" y="30" width="660" height="740" stroke-width="2.3" rx="3"/>
+              <rect x="40" y="40" width="640" height="720" stroke-width="3.2"/>
+
+              <path d="M40 40H680 M40 120H680 M40 200H680 M40 280H680 M40 360H680 M40 440H680 M40 520H680 M40 600H680 M40 680H680 M40 760H680" stroke-width="2.2"/>
+              <path d="M40 40V760 M680 40V760" stroke-width="2.7"/>
+              <path d="M120 40V360 M120 440V760 M200 40V360 M200 440V760 M280 40V360 M280 440V760 M360 40V360 M360 440V760 M440 40V360 M440 440V760 M520 40V360 M520 440V760 M600 40V360 M600 440V760" stroke-width="1.7"/>
+
+              <path d="M280 40L440 200 M440 40L280 200 M280 600L440 760 M440 600L280 760" stroke-width="1.7"/>
+            </g>
+            <text class="river-label" x="190" y="408">楚河</text>
+            <text class="river-label" x="438" y="408">汉界</text>
+          </svg>
+
+          <div class="points" id="points" aria-label="棋盘交叉点"></div>
+
+          <div class="victory" id="victory" aria-hidden="true">
+            <div class="victory-card" role="dialog" aria-modal="true" aria-labelledby="victory-title">
+              <div class="victory-kicker">一 马 定 局</div>
+              <h2 class="victory-title" id="victory-title">红方获胜</h2>
+              <p class="victory-copy" id="victory-copy">红马踏入黑将位。</p>
+              <button class="restart" id="victory-restart" type="button">再来一局</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel">
+        <section class="card status-card" aria-live="polite">
+          <div class="status-heading">
+            <div class="turn">
+              <span class="turn-mark" id="turn-mark"></span>
+              <span id="turn-label">红方行棋</span>
+            </div>
+            <span class="move-count" id="move-count">第 1 手</span>
+          </div>
+          <p class="status-text" id="status-text">请选择一匹红马。</p>
+        </section>
+
+        <section class="card">
+          <h2 class="panel-title">夺帅目标</h2>
+          <div class="goals">
+            <div class="goal">
+              <span class="goal-seal red">帅</span>
+              <span><strong>红方目标</strong>踏入上方中央黑将位</span>
+            </div>
+            <div class="goal">
+              <span class="goal-seal black">将</span>
+              <span><strong>黑方目标</strong>踏入下方中央红帅位</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card rules-card">
+          <h2 class="panel-title">走子规则</h2>
+          <ul class="rules">
+            <li>马走“日”字，可吃对方马。</li>
+            <li>紧邻马头的“马腿”有棋子时不能走。</li>
+            <li>同色马不能互相吃，也不能同格。</li>
+            <li>先进入对方老将位的一方获胜。</li>
+          </ul>
+        </section>
+
+        <section class="card restart-card">
+          <button class="restart" id="restart" type="button">重新开局</button>
+        </section>
+      </aside>
+    </section>
+
+    <p class="hint">点击或轻触马，再点绿色圆点落子；红圈表示可以吃子。</p>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const SIZE = 9;
+      const ROWS = 10;
+      const SIDE = {
+        red: { name: "红方", color: "red", goal: { x: 4, y: 0, label: "将", owner: "black" } },
+        black: { name: "黑方", color: "black", goal: { x: 4, y: 9, label: "帅", owner: "red" } }
+      };
+      const HORSE_STEPS = [
+        { dx: 2, dy: 1, legX: 1, legY: 0 },
+        { dx: 2, dy: -1, legX: 1, legY: 0 },
+        { dx: -2, dy: 1, legX: -1, legY: 0 },
+        { dx: -2, dy: -1, legX: -1, legY: 0 },
+        { dx: 1, dy: 2, legX: 0, legY: 1 },
+        { dx: -1, dy: 2, legX: 0, legY: 1 },
+        { dx: 1, dy: -2, legX: 0, legY: -1 },
+        { dx: -1, dy: -2, legX: 0, legY: -1 }
+      ];
+
+      const pointsEl = document.querySelector("#points");
+      const boardEl = document.querySelector("#board");
+      const turnMarkEl = document.querySelector("#turn-mark");
+      const turnLabelEl = document.querySelector("#turn-label");
+      const moveCountEl = document.querySelector("#move-count");
+      const statusTextEl = document.querySelector("#status-text");
+      const victoryEl = document.querySelector("#victory");
+      const victoryTitleEl = document.querySelector("#victory-title");
+      const victoryCopyEl = document.querySelector("#victory-copy");
+      const restartEl = document.querySelector("#restart");
+      const victoryRestartEl = document.querySelector("#victory-restart");
+
+      let state;
+      let statusKind = "";
+
+      function initialPieces() {
+        const pieces = [];
+        for (let x = 0; x < SIZE; x += 1) {
+          pieces.push({ id: `black-${x}`, side: "black", x, y: 0 });
+          pieces.push({ id: `red-${x}`, side: "red", x, y: 9 });
+        }
+        return pieces;
+      }
+
+      function newState() {
+        return {
+          pieces: initialPieces(),
+          turn: "red",
+          selectedId: null,
+          lastMove: null,
+          winner: null,
+          moves: 0
+        };
+      }
+
+      function inside(x, y) {
+        return Number.isInteger(x) && Number.isInteger(y) && x >= 0 && x < SIZE && y >= 0 && y < ROWS;
+      }
+
+      function pieceAt(x, y) {
+        return state.pieces.find(piece => piece.x === x && piece.y === y) ?? null;
+      }
+
+      function pieceById(id) {
+        return state.pieces.find(piece => piece.id === id) ?? null;
+      }
+
+      function legalMoves(piece) {
+        const moves = [];
+        for (const step of HORSE_STEPS) {
+          const legX = piece.x + step.legX;
+          const legY = piece.y + step.legY;
+          const x = piece.x + step.dx;
+          const y = piece.y + step.dy;
+          if (!inside(x, y) || pieceAt(legX, legY)) continue;
+          const target = pieceAt(x, y);
+          if (target?.side === piece.side) continue;
+          moves.push({ x, y });
+        }
+        return moves;
+      }
+
+      function setStatus(message, kind = "") {
+        statusKind = kind;
+        statusTextEl.textContent = message;
+        statusTextEl.className = `status-text${kind ? ` ${kind}` : ""}`;
+      }
+
+      function targetFor(side) {
+        return SIDE[side].goal;
+      }
+
+      function isTarget(x, y) {
+        return Object.values(SIDE).some(side => side.goal.x === x && side.goal.y === y);
+      }
+
+      function targetLabel(x, y) {
+        return Object.values(SIDE).find(side => side.goal.x === x && side.goal.y === y)?.goal.label ?? "";
+      }
+
+      function targetOwner(x, y) {
+        return Object.values(SIDE).find(side => side.goal.x === x && side.goal.y === y)?.goal.owner ?? "";
+      }
+
+      function moveSelectedTo(x, y) {
+        const selected = pieceById(state.selectedId);
+        const destination = pieceAt(x, y);
+
+        if (!selected) {
+          state.selectedId = null;
+          setStatus("请选择一匹当前行棋方的马。", "alert");
+          render();
+          return;
+        }
+
+        const isLegal = legalMoves(selected).some(move => move.x === x && move.y === y);
+        if (!isLegal) {
+          setStatus("这里不能落子：马走“日”字，而且马腿不能有棋子。", "alert");
+          render();
+          return;
+        }
+
+        const movingSide = state.turn;
+        const from = { x: selected.x, y: selected.y };
+        selected.x = x;
+        selected.y = y;
+        state.moves += 1;
+        state.lastMove = { from, to: { x, y } };
+        state.selectedId = null;
+
+        if (destination) {
+          state.pieces = state.pieces.filter(piece => piece.id !== destination.id);
+        }
+
+        const ownGoal = targetFor(movingSide);
+        if (x === ownGoal.x && y === ownGoal.y) {
+          state.winner = movingSide;
+          setStatus(`${SIDE[movingSide].name}获胜！`, "win");
+        } else {
+          state.turn = movingSide === "red" ? "black" : "red";
+          setStatus(destination
+            ? `${SIDE[movingSide].name}吃马。轮到${SIDE[state.turn].name}。`
+            : `落子完成。轮到${SIDE[state.turn].name}。`);
+        }
+        render();
+      }
+
+      function handlePoint(x, y) {
+        if (state.winner) return;
+        const clicked = pieceAt(x, y);
+
+        if (!state.selectedId) {
+          if (clicked?.side === state.turn) {
+            state.selectedId = clicked.id;
+            setStatus("已选马。绿色圆点是可走位置，红圈是可吃目标。");
+          } else if (clicked) {
+            setStatus(`现在轮到${SIDE[state.turn].name}，不能操作对方的马。`, "alert");
+          } else {
+            setStatus("请先选择一匹当前行棋方的马。", "alert");
+          }
+          render();
+          return;
+        }
+
+        const selected = pieceById(state.selectedId);
+        if (selected && selected.x === x && selected.y === y) {
+          state.selectedId = null;
+          setStatus("已取消选择。");
+          render();
+          return;
+        }
+
+        if (clicked?.side === state.turn) {
+          state.selectedId = clicked.id;
+          setStatus("已改选另一匹马。");
+          render();
+          return;
+        }
+
+        moveSelectedTo(x, y);
+      }
+
+      function render() {
+        const selected = state.selectedId ? pieceById(state.selectedId) : null;
+        const legal = selected && !state.winner ? legalMoves(selected) : [];
+        const legalKeys = new Set(legal.map(move => `${move.x},${move.y}`));
+        let html = "";
+
+        for (let y = 0; y < ROWS; y += 1) {
+          for (let x = 0; x < SIZE; x += 1) {
+            const piece = pieceAt(x, y);
+            const key = `${x},${y}`;
+            const move = legal.find(candidate => candidate.x === x && candidate.y === y);
+            const target = isTarget(x, y);
+            const classes = [
+              "point",
+              target ? "target" : "",
+              selected && selected.x === x && selected.y === y ? "selected" : "",
+              state.lastMove?.to.x === x && state.lastMove?.to.y === y ? "last-to" : "",
+              legalKeys.has(key) ? "legal" : ""
+            ].filter(Boolean).join(" ");
+            const left = 5.5556 + x * 11.1111;
+            const top = 5 + y * 10;
+            const label = piece
+              ? `${SIDE[piece.side].name}马，${x + 1} 路第 ${y + 1} 线`
+              : target
+                ? `${targetLabel(x, y)}位，${x + 1} 路第 ${y + 1} 线`
+                : `${x + 1} 路第 ${y + 1} 线空位`;
+
+            html += `<button type="button" class="${classes}" data-x="${x}" data-y="${y}" style="left:${left}%;top:${top}%" aria-label="${label}">`;
+            if (piece) {
+              html += `<span class="piece ${piece.side}" aria-hidden="true">馬</span>`;
+            }
+            if (move) {
+              html += `<span class="move-cue${piece ? " capture" : ""}" aria-hidden="true"></span>`;
+            }
+            if (target) {
+              html += `<span class="target-label ${targetOwner(x, y)}" aria-hidden="true">${targetLabel(x, y)}</span>`;
+            }
+            html += "</button>";
+          }
+        }
+        pointsEl.innerHTML = html;
+
+        turnMarkEl.className = `turn-mark${state.turn === "black" ? " black" : ""}`;
+        turnLabelEl.textContent = state.winner ? `${SIDE[state.winner].name}获胜` : `${SIDE[state.turn].name}行棋`;
+        moveCountEl.textContent = state.winner ? `共 ${state.moves} 手` : `第 ${state.moves + 1} 手`;
+        boardEl.dataset.turn = state.turn;
+
+        const showVictory = Boolean(state.winner);
+        victoryEl.classList.toggle("show", showVictory);
+        victoryEl.setAttribute("aria-hidden", String(!showVictory));
+        if (state.winner) {
+          const goal = targetFor(state.winner);
+          victoryTitleEl.textContent = `${SIDE[state.winner].name}获胜`;
+          victoryCopyEl.textContent = `${SIDE[state.winner].name}的马踏入了对方${goal.label}位。`;
+        }
+      }
+
+      function restart() {
+        state = newState();
+        setStatus("请选择一匹红马。");
+        render();
+        boardEl.focus({ preventScroll: true });
+      }
+
+      pointsEl.addEventListener("click", event => {
+        const button = event.target.closest(".point");
+        if (!button) return;
+        handlePoint(Number(button.dataset.x), Number(button.dataset.y));
+      });
+
+      restartEl.addEventListener("click", restart);
+      victoryRestartEl.addEventListener("click", restart);
+
+      state = newState();
+      render();
+    })();
+  </script>
+</body>
+</html>
