@@ -65,11 +65,18 @@ test('two browser components join the same table, ready and complete a move', as
   assert.equal(red.findAll('.five-piece').length, 26);
   assert.equal(black.findAll('.five-piece').length, 26);
   assert.match(red.get('.five-board-heading').text(), /红方游客.*行棋/);
+  assert.match(red.get('.five-board-heading').text(), /还可走 2 步/);
 
   await red.get('.five-piece[aria-label="红方兵，1 路第 7 线"]').trigger('click');
   await red.get('.five-target[aria-label="走到第1路第6线"]').trigger('click');
   await waitUntil(() => red.get('.five-history').text().includes('(1, 6)'), 'red move did not render');
   await waitUntil(() => black.get('.five-history').text().includes('(1, 6)'), 'black did not receive the move');
+  assert.match(red.get('.five-board-heading').text(), /还可走 1 步/);
+
+  await red.get('.five-piece[aria-label="红方兵，3 路第 7 线"]').trigger('click');
+  await red.get('.five-target[aria-label="走到第3路第6线"]').trigger('click');
+  await waitUntil(() => black.get('.five-history').text().includes('(3, 6)'), 'second red move did not synchronize');
+  assert.match(red.get('.five-board-heading').text(), /轮到 黑方游客 行棋/);
 
   localStorage.removeItem(FIVE_SOLDIERS_SESSION_KEY);
   const accountView = mount(FiveSoldiersPage, { attachTo: document.body, props: { accountName: '五兵账号' } });

@@ -68,6 +68,9 @@ const boardTitle = computed(() => {
   const active = state.value?.players.find(player => player.side === game.value.turn);
   return `轮到 ${active?.nickname || fiveSideName(game.value.turn)} 行棋`;
 });
+const turnBudget = computed(() => game.value.status === 'playing'
+  ? `${fiveSideName(game.value.turn)}本回合还可走 ${game.value.movesRemaining} 步`
+  : '');
 const selectedAvailable = computed(() => {
   if (!inspected.value || inspected.value.phase !== 'lobby') return false;
   const occupied = inspected.value?.players.some(player => player.side === selectedSide.value) ?? false;
@@ -398,7 +401,7 @@ defineExpose({ leaveForNavigation });
         <span class="eyebrow">FIVE SOLDIERS</span>
         <h1>五兵联盟</h1>
       </div>
-      <p>五兵、士象与主帅，对阵标准十六子。抢先将帅即可获胜。</p>
+      <p>五兵红方每回合连续两步，对阵每回合一步的标准黑方。抢先将帅即可获胜。</p>
     </header>
 
     <p v-if="connection !== 'online'" class="connection-note" :class="{ error: !!error }">{{ error || '正在连接棋桌…' }}</p>
@@ -425,7 +428,7 @@ defineExpose({ leaveForNavigation });
         <summary>玩法说明</summary>
         <ul>
           <li>红方为五兵＋士象全＋帅，黑方为标准十六子。</li>
-          <li>双方轮流各走一步，按中国象棋的棋子走法行棋。</li>
+          <li>红方每回合连续走两步，黑方每回合走一步；所有棋子按中国象棋的基本走法行棋。</li>
           <li>不强制应将，也不禁止送将；吃掉对方将帅立即获胜。</li>
           <li>双方都准备后开始，对局结束后可在原桌再来一局。</li>
         </ul>
@@ -461,14 +464,14 @@ defineExpose({ leaveForNavigation });
           <span class="five-player-seal">{{ side === 'red' ? '帅' : '将' }}</span>
           <div><strong>{{ sidePlayer(side)?.nickname || fiveSideName(side) }}</strong><small>{{ fiveSideName(side) }} · {{ sidePlayer(side)?.identity === 'guest' ? '游客' : '账号' }}</small></div>
           <em v-if="game.status === 'finished'">{{ game.winner === side ? '胜利' : '失败' }}</em>
-          <em v-else-if="game.turn === side">行棋中</em>
+          <em v-else-if="game.turn === side">行棋中 · 剩余 {{ game.movesRemaining }} 步</em>
           <em v-else-if="sidePlayer(side) && !sidePlayer(side)?.online">离线</em>
         </article>
       </section>
 
       <section class="five-game-layout">
         <div class="five-board-column">
-          <div class="five-board-heading"><h2>{{ boardTitle }}</h2><span>第 {{ game.history.length }} 手</span></div>
+          <div class="five-board-heading"><div><h2>{{ boardTitle }}</h2><small v-if="turnBudget">{{ turnBudget }}</small></div><span>第 {{ game.history.length }} 手</span></div>
           <div class="board-frame five-board-frame">
             <svg class="board-svg five-board-svg" viewBox="0 0 540 595" role="group" :aria-label="`五兵联盟棋盘，${flipped ? '黑方' : '红方'}视角`">
               <defs>
@@ -514,7 +517,7 @@ defineExpose({ leaveForNavigation });
           <div v-if="latest" class="last-move-card"><span class="eyebrow">上一步</span><h3 :class="latest.side">{{ fiveSideName(latest.side) }} · {{ fivePieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} → {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${fiveSideName(latest.captured.side)}${fivePieceName(latest.captured)}` : '已标记起点和落点' }}</small></div>
           <ol v-if="history.length" class="move-list"><li v-for="record in history" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2, '0') }}</span><div><strong :class="record.side">{{ fiveSideName(record.side) }}</strong><p>{{ fivePieceName(record) }} {{ coordinate(record.from) }} → {{ coordinate(record.to) }}</p><small v-if="record.captured">吃掉{{ fiveSideName(record.captured.side) }}{{ fivePieceName(record.captured) }}</small></div></li></ol>
           <div v-else class="empty-history"><span aria-hidden="true">兵</span><p>双方准备后开始棋局。</p></div>
-          <details class="five-live-rules"><summary>玩法说明</summary><p>五兵红方对阵标准黑方。双方轮流一步，不强制应将，吃掉将帅即胜。</p></details>
+          <details class="five-live-rules"><summary>玩法说明</summary><p>五兵红方每回合连续走两步，黑方每回合走一步；不强制应将，吃掉将帅即胜。</p></details>
         </aside>
       </section>
     </template>
@@ -581,7 +584,9 @@ defineExpose({ leaveForNavigation });
 .five-game-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;align-items:start;gap:20px}
 .five-board-column,.five-history{min-width:0}
 .five-board-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.five-board-heading>div{display:grid;gap:3px;min-width:0}
 .five-board-heading h2{margin:0;font-size:21px;color:#3f352b}
+.five-board-heading small{color:#9b6f44;font-size:10px;font-weight:600}
 .five-board-heading span{padding:5px 10px;border:1px solid #d8cab5;border-radius:999px;background:#fffdf8;color:#847461;font-size:10px}
 .five-board-frame{max-width:680px;margin:0 auto}
 .five-piece{cursor:pointer;transition:transform .18s ease;outline-offset:1px}

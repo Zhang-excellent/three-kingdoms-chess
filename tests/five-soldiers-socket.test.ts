@@ -93,6 +93,22 @@ test('two independent sockets join, ready, play and receive the same authoritati
   }));
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.deepEqual([accountStates.at(-1)?.game?.history.length, guestStates.at(-1)?.game?.history.length], [1, 1]);
-  assert.equal(accountStates.at(-1)?.game?.turn, 'black');
+  assert.equal(accountStates.at(-1)?.game?.turn, 'red');
+  assert.equal(accountStates.at(-1)?.game?.movesRemaining, 1);
   assert.equal(guestStates.at(-1)?.game?.pieces.length, 26);
+
+  const secondVersion = accountStates.at(-1)!.version;
+  success(await emit(accountSocket, 'five:move', {
+    reconnectToken: red.reconnectToken,
+    intent: {
+      requestId: 'five-socket-move-2',
+      version: secondVersion,
+      pieceId: 'red-pawn-2-6',
+      to: { x: 2, y: 5 },
+    },
+  }));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(accountStates.at(-1)?.game?.turn, 'black');
+  assert.equal(accountStates.at(-1)?.game?.movesRemaining, 1);
+  assert.equal(guestStates.at(-1)?.game?.history.length, 2);
 });

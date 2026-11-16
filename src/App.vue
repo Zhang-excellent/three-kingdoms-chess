@@ -908,7 +908,7 @@ async function requestRematch() {
     <dialog ref="fiveRulesDialog" class="rules-dialog five-rules-dialog">
       <div class="dialog-heading"><h2>五兵联盟规则</h2><button class="dialog-close" aria-label="关闭规则" @click="fiveRulesDialog?.close()">×</button></div>
       <p>双人独立棋局，红方先行。</p>
-      <ul><li>红方拥有五兵、双士、双象和主帅，共十枚棋子；黑方使用标准十六子。</li><li>双方每回合各走一步，所有棋种按中国象棋的基本走法移动、阻挡和吃子。</li><li>不强制应将，也不禁止送将；吃掉对方将帅立即获胜。</li><li>未登录玩家进入前须填写昵称；登录用户直接使用账号昵称。</li><li>双方在同一个双人棋桌准备后开始，结束后可在原桌再来一局。</li></ul>
+      <ul><li>红方拥有五兵、双士、双象和主帅，共十枚棋子；黑方使用标准十六子。</li><li>红方每回合连续走两步，黑方每回合走一步；第一步后仍由红方继续，第二步后才轮到黑方。</li><li>所有棋种按中国象棋的基本走法移动、阻挡和吃子。</li><li>不强制应将，也不禁止送将；吃掉对方将帅立即获胜，若红方第一步已经吃将则立即终局。</li><li>未登录玩家进入前须填写昵称；登录用户直接使用账号昵称。</li><li>双方在同一个双人棋桌准备后开始，结束后可在原桌再来一局。</li></ul>
       <button class="primary-button" @click="fiveRulesDialog?.close()">知道了</button>
     </dialog>
     <dialog ref="settingsDialog" class="settings-dialog">

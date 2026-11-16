@@ -55,7 +55,8 @@ test('both ready starts one authoritative game and rejects wrong-turn or stale m
     }, 'red-socket');
     assert.equal(moved.ok, true);
     if (!moved.ack.ok) return;
-    assert.equal(moved.ack.data.state.game?.turn, 'black');
+    assert.equal(moved.ack.data.state.game?.turn, 'red');
+    assert.equal(moved.ack.data.state.game?.movesRemaining, 1);
     assert.equal(moved.ack.data.state.game?.history[0].pieceId, 'red-pawn-0-6');
 
     const stale = service.move(redToken, {
@@ -64,6 +65,15 @@ test('both ready starts one authoritative game and rejects wrong-turn or stale m
     assert.equal(stale.ok, false);
     if (stale.ack.ok) return;
     assert.equal(stale.ack.code, 'STALE_VERSION');
+
+    const second = service.move(redToken, {
+      requestId: 'five-red-move-2', version: moved.ack.data.state.version, pieceId: 'red-pawn-2-6', to: { x: 2, y: 5 },
+    }, 'red-socket');
+    assert.equal(second.ok, true);
+    if (!second.ack.ok) return;
+    assert.equal(second.ack.data.state.game?.turn, 'black');
+    assert.equal(second.ack.data.state.game?.movesRemaining, 1);
+    assert.equal(second.ack.data.state.game?.history.length, 2);
   } finally { service.dispose(); }
 });
 

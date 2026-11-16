@@ -23,6 +23,7 @@ test('five soldiers starts with the ten-piece red alliance and standard sixteen 
   assert.deepEqual(fivePieceCounts(game), { red: 10, black: 16 });
   assert.equal(game.pieces.length, 26);
   assert.equal(game.turn, 'red');
+  assert.equal(game.movesRemaining, 2);
   assert.equal(validFiveGame(game), true);
   assert.deepEqual(game.pieces.filter(item => item.side === 'red' && item.kind === 'pawn').map(item => [item.x, item.y]), [
     [0, 6], [2, 6], [4, 6], [6, 6], [8, 6],
@@ -53,7 +54,7 @@ test('five soldiers preserves standard horse leg, elephant river and cannon scre
   assert.equal(legalFiveMoves(custom.pieces, custom.pieces[0]).some(move => move.x === 0 && move.y === 2), false);
 });
 
-test('five soldiers alternates one move, captures the opposing general and leaves rejected moves untouched', () => {
+test('five soldiers gives red two consecutive moves and black one move', () => {
   const game = newFiveGame();
   const before = structuredClone(game);
   const rejected = playFiveMove(game, 'black-horse-1-0', { x: 0, y: 2 });
@@ -63,10 +64,23 @@ test('five soldiers alternates one move, captures the opposing general and leave
   const first = playFiveMove(game, 'red-pawn-0-6', { x: 0, y: 5 });
   assert.equal(first.ok, true);
   if (!first.ok) return;
-  assert.equal(first.game.turn, 'black');
+  assert.equal(first.game.turn, 'red');
+  assert.equal(first.game.movesRemaining, 1);
   assert.equal(first.game.history.length, 1);
   assert.equal(game.history.length, 0);
+  const second = playFiveMove(first.game, 'red-pawn-2-6', { x: 2, y: 5 });
+  assert.equal(second.ok, true);
+  if (!second.ok) return;
+  assert.equal(second.game.turn, 'black');
+  assert.equal(second.game.movesRemaining, 1);
+  const black = playFiveMove(second.game, 'black-horse-1-0', { x: 0, y: 2 });
+  assert.equal(black.ok, true);
+  if (!black.ok) return;
+  assert.equal(black.game.turn, 'red');
+  assert.equal(black.game.movesRemaining, 2);
+});
 
+test('five soldiers captures the opposing general and leaves rejected moves untouched', () => {
   const captureReady: FiveGame = {
     ...newFiveGame(),
     pieces: [
@@ -75,6 +89,7 @@ test('five soldiers alternates one move, captures the opposing general and leave
       { id: 'red-general', side: 'red', kind: 'general', x: 4, y: 9 },
     ],
     turn: 'red',
+    movesRemaining: 2,
   };
   const winning = playFiveMove(captureReady, 'red-pawn', { x: 4, y: 1 });
   assert.equal(winning.ok, true);
