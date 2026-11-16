@@ -65,6 +65,7 @@ export class FiveSoldiersService {
   private players: FivePlayer[] = [];
   private readonly socketPlayers = new Map<string, string>();
   private readonly socketAccounts = new Map<string, string | null>();
+  private readonly observers = new Set<string>();
   private readonly requests = new Map<string, Map<string, StoredAck>>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -108,6 +109,7 @@ export class FiveSoldiersService {
       socketId,
     };
     this.players.push(player);
+    this.observers.delete(socketId);
     this.bindSocket(player, socketId);
     this.version++;
     return { ok: true, changed: true, ack: { ok: true, data: this.receipt(player) } };
@@ -128,6 +130,7 @@ export class FiveSoldiersService {
     if (replacedSocketId) this.socketPlayers.delete(replacedSocketId);
     found.player.online = true;
     found.player.offlineUntil = null;
+    this.observers.delete(socketId);
     this.bindSocket(found.player, socketId);
     this.version++;
     return { ok: true, changed: true, replacedSocketId, ack: { ok: true, data: this.receipt(found.player) } };
@@ -229,26 +232,34 @@ export class FiveSoldiersService {
     return { ok: true, changed: true, departedSocketId, ack: { ok: true, data: undefined } };
   }
 
+  watch(socketId: string): FiveAck<FiveState> {
+    if (!this.socketPlayers.has(socketId)) this.observers.add(socketId);
+    return this.inspect();
+  }
+
+  unwatch(socketId: string): void {
+    this.observers.delete(socketId);
+  }
+
   disconnect(socketId: string): boolean {
+    this.observers.delete(socketId);
     const playerId = this.socketPlayers.get(socketId);
     if (!playerId) return false;
     const player = this.players.find(item => item.id === playerId);
     this.socketPlayers.delete(socketId);
     this.socketAccounts.delete(socketId);
     if (!player || player.socketId !== socketId) return false;
-    player.online = false;
-    player.ready = false;
-    player.socketId = null;
-    player.offlineUntil = this.now() + (this.phase === 'lobby' ? this.lobbyGraceMs : this.gameGraceMs);
-    this.version++;
-    this.scheduleExpiry(player);
+    this.removePlayer(player, 'exit');
     return true;
   }
 
   views(): Array<{ socketId: string; state: FiveState }> {
-    return this.players.flatMap(player => player.socketId
+    return [
+      ...this.players.flatMap(player => player.socketId
       ? [{ socketId: player.socketId, state: this.state(player) }]
-      : []);
+      : []),
+      ...Array.from(this.observers, socketId => ({ socketId, state: this.state(null) })),
+    ];
   }
 
   dispose(): void {

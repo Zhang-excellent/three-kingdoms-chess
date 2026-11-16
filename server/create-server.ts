@@ -220,6 +220,18 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         done(five.inspect());
       } catch { fiveInternalError(done); }
     });
+    socket.on('five:watch', (_payload: unknown, done: (ack: FiveAck<FiveState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(five.watch(socket.id));
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:unwatch', (_payload: unknown, done: (ack: FiveAck) => void) => {
+      if (typeof done !== 'function') return;
+      five.unwatch(socket.id);
+      done({ ok: true, data: undefined });
+    });
     socket.on('five:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: FiveAck<FiveReceipt>) => void) => {
       if (typeof done !== 'function') return;
       try {

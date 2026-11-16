@@ -77,7 +77,7 @@ test('both ready starts one authoritative game and rejects wrong-turn or stale m
   } finally { service.dispose(); }
 });
 
-test('five soldiers disconnect resume, resignation and rematch preserve room identity', () => {
+test('five soldiers disconnect immediately releases the seat and ends an active game', () => {
   const service = new FiveSoldiersService(() => undefined);
   try {
     const red = service.join('重连红', 'red', 'red-old');
@@ -88,15 +88,15 @@ test('five soldiers disconnect resume, resignation and rematch preserve room ide
 
     service.disconnect('red-old');
     const resumed = service.resume(red.ack.data.reconnectToken, 'red-new');
-    assert.equal(resumed.ok, true);
-    if (!resumed.ack.ok) return;
-    assert.equal(resumed.ack.data.state.players.find(player => player.side === 'red')?.online, true);
-
-    const resigned = service.resign(red.ack.data.reconnectToken, 'red-new');
-    assert.equal(resigned.ok, true);
-    if (!resigned.ack.ok) return;
-    assert.equal(resigned.ack.data.state.phase, 'finished');
-    assert.equal(resigned.ack.data.state.game?.winner, 'black');
+    assert.equal(resumed.ok, false);
+    if (resumed.ack.ok) return;
+    assert.equal(resumed.ack.code, 'SESSION_NOT_FOUND');
+    const current = service.inspect();
+    assert.equal(current.ok, true);
+    if (!current.ok) return;
+    assert.deepEqual(current.data.players.map(player => player.side), ['black']);
+    assert.equal(current.data.phase, 'finished');
+    assert.equal(current.data.game?.winner, 'black');
 
     const rematch = service.rematch(black.ack.data.reconnectToken, 'black-socket');
     assert.equal(rematch.ok, true);
@@ -104,6 +104,22 @@ test('five soldiers disconnect resume, resignation and rematch preserve room ide
     assert.equal(rematch.ack.data.state.phase, 'lobby');
     assert.equal(rematch.ack.data.state.game, null);
     assert.equal(rematch.ack.data.state.players.every(player => !player.ready), true);
+  } finally { service.dispose(); }
+});
+
+test('an unseated room observer receives the updated seat list immediately', () => {
+  const service = new FiveSoldiersService(() => undefined);
+  try {
+    const watched = service.watch('observer-socket');
+    assert.equal(watched.ok, true);
+    const red = service.join('离席红方', 'red', 'red-socket');
+    assert.equal(red.ok, true);
+    if (!red.ack.ok) return;
+    assert.equal(service.views().find(item => item.socketId === 'observer-socket')?.state.players.length, 1);
+    service.disconnect('red-socket');
+    const observerState = service.views().find(item => item.socketId === 'observer-socket')?.state;
+    assert.deepEqual(observerState?.players, []);
+    assert.equal(observerState?.phase, 'lobby');
   } finally { service.dispose(); }
 });
 

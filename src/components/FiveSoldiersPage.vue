@@ -162,12 +162,12 @@ async function recover() {
     else if (ack.code === 'SESSION_NOT_FOUND') {
       clearSession();
       error.value = '';
-      const inspectedAck = await emitAck<FiveState>('five:inspect', {});
+      const inspectedAck = await emitAck<FiveState>('five:watch', {});
       if (inspectedAck.ok) inspected.value = inspectedAck.data;
     } else error.value = ack.error;
     return;
   }
-  const ack = await emitAck<FiveState>('five:inspect', {});
+  const ack = await emitAck<FiveState>('five:watch', {});
   if (attempt !== resumeAttempt) return;
   if (ack.ok) inspected.value = ack.data;
   else error.value = ack.error;
@@ -325,7 +325,7 @@ async function leaveRoom(): Promise<void> {
   } finally {
     busy.value = false;
     clearSession();
-    const ack = await emitAck<FiveState>('five:inspect', {});
+    const ack = await emitAck<FiveState>('five:watch', {});
     if (ack.ok) inspected.value = ack.data;
   }
 }

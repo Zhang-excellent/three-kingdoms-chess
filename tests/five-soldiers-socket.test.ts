@@ -52,10 +52,12 @@ test('two independent sockets join, ready, play and receive the same authoritati
   const cookie = `three_chess_session=${registered.sessionToken}`;
   const [accountSocket, guestSocket, observer] = await Promise.all([client(cookie), client(), client()]);
   const accountStates: FiveState[] = [], guestStates: FiveState[] = [];
+  const observerStates: FiveState[] = [];
   accountSocket.on('five:state', state => accountStates.push(state));
   guestSocket.on('five:state', state => guestStates.push(state));
+  observer.on('five:state', state => observerStates.push(state));
 
-  const inspected = success(await emit<FiveState>(observer, 'five:inspect', {}));
+  const inspected = success(await emit<FiveState>(observer, 'five:watch', {}));
   assert.equal(inspected.phase, 'lobby');
   assert.equal(inspected.selfId, null);
 
@@ -111,4 +113,10 @@ test('two independent sockets join, ready, play and receive the same authoritati
   assert.equal(accountStates.at(-1)?.game?.turn, 'black');
   assert.equal(accountStates.at(-1)?.game?.movesRemaining, 1);
   assert.equal(guestStates.at(-1)?.game?.history.length, 2);
+
+  accountSocket.disconnect();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(observerStates.at(-1)?.players.map(player => player.side), ['black']);
+  assert.equal(observerStates.at(-1)?.phase, 'finished');
+  assert.equal(observerStates.at(-1)?.game?.winner, 'black');
 });
