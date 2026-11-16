@@ -4,10 +4,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { RoomService, type InternalRoom } from './room-service.ts';
+import { FiveSoldiersService } from './five-soldiers-service.ts';
 import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
 import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
 import type { ClientAck, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from '../src/online.ts';
+import type { FiveAck, FiveMoveIntent, FiveReceipt, FiveState } from '../src/five-soldiers.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 const AUTH_COOKIE = 'three_chess_session';
@@ -95,7 +97,12 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   };
   const rooms = new RoomService(broadcast, 60_000, 180_000,
     record => authService.saveCompletedGame(record), now);
+  const five = new FiveSoldiersService(service => {
+    for (const item of service.views()) io.to(item.socketId).emit('five:state', item.state);
+  }, 60_000, 180_000, now);
   const internalError = <T>(done: (ack: ClientAck<T>) => void) =>
+    done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
+  const fiveInternalError = <T>(done: (ack: FiveAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
 
   app.disable('x-powered-by');
@@ -191,6 +198,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     const currentUser = (): AuthUser | null => {
       const user = authService.authenticate(cookieToken(socket.handshake.headers.cookie));
       rooms.setSocketAccount(socket.id, user?.id ?? null);
+      five.setSocketAccount(socket.id, user?.id ?? null);
       return user;
     };
     currentUser();
@@ -204,6 +212,90 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       if (typeof done !== 'function') return;
       socket.leave(PUBLIC_LOBBY);
       done({ ok: true, data: undefined });
+    });
+    socket.on('five:inspect', (_payload: unknown, done: (ack: FiveAck<FiveState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(five.inspect());
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: FiveAck<FiveReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        const user = currentUser();
+        const result = five.join(user?.username ?? payload?.nickname, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:resume', (payload: { reconnectToken?: unknown }, done: (ack: FiveAck<FiveReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.resume(payload?.reconnectToken, socket.id);
+        if (result.ok && result.replacedSocketId) {
+          io.to(result.replacedSocketId).emit('five:session-replaced');
+          io.sockets.sockets.get(result.replacedSocketId)?.disconnect(true);
+        }
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:choose-side', (payload: { reconnectToken?: unknown; side?: unknown }, done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.chooseSide(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:ready', (payload: { reconnectToken?: unknown; ready?: unknown }, done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.setReady(payload?.reconnectToken, payload?.ready, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:rematch', (payload: { reconnectToken?: unknown }, done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.rematch(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:move', (payload: { reconnectToken?: unknown; intent?: unknown },
+      done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.move(payload?.reconnectToken, payload?.intent as FiveMoveIntent | undefined, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:resign', (payload: { reconnectToken?: unknown }, done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.resign(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:leave', (payload: { reconnectToken?: unknown }, done: (ack: FiveAck) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.leave(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
     });
     socket.on('room:watch', (payload: { roomCode?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
@@ -338,8 +430,11 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         done(result.ack); broadcast(result.room);
       } catch { internalError(done); }
     });
-    socket.on('disconnect', () => broadcast(rooms.disconnect(socket.id)));
+    socket.on('disconnect', () => {
+      broadcast(rooms.disconnect(socket.id));
+      if (five.disconnect(socket.id)) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+    });
   });
 
-  return { app, httpServer, io, rooms, authService };
+  return { app, httpServer, io, rooms, five, authService };
 }

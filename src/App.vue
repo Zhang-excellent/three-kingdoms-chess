@@ -17,6 +17,8 @@ import LobbyPage from './components/LobbyPage.vue';
 import InvitePage from './components/InvitePage.vue';
 import RoomWaiting from './components/RoomWaiting.vue';
 import AuthDialog from './components/AuthDialog.vue';
+import OtherGamesPage from './components/OtherGamesPage.vue';
+import FiveSoldiersPage from './components/FiveSoldiersPage.vue';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
 const legacyStorageKeys = ['three-kingdoms-chess:independent-v1', 'three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
@@ -50,10 +52,12 @@ const replayDragActive = ref(false), replayPlaying = ref(false);
 const replaySpeed = ref<'slow' | 'normal' | 'fast'>('normal');
 let replayTimer: number | null = null;
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
+const fiveRulesDialog = ref<HTMLDialogElement | null>(null);
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const inviteDialog = ref<HTMLDialogElement | null>(null), inviteLinkInput = ref<HTMLTextAreaElement | null>(null);
 const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null);
+const fivePage = ref<InstanceType<typeof FiveSoldiersPage> | null>(null);
 const auth = useAuth(), authNotice = ref('');
 const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
 const authRecentGames = auth.recentGames, authRecentLoading = auth.recentLoading, authRecentError = auth.recentError;
@@ -235,6 +239,11 @@ async function completeRoomDeparture(): Promise<void> {
 }
 
 async function activatePage(next: AppPage, code: string | null, initial = false) {
+  if (next === 'other' || next === 'five') {
+    void online.unsubscribeLobby();
+    online.suspend();
+    return;
+  }
   if (next !== 'spectate' && spectating.value) online.exitWatching();
   if (next === 'spectate') {
     if (!spectating.value) online.openWatchEntry();
@@ -266,6 +275,7 @@ async function activatePage(next: AppPage, code: string | null, initial = false)
 
 async function navigatePage(next: AppPage, code: string | null = null, method: 'push' | 'replace' = 'push') {
   if (leavingRoom.value) return;
+  if (page.value === 'five' && next !== 'five') await fivePage.value?.leaveForNavigation();
   if (leavesRoom(next, code)) {
     pendingRoomNavigation.value = { next, code, method };
     if (needsPlayingExitConfirmation()) exitDialog.value?.showModal();
@@ -280,6 +290,12 @@ function openLobbyPage() { void navigatePage('lobby'); }
 function openFriendsPage() { void navigatePage('friends'); }
 function openSpectateEntry() { void navigatePage('spectate', null, 'replace'); }
 function openLocalPage() { void navigatePage('local'); }
+function openOtherPage() { void navigatePage('other'); }
+function openFivePage() { void navigatePage('five'); }
+function openRules() {
+  if (page.value === 'other' || page.value === 'five') fiveRulesDialog.value?.showModal();
+  else rulesDialog.value?.showModal();
+}
 function openAuthDialog() {
   authNotice.value = '';
   authDialog.value?.open();
@@ -363,6 +379,7 @@ function openCurrentRoom() {
 
 async function syncPageFromLocation() {
   const route = parseAppRoute(location.href);
+  if (page.value === 'five' && route.page !== 'five') await fivePage.value?.leaveForNavigation();
   if (leavesRoom(route.page, route.roomCode)) {
     const targetHref = location.href;
     const currentHref = page.value === 'room'
@@ -697,17 +714,22 @@ async function requestRematch() {
         <button class="plain-button" :class="{ active: page === 'lobby' }" @click="openLobbyPage">对战大厅</button>
         <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友组局</button>
         <button class="plain-button" :class="{ active: page === 'spectate' }" @click="openSpectateEntry">观战</button>
+        <button class="plain-button" :class="{ active: page === 'other' || page === 'five' }" @click="openOtherPage">其他玩法</button>
         <button v-if="hasSession && page !== 'room'" class="plain-button room-return-button" @click="openCurrentRoom">{{ resumeRoomLabel }}</button>
         <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
         <button v-else class="plain-button account-button" @click="openAuthDialog">登录 / 注册</button>
         <button class="plain-button" @click="settingsDialog?.showModal()">设置</button>
-        <button class="plain-button" @click="rulesDialog?.showModal()">玩法说明</button>
+        <button class="plain-button" @click="openRules">玩法说明</button>
       </div>
     </header>
     <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>
 
     <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
       @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @resume="openCurrentRoom" />
+
+    <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" />
+
+    <FiveSoldiersPage v-else-if="page === 'five'" ref="fivePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
 
     <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname" :account-name="authUser?.username ?? null"
       :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
@@ -881,8 +903,14 @@ async function requestRematch() {
       </aside>
       </main>
     </template>
-    <footer class="site-footer"><span>三人同局，魏蜀吴对弈 · 当前为试玩规则。</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
+    <footer class="site-footer"><span>{{ page === 'other' || page === 'five' ? '其他玩法 · 当前开放五兵联盟。' : '三人同局，魏蜀吴对弈 · 当前为试玩规则。' }}</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。曹操视角上方左吴右蜀，魏方默认标准视角；刘备、孙权默认使用相同的 180° 视角，翻转只改变个人看到的画面与点击换算。输入房间号可只读观战。</p><ul><li>三方独立竞争。初始共 29 枚：魏 16、蜀 6、吴 7；上方中路中卒归吴方。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>联机对弈中，只有轮到自己行棋时才能提和；所有存活阵营同意后本局和棋。已有一方出局时，剩余两方均同意即可。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的自动判和次数尚待确认；本版仅采用全部存活阵营同意的手动和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
+    <dialog ref="fiveRulesDialog" class="rules-dialog five-rules-dialog">
+      <div class="dialog-heading"><h2>五兵联盟规则</h2><button class="dialog-close" aria-label="关闭规则" @click="fiveRulesDialog?.close()">×</button></div>
+      <p>双人独立棋局，红方先行。</p>
+      <ul><li>红方拥有五兵、双士、双象和主帅，共十枚棋子；黑方使用标准十六子。</li><li>双方每回合各走一步，所有棋种按中国象棋的基本走法移动、阻挡和吃子。</li><li>不强制应将，也不禁止送将；吃掉对方将帅立即获胜。</li><li>未登录玩家进入前须填写昵称；登录用户直接使用账号昵称。</li><li>双方在同一个双人棋桌准备后开始，结束后可在原桌再来一局。</li></ul>
+      <button class="primary-button" @click="fiveRulesDialog?.close()">知道了</button>
+    </dialog>
     <dialog ref="settingsDialog" class="settings-dialog">
       <div class="dialog-heading"><h2>声音设置</h2><button class="dialog-close" aria-label="关闭设置" @click="settingsDialog?.close()">×</button></div>
       <div class="audio-control"><label for="music-toggle">背景音乐</label><button id="music-toggle" class="tool-button" :aria-pressed="audioSettings.musicEnabled" @click="toggleMusic">{{ audioSettings.musicEnabled ? '开启' : '关闭' }}</button><label for="music-volume">音乐音量 {{ Math.round(audioSettings.musicVolume * 100) }}%</label><input id="music-volume" v-model.number="audioSettings.musicVolume" type="range" min="0" max="1" step="0.01" aria-label="音乐音量"></div>

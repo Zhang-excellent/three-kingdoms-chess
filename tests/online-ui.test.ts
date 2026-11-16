@@ -805,6 +805,7 @@ test('account registration, compact profile, password visibility, logout, and in
     await wrapper.findAll('.auth-dialog button').find(button => button.text() === '注册并登录')!.trigger('click');
     await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '界面注册甲'), 'Registered account did not appear');
     assert.equal(location.href, invitationUrl);
+    await waitUntil(() => !(wrapper!.get('.auth-dialog').element as HTMLDialogElement).open, 'Auth dialog did not close after registration');
     assert.equal((wrapper.get('.auth-dialog').element as HTMLDialogElement).open, false);
     assert.equal(JSON.stringify(localStorage).includes('1234'), false);
     assert.equal(JSON.stringify(localStorage).includes('three_chess_session'), false);

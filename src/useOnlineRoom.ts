@@ -281,6 +281,13 @@ export function useOnlineRoom() {
     if (spectating.value) { stopWatching(); spectating.value = false; }
     mode.value = 'local';
   }
+  function suspend() {
+    lobbySubscribed = false;
+    lobbyRooms.value = [];
+    lobbyLoaded.value = false;
+    socket?.disconnect();
+    if (connection.value !== 'replaced') connection.value = 'offline';
+  }
 
   async function authChanged(): Promise<void> {
     if (session.value) {
@@ -428,6 +435,6 @@ export function useOnlineRoom() {
     hasSession, savedRoomCode, lobbyRooms, lobbyLoaded, inviteRoom, inviteLookup, inviteLookupError, inviteUrl,
     subscribeLobby, unsubscribeLobby, inspectInvite,
     spectating, watchCode, watchingCode, openWatchEntry, startWatching, stopWatching, exitWatching,
-    connect, useLocal, authChanged, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
+    connect, useLocal, suspend, authChanged, createRoom, joinRoom, claimSeat, chooseFaction, setReady, rematch, move, resign, offerDraw, respondDraw,
     releaseOffline, leaveRoom, forgetSession };
 }
