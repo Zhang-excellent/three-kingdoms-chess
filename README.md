@@ -35,9 +35,10 @@ npm run dev
 - 联机中只有当前行棋的存活方可提和，提出者自动同意；其余存活阵营全部同意后判和，任一拒绝则继续。已有一方出局时由剩余两方表决。
 - 选中棋子反馈、合法落点与吃子提示、当前头像高亮、上一手痕迹和行棋记录。
 - 新访客首页包含三国阵营介绍、主要玩法入口、房间恢复入口和简短项目说明；首页不展开完整棋盘。
-- 顶部导航新增“其他玩法”，入口页只展示一个“五兵联盟”选择框，为后续其他棋种保留独立扩展空间。
+- 顶部导航新增“其他玩法”，入口页展示“五兵联盟”和“马棋”两个选择框，为后续其他棋种保留独立扩展空间。
 - 五兵联盟是独立双人联机玩法：红方为五兵、双士、双象和主帅共 10 子，黑方为标准 16 子；红方每回合连续走两步，黑方每回合走一步，不强制应将，吃掉对方将帅立即获胜。登录账号直接使用账号昵称，游客进入前必须填写昵称。
 - 五兵联盟使用同一套木色棋盘与圆形棋子视觉，支持选边、准备、权威落子、上一手、棋谱、翻转、认输、退出和同房间再来一局；离开五兵联盟页面、关闭页面或连接断开时立即释放席位，其他玩家实时看到空位。
+- 马棋为第二个独立双人玩法：双方各九马，红方先行，马走日且受马腿阻挡，先踏入对方中央底线帅位的一方获胜；房间、昵称、准备、再来一局和离席释放规则与五兵联盟一致。
 - 公开对战大厅采用棋社式 10 桌视图：第 1 桌是无需创建、始终可加入的“公开房间”，其余 9 桌由玩家点击空桌创建；每桌按曹操、房间号/状态、刘备、孙权四栏展示。
 - 三个阵营席位均可点击，弹框只要求可选的“昵称：”；加入已有房间时直接坐到所点阵营，空桌则同时输入 6 位房间号后创建并入座。
 - 有人入座或创建后桌子点亮，显示昵称、房间号、人数和加入/观战操作；对局中或已结束时点击中间区域、或点击“观战”进入只读对局。
@@ -87,6 +88,7 @@ npm run dev
 | 本地试玩 | `/three-chess/?mode=local` |
 | 其他玩法 | `/three-chess/?mode=other` |
 | 五兵联盟 | `/three-chess/?mode=five-soldiers` |
+| 马棋 | `/three-chess/?mode=horse-chess` |
 | 玩家房间/邀请 | `/three-chess/?mode=online&room=001234` |
 | 观战 | `/three-chess/?mode=spectate&room=001234` |
 
@@ -168,10 +170,12 @@ npm run build
 | --- | --- |
 | `src/game.ts` | 初始布局、纯规则函数、轮次、出局、胜负、棋局校验 |
 | `src/five-soldiers.ts` | 五兵联盟初始子力、纯走棋规则、状态与联机协议 |
+| `src/horse-chess.ts` | 马棋九马布局、纯走棋规则、状态与联机协议 |
 | `src/App.vue` | 棋盘与玩家界面、事件处理、上一步痕迹、棋谱和本机保存 |
 | `src/components/HomePage.vue` | 游戏首页、阵营介绍和主要入口 |
 | `src/components/OtherGamesPage.vue` | 其他玩法入口页 |
 | `src/components/FiveSoldiersPage.vue` | 五兵联盟双人联机、等待区和对局界面 |
+| `src/components/HorseChessPage.vue` | 马棋双人联机、等待区和对局界面 |
 | `src/components/LobbyPage.vue` | 公开大厅、房间摘要、创建与房号加入 |
 | `src/components/RoomWaiting.vue` | 开局前三人席位、阵营选择、准备和上一局结果 |
 | `src/navigation.ts` | 首页、大厅、好友组局、本地、房间和观战地址解析 |
@@ -191,6 +195,7 @@ npm run build
 | `tests/game-record.test.ts` | 棋谱内容、胜负结果、初始/最终子力和文件名测试 |
 | `tests/game-replay.test.ts` | 旧谱兼容、快照恢复、结构化事件和损坏棋谱测试 |
 | `tests/game-history.test.ts` | 完整对局保存、多人关联、终局事件、最近 5 盘、权限、去重和重启持久化 |
+| `tests/horse-chess.test.ts` | 马棋九马、马腿、夺帅与认输规则测试 |
 | `tests/replay-ui.test.ts` | 本地复盘导入、跳步、播放、翻转和存档隔离测试 |
 | `tests/navigation.test.ts` | 页面地址解析、部署子路径和旧邀请链接兼容 |
 | `tests/ui.test.ts` | 真实组件的点击、键盘、头像和标记交互测试，运行于模拟 DOM |
@@ -220,6 +225,10 @@ npm run build
 | 棋谱复盘 | [截图](docs/验收截图/2026-11-03-replay-desktop.png) | [截图](docs/验收截图/2026-11-03-replay-mobile.png) |
 | 手机棋谱导入 | — | [截图](docs/验收截图/2026-11-03-replay-import-mobile.png) |
 | 单曲声音设置 | — | [截图](docs/验收截图/2026-11-03-settings-single-theme-mobile.png) |
+| 其他玩法双入口 | [截图](docs/验收截图/2026-11-16-other-games-two-modes-desktop.png) | — |
+| 马棋入口 | — | [截图](docs/验收截图/2026-11-16-horse-chess-entry-mobile.png) |
+
+2026-11-16 马棋联机接入（仅本地，未部署）：其他玩法页新增第二个长方形入口“马棋”。马棋保留双方各九马、马走日、马腿阻挡、踏入对方中央底线帅位即胜的原规则；服务端提供独立单房间双人联机，房间昵称、登录账号、选边、准备、认输、再来一局及退出页面立即释放席位与五兵联盟一致。`npm test` 共 159 项通过，`npm run check` 与 `npm run build` 通过。真实 Edge 检查其他玩法桌面双入口与马棋 390×844 手机入口页面；联机准备与合法落子由独立 Vue、Service 和 Socket.IO 测试验证。
 | 复盘第 43 步待行方 | [截图](docs/验收截图/2026-11-07-replay-step43-waiting-desktop.png) | — |
 | 三方和棋结束前轮次 | [截图](docs/验收截图/2026-11-07-replay-step43-draw-desktop.png) | [截图](docs/验收截图/2026-11-07-replay-step43-draw-mobile.png) |
 | 账号通过邀请入座 | [截图](docs/验收截图/2026-11-08-auth-invite-account-room-desktop.png) | — |

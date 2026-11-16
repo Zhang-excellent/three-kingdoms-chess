@@ -9,6 +9,7 @@ test('app routes preserve the deployment path and legacy room links', () => {
   assert.deepEqual(parseAppRoute(`${origin}?mode=lobby`), { page: 'lobby', roomCode: null });
   assert.deepEqual(parseAppRoute(`${origin}?mode=other`), { page: 'other', roomCode: null });
   assert.deepEqual(parseAppRoute(`${origin}?mode=five-soldiers`), { page: 'five', roomCode: null });
+  assert.deepEqual(parseAppRoute(`${origin}?mode=horse-chess`), { page: 'horse', roomCode: null });
   assert.deepEqual(parseAppRoute(`${origin}?mode=online`), { page: 'friends', roomCode: null });
   assert.deepEqual(parseAppRoute(`${origin}?mode=online&room=001234`), { page: 'room', roomCode: '001234' });
   assert.deepEqual(parseAppRoute(`${origin}?room=654321`), { page: 'room', roomCode: '654321' });
@@ -20,6 +21,7 @@ test('app routes preserve the deployment path and legacy room links', () => {
   assert.equal(appRouteUrl(origin, 'local'), `${origin}?mode=local`);
   assert.equal(appRouteUrl(origin, 'other'), `${origin}?mode=other`);
   assert.equal(appRouteUrl(origin, 'five'), `${origin}?mode=five-soldiers`);
+  assert.equal(appRouteUrl(origin, 'horse'), `${origin}?mode=horse-chess`);
   assert.equal(roomInviteUrl(`${origin}?mode=lobby&token=secret#private`, '001234'),
     `${origin}?mode=online&room=001234`);
   assert.equal(roomInviteUrl('http://127.0.0.1:4173/three-chess/?mode=online', '001234'),

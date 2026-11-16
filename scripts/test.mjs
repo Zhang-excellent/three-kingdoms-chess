@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(root, 'tests/.compiled-app.mts');
 const componentOutputs = [];
-for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthDialog', 'OtherGamesPage', 'FiveSoldiersPage']) {
+for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthDialog', 'OtherGamesPage', 'FiveSoldiersPage', 'HorseChessPage']) {
   const sourcePath = resolve(root, 'src/components', `${name}.vue`);
   const componentSource = readFileSync(sourcePath, 'utf8');
   const component = parse(componentSource, { filename: `${name}.vue` });
@@ -17,6 +17,7 @@ for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthD
   writeFileSync(componentOutput, compiledComponent.content
     .replaceAll("'../auth.ts'", "'../src/auth.ts'")
     .replaceAll("'../five-soldiers.ts'", "'../src/five-soldiers.ts'")
+    .replaceAll("'../horse-chess.ts'", "'../src/horse-chess.ts'")
     .replaceAll("'../game-history.ts'", "'../src/game-history.ts'")
     .replaceAll("'../game.ts'", "'../src/game.ts'")
     .replaceAll("'../navigation.ts'", "'../src/navigation.ts'")
@@ -35,6 +36,7 @@ writeFileSync(output, result.content
   .replaceAll("'./components/AuthDialog.vue'", "'./.compiled-AuthDialog.mts'")
   .replaceAll("'./components/OtherGamesPage.vue'", "'./.compiled-OtherGamesPage.mts'")
   .replaceAll("'./components/FiveSoldiersPage.vue'", "'./.compiled-FiveSoldiersPage.mts'")
+  .replaceAll("'./components/HorseChessPage.vue'", "'./.compiled-HorseChessPage.mts'")
   .replaceAll("'./game.ts'", "'../src/game.ts'")
   .replaceAll("'./game-history.ts'", "'../src/game-history.ts'")
   .replaceAll("'./board-view.ts'", "'../src/board-view.ts'")
@@ -47,7 +49,7 @@ writeFileSync(output, result.content
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/five-soldiers.test.ts', 'tests/five-soldiers-service.test.ts', 'tests/five-soldiers-socket.test.ts', 'tests/five-soldiers-ui.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/navigation.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/three-kingdoms-sim.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
+  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/five-soldiers.test.ts', 'tests/five-soldiers-service.test.ts', 'tests/five-soldiers-socket.test.ts', 'tests/five-soldiers-ui.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/horse-chess.test.ts', 'tests/horse-chess-service.test.ts', 'tests/horse-chess-socket.test.ts', 'tests/horse-chess-ui.test.ts', 'tests/navigation.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/three-kingdoms-sim.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
     cwd: root, stdio: 'inherit', env: { ...process.env, NODE_ENV: 'test' },
   });
   status = run.status ?? 1;

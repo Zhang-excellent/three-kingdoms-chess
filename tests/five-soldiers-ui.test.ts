@@ -31,11 +31,11 @@ const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 
   throw new Error(`${message}\n${document.body.textContent ?? ''}`);
 };
 
-test('other games page contains only one five-soldiers selector', async t => {
+test('other games page contains the five-soldiers and horse-chess selectors', async t => {
   const wrapper = mount(OtherGamesPage, { attachTo: document.body });
   t.after(() => wrapper.unmount());
-  assert.equal(wrapper.findAll('button.variant-entry').length, 1);
-  assert.equal(wrapper.get('.variant-entry').text(), '兵五兵联盟→');
+  assert.equal(wrapper.findAll('button.variant-entry').length, 2);
+  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋']);
 });
 
 test('two browser components join the same table, ready and complete a move', async t => {

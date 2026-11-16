@@ -5,11 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { RoomService, type InternalRoom } from './room-service.ts';
 import { FiveSoldiersService } from './five-soldiers-service.ts';
+import { HorseChessService } from './horse-chess-service.ts';
 import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
 import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
 import type { ClientAck, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from '../src/online.ts';
 import type { FiveAck, FiveMoveIntent, FiveReceipt, FiveState } from '../src/five-soldiers.ts';
+import type { HorseAck, HorseMoveIntent, HorseReceipt, HorseState } from '../src/horse-chess.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 const AUTH_COOKIE = 'three_chess_session';
@@ -100,9 +102,14 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const five = new FiveSoldiersService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('five:state', item.state);
   }, 60_000, 180_000, now);
+  const horse = new HorseChessService(service => {
+    for (const item of service.views()) io.to(item.socketId).emit('horse:state', item.state);
+  });
   const internalError = <T>(done: (ack: ClientAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const fiveInternalError = <T>(done: (ack: FiveAck<T>) => void) =>
+    done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
+  const horseInternalError = <T>(done: (ack: HorseAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
 
   app.disable('x-powered-by');
@@ -199,6 +206,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       const user = authService.authenticate(cookieToken(socket.handshake.headers.cookie));
       rooms.setSocketAccount(socket.id, user?.id ?? null);
       five.setSocketAccount(socket.id, user?.id ?? null);
+      horse.setSocketAccount(socket.id, user?.id ?? null);
       return user;
     };
     currentUser();
@@ -308,6 +316,102 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         done(result.ack);
         if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
       } catch { fiveInternalError(done); }
+    });
+    socket.on('horse:inspect', (_payload: unknown, done: (ack: HorseAck<HorseState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(horse.inspect());
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:watch', (_payload: unknown, done: (ack: HorseAck<HorseState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(horse.watch(socket.id));
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:unwatch', (_payload: unknown, done: (ack: HorseAck) => void) => {
+      if (typeof done !== 'function') return;
+      horse.unwatch(socket.id);
+      done({ ok: true, data: undefined });
+    });
+    socket.on('horse:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: HorseAck<HorseReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        const user = currentUser();
+        const result = horse.join(user?.username ?? payload?.nickname, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:resume', (payload: { reconnectToken?: unknown }, done: (ack: HorseAck<HorseReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.resume(payload?.reconnectToken, socket.id);
+        if (result.ok && result.replacedSocketId) {
+          io.to(result.replacedSocketId).emit('horse:session-replaced');
+          io.sockets.sockets.get(result.replacedSocketId)?.disconnect(true);
+        }
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:choose-side', (payload: { reconnectToken?: unknown; side?: unknown }, done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.chooseSide(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:ready', (payload: { reconnectToken?: unknown; ready?: unknown }, done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.setReady(payload?.reconnectToken, payload?.ready, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:rematch', (payload: { reconnectToken?: unknown }, done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.rematch(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:move', (payload: { reconnectToken?: unknown; intent?: unknown },
+      done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.move(payload?.reconnectToken, payload?.intent as HorseMoveIntent | undefined, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:resign', (payload: { reconnectToken?: unknown }, done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.resign(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:leave', (payload: { reconnectToken?: unknown }, done: (ack: HorseAck) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.leave(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
     });
     socket.on('room:watch', (payload: { roomCode?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
@@ -445,8 +549,9 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     socket.on('disconnect', () => {
       broadcast(rooms.disconnect(socket.id));
       if (five.disconnect(socket.id)) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      if (horse.disconnect(socket.id)) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
     });
   });
 
-  return { app, httpServer, io, rooms, five, authService };
+  return { app, httpServer, io, rooms, five, horse, authService };
 }
