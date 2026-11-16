@@ -47,7 +47,7 @@ writeFileSync(output, result.content
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/five-soldiers.test.ts', 'tests/five-soldiers-service.test.ts', 'tests/five-soldiers-socket.test.ts', 'tests/five-soldiers-ui.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/navigation.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
+  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/five-soldiers.test.ts', 'tests/five-soldiers-service.test.ts', 'tests/five-soldiers-socket.test.ts', 'tests/five-soldiers-ui.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/navigation.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/three-kingdoms-sim.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
     cwd: root, stdio: 'inherit', env: { ...process.env, NODE_ENV: 'test' },
   });
   status = run.status ?? 1;

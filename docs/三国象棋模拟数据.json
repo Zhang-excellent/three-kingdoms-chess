@@ -1,0 +1,295 @@
+{
+  "generatedAt": "2026/11/16 17:42:02",
+  "gamesPerProfile": 500,
+  "records": [
+    {
+      "name": "三国象棋棋谱-20261115-232214.md",
+      "ok": true,
+      "result": "刘备获胜",
+      "winner": "shu",
+      "moves": 102,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 6,
+        "wu": 7
+      },
+      "firstEliminated": "wei",
+      "warnings": 0
+    },
+    {
+      "name": "三国象棋棋谱-20261115-220903.md",
+      "ok": true,
+      "result": "孙权获胜",
+      "winner": "wu",
+      "moves": 36,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 6,
+        "wu": 7
+      },
+      "firstEliminated": "wei",
+      "warnings": 0
+    },
+    {
+      "name": "三国象棋棋谱-20261115-214957.md",
+      "ok": true,
+      "result": "曹操获胜",
+      "winner": "wei",
+      "moves": 52,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 6,
+        "wu": 7
+      },
+      "firstEliminated": "shu",
+      "warnings": 0
+    },
+    {
+      "name": "三国象棋棋谱-20261115-001418.md",
+      "ok": true,
+      "result": "孙权获胜",
+      "winner": "wu",
+      "moves": 86,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 6,
+        "wu": 7
+      },
+      "firstEliminated": "shu",
+      "warnings": 0
+    },
+    {
+      "name": "三国象棋棋谱-20261106-145310(5).md",
+      "ok": true,
+      "result": "和棋",
+      "winner": null,
+      "moves": 43,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 6,
+        "wu": 7
+      },
+      "firstEliminated": null,
+      "warnings": 0
+    },
+    {
+      "name": "三国象棋棋谱-20261029-234542(3).md",
+      "ok": true,
+      "result": "曹操获胜",
+      "winner": "wei",
+      "moves": 60,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 7,
+        "wu": 6
+      },
+      "firstEliminated": null,
+      "warnings": 1
+    },
+    {
+      "name": "三国象棋棋谱-20261109-123706(2).md",
+      "ok": true,
+      "result": "曹操获胜",
+      "winner": "wei",
+      "moves": 86,
+      "initialCounts": {
+        "wei": 16,
+        "shu": 6,
+        "wu": 7
+      },
+      "firstEliminated": "wu",
+      "warnings": 0
+    }
+  ],
+  "profiles": [
+    {
+      "policy": {
+        "name": "纯随机合法走子",
+        "coalition": 0.1,
+        "randomness": 260,
+        "caoExchangeBias": 0.2,
+        "maxPlies": 240
+      },
+      "summary": {
+        "games": 500,
+        "wins": {
+          "wei": 211,
+          "shu": 26,
+          "wu": 39
+        },
+        "winRate": {
+          "wei": 0.422,
+          "shu": 0.052,
+          "wu": 0.078
+        },
+        "draws": 224,
+        "drawRate": 0.448,
+        "moveLimitDraws": 224,
+        "averageMoves": 144.528,
+        "medianMoves": 153,
+        "averageScore": {
+          "wei": 2.496,
+          "shu": 0.714,
+          "wu": 0.79
+        },
+        "scoreRate": {
+          "wei": 0.624,
+          "shu": 0.1785,
+          "wu": 0.1975
+        },
+        "firstEliminated": {
+          "wei": 54,
+          "shu": 145,
+          "wu": 156
+        },
+        "firstEliminationRate": {
+          "wei": 0.108,
+          "shu": 0.29,
+          "wu": 0.312
+        }
+      }
+    },
+    {
+      "policy": {
+        "name": "孙刘低协调",
+        "coalition": 0.25,
+        "randomness": 145,
+        "caoExchangeBias": 0.75,
+        "maxPlies": 240
+      },
+      "summary": {
+        "games": 500,
+        "wins": {
+          "wei": 196,
+          "shu": 26,
+          "wu": 29
+        },
+        "winRate": {
+          "wei": 0.392,
+          "shu": 0.052,
+          "wu": 0.058
+        },
+        "draws": 249,
+        "drawRate": 0.498,
+        "moveLimitDraws": 249,
+        "averageMoves": 151.192,
+        "medianMoves": 236.5,
+        "averageScore": {
+          "wei": 2.46,
+          "shu": 0.734,
+          "wu": 0.806
+        },
+        "scoreRate": {
+          "wei": 0.615,
+          "shu": 0.1835,
+          "wu": 0.2015
+        },
+        "firstEliminated": {
+          "wei": 51,
+          "shu": 162,
+          "wu": 140
+        },
+        "firstEliminationRate": {
+          "wei": 0.102,
+          "shu": 0.324,
+          "wu": 0.28
+        }
+      }
+    },
+    {
+      "policy": {
+        "name": "孙刘正常配合",
+        "coalition": 0.65,
+        "randomness": 105,
+        "caoExchangeBias": 0.95,
+        "maxPlies": 240
+      },
+      "summary": {
+        "games": 500,
+        "wins": {
+          "wei": 193,
+          "shu": 24,
+          "wu": 22
+        },
+        "winRate": {
+          "wei": 0.386,
+          "shu": 0.048,
+          "wu": 0.044
+        },
+        "draws": 261,
+        "drawRate": 0.522,
+        "moveLimitDraws": 261,
+        "averageMoves": 156.996,
+        "medianMoves": 240,
+        "averageScore": {
+          "wei": 2.472,
+          "shu": 0.77,
+          "wu": 0.758
+        },
+        "scoreRate": {
+          "wei": 0.618,
+          "shu": 0.1925,
+          "wu": 0.1895
+        },
+        "firstEliminated": {
+          "wei": 52,
+          "shu": 148,
+          "wu": 145
+        },
+        "firstEliminationRate": {
+          "wei": 0.104,
+          "shu": 0.296,
+          "wu": 0.29
+        }
+      }
+    },
+    {
+      "policy": {
+        "name": "孙刘高度一心",
+        "coalition": 0.95,
+        "randomness": 80,
+        "caoExchangeBias": 1,
+        "maxPlies": 240
+      },
+      "summary": {
+        "games": 500,
+        "wins": {
+          "wei": 224,
+          "shu": 20,
+          "wu": 19
+        },
+        "winRate": {
+          "wei": 0.448,
+          "shu": 0.04,
+          "wu": 0.038
+        },
+        "draws": 237,
+        "drawRate": 0.474,
+        "moveLimitDraws": 237,
+        "averageMoves": 146.048,
+        "medianMoves": 189,
+        "averageScore": {
+          "wei": 2.648,
+          "shu": 0.67,
+          "wu": 0.682
+        },
+        "scoreRate": {
+          "wei": 0.662,
+          "shu": 0.1675,
+          "wu": 0.1705
+        },
+        "firstEliminated": {
+          "wei": 43,
+          "shu": 144,
+          "wu": 162
+        },
+        "firstEliminationRate": {
+          "wei": 0.086,
+          "shu": 0.288,
+          "wu": 0.324
+        }
+      }
+    }
+  ],
+  "elapsedMs": 430825.5342
+}
