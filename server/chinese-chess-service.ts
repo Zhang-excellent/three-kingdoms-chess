@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   CHINESE_CHESS_GAME_ID,
+  drawChineseGame,
   isChineseSide,
   newChineseGame,
   playChineseMove,
@@ -21,6 +22,7 @@ interface ChinesePlayer {
   id: string;
   token: string;
   nickname: string;
+  avatar: string | null;
   accountId: string | null;
   side: ChineseSide;
   ready: boolean;
@@ -57,9 +59,11 @@ export class ChineseChessService {
   private version = 1;
   private round = 1;
   private game: ChineseGame | null = null;
+  private drawOfferBy: ChineseSide | null = null;
   private players: ChinesePlayer[] = [];
   private readonly socketPlayers = new Map<string, string>();
   private readonly socketAccounts = new Map<string, string | null>();
+  private readonly socketAvatars = new Map<string, string | null>();
   private readonly observers = new Set<string>();
   private readonly requests = new Map<string, Map<string, StoredAck>>();
 
@@ -67,8 +71,9 @@ export class ChineseChessService {
     this.onChanged = onChanged;
   }
 
-  setSocketAccount(socketId: string, accountId: string | null): void {
+  setSocketAccount(socketId: string, accountId: string | null, avatar: string | null = null): void {
     this.socketAccounts.set(socketId, accountId);
+    this.socketAvatars.set(socketId, avatar);
   }
 
   join(nicknameValue: unknown, sideValue: unknown, socketId: string): ActionResult<ChineseReceipt> {
@@ -88,6 +93,7 @@ export class ChineseChessService {
       id,
       token: randomBytes(32).toString('base64url'),
       nickname: nickname || '账号玩家',
+      avatar: accountId ? this.socketAvatars.get(socketId) ?? null : null,
       accountId,
       side: sideValue,
       ready: false,
@@ -112,6 +118,7 @@ export class ChineseChessService {
     const replacedSocketId = found.player.socketId !== socketId ? found.player.socketId : undefined;
     if (replacedSocketId) this.socketPlayers.delete(replacedSocketId);
     found.player.socketId = socketId;
+    found.player.avatar = found.player.accountId ? this.socketAvatars.get(socketId) ?? null : null;
     this.observers.delete(socketId);
     this.bindSocket(found.player, socketId);
     this.version++;
@@ -145,6 +152,7 @@ export class ChineseChessService {
     if (this.players.length === 2 && this.players.every(player => player.ready)) {
       this.game = newChineseGame();
       this.phase = 'playing';
+      this.drawOfferBy = null;
       this.requests.clear();
       this.version++;
     }
@@ -191,6 +199,7 @@ export class ChineseChessService {
     if (!result.ok) return this.fail('ILLEGAL_MOVE', result.error, player);
     this.game = result.game;
     this.phase = result.game.status === 'finished' ? 'finished' : 'playing';
+    this.drawOfferBy = null;
     this.version++;
     const ack: ChineseAck<{ state: ChineseState }> = { ok: true, data: { state: this.state(player) } };
     playerRequests.set(intent.requestId, { fingerprint, ack });
@@ -205,6 +214,37 @@ export class ChineseChessService {
       return this.fail('GAME_NOT_PLAYING', '当前没有进行中的棋局。', found.player);
     this.game = resignChineseGame(this.game, found.player.side);
     this.phase = 'finished';
+    this.drawOfferBy = null;
+    this.version++;
+    return this.stateResult(found.player);
+  }
+
+  offerDraw(tokenValue: unknown, socketId: string): ActionResult<{ state: ChineseState }> {
+    const found = this.findActivePlayer(tokenValue, socketId);
+    if (!found.ok) return found;
+    if (this.phase !== 'playing' || !this.game)
+      return this.fail('GAME_NOT_PLAYING', '当前没有进行中的棋局。', found.player);
+    if (this.players.length < 2) return this.fail('NO_OPPONENT', '当前没有可以回应提和的对手。', found.player);
+    if (this.drawOfferBy) return this.fail('DRAW_ALREADY_OFFERED', '已经有一项提和申请正在等待回应。', found.player);
+    this.drawOfferBy = found.player.side;
+    this.version++;
+    return this.stateResult(found.player);
+  }
+
+  respondDraw(tokenValue: unknown, acceptValue: unknown, socketId: string): ActionResult<{ state: ChineseState }> {
+    const found = this.findActivePlayer(tokenValue, socketId);
+    if (!found.ok) return found;
+    if (this.phase !== 'playing' || !this.game)
+      return this.fail('GAME_NOT_PLAYING', '当前没有进行中的棋局。', found.player);
+    if (!this.drawOfferBy) return this.fail('NO_DRAW_OFFER', '当前没有待回应的提和申请。', found.player);
+    if (found.player.side === this.drawOfferBy)
+      return this.fail('NOT_DRAW_RESPONDER', '提和申请需要由对手回应。', found.player);
+    if (typeof acceptValue !== 'boolean') return this.fail('INVALID_REQUEST', '和棋回应格式不正确。', found.player);
+    if (acceptValue) {
+      this.game = drawChineseGame(this.game);
+      this.phase = 'finished';
+    }
+    this.drawOfferBy = null;
     this.version++;
     return this.stateResult(found.player);
   }
@@ -235,6 +275,7 @@ export class ChineseChessService {
     const player = this.players.find(item => item.id === playerId);
     this.socketPlayers.delete(socketId);
     this.socketAccounts.delete(socketId);
+    this.socketAvatars.delete(socketId);
     if (!player || player.socketId !== socketId) return false;
     this.removePlayer(player);
     return true;
@@ -305,6 +346,7 @@ export class ChineseChessService {
     const players: ChinesePlayerView[] = this.players.map(player => ({
       id: player.id,
       nickname: player.nickname,
+      avatar: player.avatar,
       identity: player.accountId ? 'account' : 'guest',
       side: player.side,
       ready: player.ready,
@@ -318,6 +360,7 @@ export class ChineseChessService {
       round: this.round,
       players,
       game: this.game ? structuredClone(this.game) : null,
+      drawOfferBy: this.drawOfferBy,
       selfId: self?.id ?? null,
     };
   }
@@ -326,9 +369,11 @@ export class ChineseChessService {
     if (this.phase === 'playing' && this.game) {
       this.game = resignChineseGame(this.game, player.side);
       this.phase = 'finished';
+      this.drawOfferBy = null;
     }
     this.socketPlayers.delete(player.socketId);
     this.socketAccounts.delete(player.socketId);
+    this.socketAvatars.delete(player.socketId);
     this.requests.delete(player.id);
     this.players = this.players.filter(item => item.id !== player.id);
     this.version++;
@@ -339,6 +384,7 @@ export class ChineseChessService {
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.drawOfferBy = null;
     this.requests.clear();
     for (const player of this.players) player.ready = false;
     this.version++;
@@ -348,6 +394,7 @@ export class ChineseChessService {
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.drawOfferBy = null;
     this.requests.clear();
     this.version++;
   }

@@ -121,7 +121,13 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
 
   app.disable('x-powered-by');
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
-  app.use('/three-chess/api/auth', express.json({ limit: '16kb', type: 'application/json' }));
+  app.use('/three-chess/api/auth', express.json({ limit: '700kb', type: 'application/json' }));
+  app.get('/three-chess/api/avatar/:userId', (request, response) => {
+    const avatar = authService.avatarData(request.params.userId);
+    if (!avatar) return response.status(404).type('text/plain').send('Avatar not found');
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    response.type(avatar.mime).send(avatar.data);
+  });
   app.use('/three-chess/api/auth', (_request, response, next) => {
     response.setHeader('Cache-Control', 'no-store');
     next();
@@ -170,6 +176,13 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       sendAuthSuccess(response, result);
     } catch (error) { next(error); }
   });
+  app.post('/three-chess/api/auth/avatar', (request, response, next) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    try {
+      sendAuthSuccess(response, authService.setAvatar(user, request.body?.avatarData ?? null));
+    } catch (error) { next(error); }
+  });
   app.use('/three-chess/api/auth', (_request, response) => response.status(404).json({ ok: false, code: 'NOT_FOUND', error: '接口不存在。' }));
   app.use('/three-chess/api/auth', (error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     console.error('Authentication request failed', error);
@@ -212,9 +225,9 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     const currentUser = (): AuthUser | null => {
       const user = authService.authenticate(cookieToken(socket.handshake.headers.cookie));
       rooms.setSocketAccount(socket.id, user?.id ?? null);
-      five.setSocketAccount(socket.id, user?.id ?? null);
-      horse.setSocketAccount(socket.id, user?.id ?? null);
-      chinese.setSocketAccount(socket.id, user?.id ?? null);
+      five.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
+      horse.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
+      chinese.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       return user;
     };
     currentUser();
@@ -316,6 +329,24 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
       } catch { fiveInternalError(done); }
     });
+    socket.on('five:draw-offer', (payload: { reconnectToken?: unknown }, done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.offerDraw(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
+    socket.on('five:draw-respond', (payload: { reconnectToken?: unknown; accept?: unknown }, done: (ack: FiveAck<{ state: FiveState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = five.respondDraw(payload?.reconnectToken, payload?.accept, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
+      } catch { fiveInternalError(done); }
+    });
     socket.on('five:leave', (payload: { reconnectToken?: unknown }, done: (ack: FiveAck) => void) => {
       if (typeof done !== 'function') return;
       try {
@@ -412,6 +443,24 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
       } catch { horseInternalError(done); }
     });
+    socket.on('horse:draw-offer', (payload: { reconnectToken?: unknown }, done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.offerDraw(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
+    socket.on('horse:draw-respond', (payload: { reconnectToken?: unknown; accept?: unknown }, done: (ack: HorseAck<{ state: HorseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = horse.respondDraw(payload?.reconnectToken, payload?.accept, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      } catch { horseInternalError(done); }
+    });
     socket.on('horse:leave', (payload: { reconnectToken?: unknown }, done: (ack: HorseAck) => void) => {
       if (typeof done !== 'function') return;
       try {
@@ -504,6 +553,24 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       try {
         currentUser();
         const result = chinese.resign(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:draw-offer', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.offerDraw(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:draw-respond', (payload: { reconnectToken?: unknown; accept?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.respondDraw(payload?.reconnectToken, payload?.accept, socket.id);
         done(result.ack);
         if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
       } catch { chineseInternalError(done); }

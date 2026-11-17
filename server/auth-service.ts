@@ -26,6 +26,8 @@ interface UserRow {
   username_key: string;
   password_hash: string;
   recovery_hash: string;
+  avatar_data: string | null;
+  updated_at: number;
 }
 
 interface SessionRow {
@@ -126,7 +128,13 @@ async function passwordMatches(password: string, stored: string): Promise<boolea
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
-const publicUser = (row: UserRow): AuthUser => ({ id: row.id, username: row.username });
+const publicUser = (row: UserRow): AuthUser => ({
+  id: row.id,
+  username: row.username,
+  avatarUrl: row.avatar_data
+    ? `/three-chess/api/avatar/${encodeURIComponent(row.id)}?v=${Number(row.updated_at)}`
+    : null,
+});
 const failure = (status: number, code: string, error: string, retryAfterSeconds?: number): AuthFailure =>
   ({ ok: false, status, code, error, retryAfterSeconds });
 
@@ -160,7 +168,7 @@ export class AuthService {
   private migrate(): void {
     const versionRow = this.db.prepare('PRAGMA user_version').get() as unknown as { user_version: number };
     const version = Number(versionRow?.user_version ?? 0);
-    if (version > 3) throw new Error(`账号数据库版本 ${version} 高于当前服务支持版本 3。`);
+    if (version > 4) throw new Error(`账号数据库版本 ${version} 高于当前服务支持版本 4。`);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.exec(`
@@ -170,6 +178,7 @@ export class AuthService {
         username_key TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
         recovery_hash TEXT NOT NULL,
+        avatar_data TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -212,8 +221,11 @@ export class AuthService {
         UNIQUE(game_id, user_id)
       );
       CREATE INDEX IF NOT EXISTS game_participants_user ON game_participants(user_id, game_id);
-      PRAGMA user_version = 3;
       `);
+      const columns = this.db.prepare('PRAGMA table_info(auth_users)').all() as unknown as Array<{ name: string }>;
+      if (!columns.some(column => column.name === 'avatar_data'))
+        this.db.exec('ALTER TABLE auth_users ADD COLUMN avatar_data TEXT');
+      this.db.exec('PRAGMA user_version = 4');
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -252,7 +264,7 @@ export class AuthService {
       if (String(error).includes('UNIQUE')) return failure(409, 'USERNAME_TAKEN', '这个昵称已经有人使用，请换一个');
       throw error;
     }
-    const user = { id, username }, session = this.createSession(id, remember);
+    const user = { id, username, avatarUrl: null }, session = this.createSession(id, remember);
     return { ok: true, user, ...session };
   }
 
@@ -305,6 +317,30 @@ export class AuthService {
     }
     this.limiter.reset(`password:${user.id}`);
     return { ok: true, user: publicUser(row), ...this.createSession(user.id, remember) };
+  }
+
+  setAvatar(user: AuthUser, avatarValue: unknown): AuthResult {
+    if (avatarValue !== null && typeof avatarValue !== 'string')
+      return failure(400, 'INVALID_AVATAR', '头像数据格式不正确。');
+    if (typeof avatarValue === 'string') {
+      const match = avatarValue.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if (!match || Buffer.from(match[2], 'base64').length > 300 * 1024)
+        return failure(400, 'INVALID_AVATAR', '头像需要使用 PNG、JPEG 或 WebP，且不超过 300KB。');
+    }
+    const timestamp = this.now();
+    this.db.prepare('UPDATE auth_users SET avatar_data = ?, updated_at = ? WHERE id = ?')
+      .run(avatarValue, timestamp, user.id);
+    const row = this.findByUserId(user.id);
+    if (!row) return failure(404, 'USER_NOT_FOUND', '没有找到这个账号。');
+    return { ok: true, user: publicUser(row) };
+  }
+
+  avatarData(userId: string): { mime: string; data: Buffer } | null {
+    const row = this.db.prepare('SELECT avatar_data FROM auth_users WHERE id = ?')
+      .get(userId) as unknown as { avatar_data: string | null } | undefined;
+    const match = row?.avatar_data?.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+    if (!match) return null;
+    return { mime: `image/${match[1]}`, data: Buffer.from(match[2], 'base64') };
   }
 
   saveCompletedGame(record: ArchivedGameRecord): void {
