@@ -667,4 +667,5 @@ defineExpose({ leaveForNavigation, openSeat });
 @media(max-width:860px){.five-table-aside{position:static}.five-history{margin-top:0}}
 @media(max-width:640px){.five-page{padding:14px 0 38px}.five-page-nav{margin-bottom:14px}.five-heading p{display:none}.five-heading h1{font-size:31px}.five-board-heading h2{font-size:17px}.five-board-heading span{padding:4px 8px;font-size:9px}.five-table-seat{min-height:58px;padding:8px 10px;gap:9px}.five-seat-avatar{width:38px;height:38px;font-size:20px}.five-seat-copy strong{font-size:15px}.five-table-seat>em{max-width:74px;overflow:hidden;text-overflow:ellipsis;font-size:8px}.five-table-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.five-table-actions>button{width:100%;min-height:44px;margin:0}.five-table-actions .primary-button{min-width:0}.five-history{padding:12px}.five-invite-text{font-size:10px}.five-seat-dialog{padding:20px}}
 .five-seat-avatar{border-radius:9px;overflow:hidden}.five-seat-avatar img{width:100%;height:100%;object-fit:cover}
+.five-piece text.general{font-size:32px}
 </style>
