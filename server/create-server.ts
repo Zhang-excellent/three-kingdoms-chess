@@ -6,12 +6,14 @@ import { Server } from 'socket.io';
 import { RoomService, type InternalRoom } from './room-service.ts';
 import { FiveSoldiersService } from './five-soldiers-service.ts';
 import { HorseChessService } from './horse-chess-service.ts';
+import { ChineseChessService } from './chinese-chess-service.ts';
 import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
 import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
 import type { ClientAck, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from '../src/online.ts';
 import type { FiveAck, FiveMoveIntent, FiveReceipt, FiveState } from '../src/five-soldiers.ts';
 import type { HorseAck, HorseMoveIntent, HorseReceipt, HorseState } from '../src/horse-chess.ts';
+import type { ChineseAck, ChineseMoveIntent, ChineseReceipt, ChineseState } from '../src/chinese-chess.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 const AUTH_COOKIE = 'three_chess_session';
@@ -105,11 +107,16 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const horse = new HorseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('horse:state', item.state);
   });
+  const chinese = new ChineseChessService(service => {
+    for (const item of service.views()) io.to(item.socketId).emit('chinese:state', item.state);
+  });
   const internalError = <T>(done: (ack: ClientAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const fiveInternalError = <T>(done: (ack: FiveAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const horseInternalError = <T>(done: (ack: HorseAck<T>) => void) =>
+    done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
+  const chineseInternalError = <T>(done: (ack: ChineseAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
 
   app.disable('x-powered-by');
@@ -207,6 +214,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       rooms.setSocketAccount(socket.id, user?.id ?? null);
       five.setSocketAccount(socket.id, user?.id ?? null);
       horse.setSocketAccount(socket.id, user?.id ?? null);
+      chinese.setSocketAccount(socket.id, user?.id ?? null);
       return user;
     };
     currentUser();
@@ -413,6 +421,102 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         if (result.changed) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
       } catch { horseInternalError(done); }
     });
+    socket.on('chinese:inspect', (_payload: unknown, done: (ack: ChineseAck<ChineseState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(chinese.inspect());
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:watch', (_payload: unknown, done: (ack: ChineseAck<ChineseState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(chinese.watch(socket.id));
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:unwatch', (_payload: unknown, done: (ack: ChineseAck) => void) => {
+      if (typeof done !== 'function') return;
+      chinese.unwatch(socket.id);
+      done({ ok: true, data: undefined });
+    });
+    socket.on('chinese:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: ChineseAck<ChineseReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        const user = currentUser();
+        const result = chinese.join(user?.username ?? payload?.nickname, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:resume', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck<ChineseReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.resume(payload?.reconnectToken, socket.id);
+        if (result.ok && result.replacedSocketId) {
+          io.to(result.replacedSocketId).emit('chinese:session-replaced');
+          io.sockets.sockets.get(result.replacedSocketId)?.disconnect(true);
+        }
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:choose-side', (payload: { reconnectToken?: unknown; side?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.chooseSide(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:ready', (payload: { reconnectToken?: unknown; ready?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.setReady(payload?.reconnectToken, payload?.ready, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:rematch', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.rematch(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:move', (payload: { reconnectToken?: unknown; intent?: unknown },
+      done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.move(payload?.reconnectToken, payload?.intent as ChineseMoveIntent | undefined, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:resign', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.resign(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:leave', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.leave(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
     socket.on('room:watch', (payload: { roomCode?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       currentUser();
@@ -550,8 +654,9 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       broadcast(rooms.disconnect(socket.id));
       if (five.disconnect(socket.id)) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
       if (horse.disconnect(socket.id)) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
+      if (chinese.disconnect(socket.id)) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
     });
   });
 
-  return { app, httpServer, io, rooms, five, horse, authService };
+  return { app, httpServer, io, rooms, five, horse, chinese, authService };
 }

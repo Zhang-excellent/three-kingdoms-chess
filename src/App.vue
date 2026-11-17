@@ -20,6 +20,7 @@ import AuthDialog from './components/AuthDialog.vue';
 import OtherGamesPage from './components/OtherGamesPage.vue';
 import FiveSoldiersPage from './components/FiveSoldiersPage.vue';
 import HorseChessPage from './components/HorseChessPage.vue';
+import ChineseChessPage from './components/ChineseChessPage.vue';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
 const legacyStorageKeys = ['three-kingdoms-chess:independent-v1', 'three-kingdoms-chess:turn-cycle-v1', 'three-kingdoms-chess:capture-v0.1'];
@@ -55,6 +56,7 @@ let replayTimer: number | null = null;
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
 const fiveRulesDialog = ref<HTMLDialogElement | null>(null);
 const horseRulesDialog = ref<HTMLDialogElement | null>(null);
+const chineseRulesDialog = ref<HTMLDialogElement | null>(null);
 const otherRulesDialog = ref<HTMLDialogElement | null>(null);
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
@@ -62,6 +64,7 @@ const inviteDialog = ref<HTMLDialogElement | null>(null), inviteLinkInput = ref<
 const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null);
 const fivePage = ref<InstanceType<typeof FiveSoldiersPage> | null>(null);
 const horsePage = ref<InstanceType<typeof HorseChessPage> | null>(null);
+const chinesePage = ref<InstanceType<typeof ChineseChessPage> | null>(null);
 const auth = useAuth(), authNotice = ref('');
 const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
 const authRecentGames = auth.recentGames, authRecentLoading = auth.recentLoading, authRecentError = auth.recentError;
@@ -281,6 +284,7 @@ async function navigatePage(next: AppPage, code: string | null = null, method: '
   if (leavingRoom.value) return;
   if (page.value === 'five' && next !== 'five') await fivePage.value?.leaveForNavigation();
   if (page.value === 'horse' && next !== 'horse') await horsePage.value?.leaveForNavigation();
+  if (page.value === 'chinese' && next !== 'chinese') await chinesePage.value?.leaveForNavigation();
   if (leavesRoom(next, code)) {
     pendingRoomNavigation.value = { next, code, method };
     if (needsPlayingExitConfirmation()) exitDialog.value?.showModal();
@@ -298,10 +302,12 @@ function openLocalPage() { void navigatePage('local'); }
 function openOtherPage() { void navigatePage('other'); }
 function openFivePage() { void navigatePage('five'); }
 function openHorsePage() { void navigatePage('horse'); }
+function openChinesePage() { void navigatePage('chinese'); }
 function openRules() {
   if (page.value === 'other') otherRulesDialog.value?.showModal();
   else if (page.value === 'five') fiveRulesDialog.value?.showModal();
   else if (page.value === 'horse') horseRulesDialog.value?.showModal();
+  else if (page.value === 'chinese') chineseRulesDialog.value?.showModal();
   else rulesDialog.value?.showModal();
 }
 function openAuthDialog() {
@@ -389,6 +395,7 @@ async function syncPageFromLocation() {
   const route = parseAppRoute(location.href);
   if (page.value === 'five' && route.page !== 'five') await fivePage.value?.leaveForNavigation();
   if (page.value === 'horse' && route.page !== 'horse') await horsePage.value?.leaveForNavigation();
+  if (page.value === 'chinese' && route.page !== 'chinese') await chinesePage.value?.leaveForNavigation();
   if (leavesRoom(route.page, route.roomCode)) {
     const targetHref = location.href;
     const currentHref = page.value === 'room'
@@ -723,7 +730,7 @@ async function requestRematch() {
         <button class="plain-button" :class="{ active: page === 'lobby' }" @click="openLobbyPage">对战大厅</button>
         <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友组局</button>
         <button class="plain-button" :class="{ active: page === 'spectate' }" @click="openSpectateEntry">观战</button>
-        <button class="plain-button" :class="{ active: page === 'other' || page === 'five' || page === 'horse' }" @click="openOtherPage">其他玩法</button>
+        <button class="plain-button" :class="{ active: page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' }" @click="openOtherPage">其他玩法</button>
         <button v-if="hasSession && page !== 'room'" class="plain-button room-return-button" @click="openCurrentRoom">{{ resumeRoomLabel }}</button>
         <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
         <button v-else class="plain-button account-button" @click="openAuthDialog">登录 / 注册</button>
@@ -736,11 +743,13 @@ async function requestRematch() {
     <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
       @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @resume="openCurrentRoom" />
 
-    <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" @horse="openHorsePage" />
+    <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" @horse="openHorsePage" @chinese="openChinesePage" />
 
     <FiveSoldiersPage v-else-if="page === 'five'" ref="fivePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
 
     <HorseChessPage v-else-if="page === 'horse'" ref="horsePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
+
+    <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
 
     <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname" :account-name="authUser?.username ?? null"
       :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
@@ -914,7 +923,7 @@ async function requestRematch() {
       </aside>
       </main>
     </template>
-    <footer class="site-footer"><span>{{ page === 'other' || page === 'five' || page === 'horse' ? '其他玩法 · 当前开放五兵联盟与马棋。' : '三人同局，魏蜀吴对弈 · 当前为试玩规则。' }}</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
+    <footer class="site-footer"><span>{{ page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' ? '其他玩法 · 当前开放五兵联盟、马棋与中国象棋。' : '三人同局，魏蜀吴对弈 · 当前为试玩规则。' }}</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。曹操视角上方左吴右蜀，魏方默认标准视角；刘备、孙权默认使用相同的 180° 视角，翻转只改变个人看到的画面与点击换算。输入房间号可只读观战。</p><ul><li>三方独立竞争。初始共 29 枚：魏 16、蜀 6、吴 7；上方中路中卒归吴方。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>联机对弈中，只有轮到自己行棋时才能提和；所有存活阵营同意后本局和棋。已有一方出局时，剩余两方均同意即可。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的自动判和次数尚待确认；本版仅采用全部存活阵营同意的手动和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="fiveRulesDialog" class="rules-dialog five-rules-dialog">
       <div class="dialog-heading"><h2>五兵联盟规则</h2><button class="dialog-close" aria-label="关闭规则" @click="fiveRulesDialog?.close()">×</button></div>
@@ -928,10 +937,16 @@ async function requestRematch() {
       <ul><li>红黑双方各有九匹马，分布在本方底线九个交叉点。</li><li>马走“日”字，紧邻马头的马腿有棋子时不能移动。</li><li>可以吃掉对方马，不能吃本方马，也不能进入本方马所在位置。</li><li>先踏入对方中央底线帅位的一方立即获胜。</li><li>未登录玩家进入前须填写昵称；登录用户直接使用账号昵称。</li></ul>
       <button class="primary-button" @click="horseRulesDialog?.close()">知道了</button>
     </dialog>
+    <dialog ref="chineseRulesDialog" class="rules-dialog chinese-rules-dialog">
+      <div class="dialog-heading"><h2>中国象棋规则</h2><button class="dialog-close" aria-label="关闭规则" @click="chineseRulesDialog?.close()">×</button></div>
+      <p>采用经典中国象棋规则，红方先行，双方每回合走一步。</p>
+      <ul><li>车、马、炮、兵卒、仕士、相象和将帅均按经典中国象棋规则移动与吃子。</li><li>马受马腿阻挡，相象受象眼阻挡且不能过河，仕士与将帅不能离开九宫。</li><li>兵卒过河后可横向移动；将帅不能照面。</li><li>不能走出使本方将帅被将军的着法，受到将军时必须解除。</li><li>将死对方，或使对方没有任何合法走法，即获胜。也可以认输。</li></ul>
+      <button class="primary-button" @click="chineseRulesDialog?.close()">知道了</button>
+    </dialog>
     <dialog ref="otherRulesDialog" class="rules-dialog">
       <div class="dialog-heading"><h2>其他玩法规则</h2><button class="dialog-close" aria-label="关闭规则" @click="otherRulesDialog?.close()">×</button></div>
       <p>当前开放两种独立双人玩法：</p>
-      <ul><li>五兵联盟：红方五兵、士象全和主帅，对阵标准十六子；红方每回合连续两步，吃掉将帅获胜。</li><li>马棋：双方各九马，马走日且受马腿阻挡，先踏入对方中央帅位获胜。</li></ul>
+      <ul><li>五兵联盟：红方五兵、士象全和主帅，对阵标准十六子；红方每回合连续两步，吃掉将帅获胜。</li><li>马棋：双方各九马，马走日且受马腿阻挡，先踏入对方中央帅位获胜。</li><li>中国象棋：经典三十二子规则，不能送将，将死、困毙或认输决定胜负。</li></ul>
       <button class="primary-button" @click="otherRulesDialog?.close()">知道了</button>
     </dialog>
     <dialog ref="settingsDialog" class="settings-dialog">
