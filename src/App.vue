@@ -733,7 +733,7 @@ async function requestRematch() {
         <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
         <button v-else class="plain-button account-button" @click="openAuthDialog">登录 / 注册</button>
         <button class="plain-button" @click="settingsDialog?.showModal()">设置</button>
-        <button v-if="page !== 'chinese'" class="plain-button" @click="openRules">玩法说明</button>
+        <button v-if="page !== 'chinese' && page !== 'five' && page !== 'horse'" class="plain-button" @click="openRules">玩法说明</button>
       </div>
     </header>
     <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>

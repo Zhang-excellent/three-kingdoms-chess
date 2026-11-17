@@ -77,6 +77,55 @@ test('both ready starts one authoritative game and rejects wrong-turn or stale m
   } finally { service.dispose(); }
 });
 
+test('Five Soldiers seat claims are atomic, one ready player waits, and rematch keeps both sides', () => {
+  const service = new FiveSoldiersService(() => undefined);
+  try {
+    const red = service.join('五兵座位红', 'red', 'red-a');
+    const competing = service.join('五兵抢座红', 'red', 'red-b');
+    assert.equal(red.ok, true);
+    assert.equal(competing.ok, false);
+    if (competing.ack.ok) return;
+    assert.equal(competing.ack.code, 'SIDE_TAKEN');
+    if (!red.ok || !red.ack.ok) return;
+
+    const readyAlone = service.setReady(red.ack.data.reconnectToken, true, 'red-a');
+    assert.equal(readyAlone.ok, true);
+    if (!readyAlone.ack.ok) return;
+    assert.equal(readyAlone.ack.data.state.phase, 'lobby');
+    assert.equal(readyAlone.ack.data.state.game, null);
+
+    const black = service.join('五兵座位黑', 'black', 'black');
+    if (!black.ok || !black.ack.ok) assert.fail('black join failed');
+    const oneReady = service.inspect();
+    if (!oneReady.ok) assert.fail('inspect failed');
+    assert.equal(oneReady.data.phase, 'lobby');
+    assert.deepEqual(oneReady.data.players.map(player => [player.side, player.ready]), [['red', true], ['black', false]]);
+
+    const started = service.setReady(black.ack.data.reconnectToken, true, 'black');
+    assert.equal(started.ok, true);
+    if (!started.ack.ok) return;
+    assert.equal(started.ack.data.state.phase, 'playing');
+    assert.equal(started.ack.data.state.game?.pieces.length, 26);
+
+    const resigned = service.resign(red.ack.data.reconnectToken, 'red-a');
+    assert.equal(resigned.ok, true);
+    if (!resigned.ack.ok) return;
+    assert.equal(resigned.ack.data.state.phase, 'finished');
+    assert.equal(resigned.ack.data.state.game?.winner, 'black');
+
+    const rematch = service.rematch(black.ack.data.reconnectToken, 'black');
+    assert.equal(rematch.ok, true);
+    if (!rematch.ack.ok) return;
+    assert.equal(rematch.ack.data.state.phase, 'lobby');
+    assert.equal(rematch.ack.data.state.round, 2);
+    assert.equal(rematch.ack.data.state.game, null);
+    assert.deepEqual(rematch.ack.data.state.players.map(player => [player.nickname, player.side, player.ready]), [
+      ['五兵座位红', 'red', false],
+      ['五兵座位黑', 'black', false],
+    ]);
+  } finally { service.dispose(); }
+});
+
 test('five soldiers disconnect immediately releases the seat and ends an active game', () => {
   const service = new FiveSoldiersService(() => undefined);
   try {

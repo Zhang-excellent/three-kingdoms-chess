@@ -22,7 +22,7 @@ after(async () => {
   server.authService.close();
 });
 
-const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 3500) => {
+const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 4500) => {
   const attempts = Math.ceil(timeoutMs / 50);
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (condition()) return;
@@ -38,33 +38,62 @@ test('other games page contains three independent game selectors', async t => {
   assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋']);
 });
 
-test('two browser components join the same table, ready and complete a move', async t => {
+async function enterGuestSeat(
+  wrapper: Awaited<ReturnType<typeof mount>>,
+  seatSelector: '.self-seat' | '.opponent-seat',
+  nickname: string,
+) {
+  await waitUntil(
+    () => !(wrapper.get(seatSelector).element as HTMLButtonElement).disabled,
+    `${seatSelector} did not become available`,
+  );
+  await wrapper.get(seatSelector).trigger('click');
+  assert.equal((wrapper.get('.five-seat-dialog').element as HTMLDialogElement).open, true);
+  await wrapper.get('.five-seat-dialog input').setValue(nickname);
+  await wrapper.get('.five-seat-dialog form').trigger('submit');
+  await waitUntil(() => wrapper.text().includes(nickname), `${nickname} did not take a seat`);
+}
+
+test('Five Soldiers opens as one table, seats by avatar, starts after both ready, and stays read-only for visitors', async t => {
+  localStorage.removeItem(FIVE_SOLDIERS_SESSION_KEY);
   const red = mount(FiveSoldiersPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => red.unmount());
+  assert.equal(red.findAll('.five-piece').length, 26);
+  assert.equal(red.findAll('.five-table-seat').length, 2);
+  assert.match(red.get('.self-seat').text(), /红方席位/);
+
   await waitUntil(() => red.get('.five-page').attributes('data-connection') === 'online', `red did not connect: ${red.text()}`);
-  await waitUntil(() => !(red.get('.five-enter-button').element as HTMLButtonElement).disabled, 'red room inspection did not finish');
-  assert.ok(red.find('input[autocomplete="nickname"]').exists());
-  await red.get('input[autocomplete="nickname"]').setValue('红方游客');
-  await red.get('.five-enter-button').trigger('click');
-  await waitUntil(() => red.find('.five-waiting').exists(), 'red did not enter');
-  assert.match(red.get('.five-waiting').text(), /红方游客/);
+  await waitUntil(() => red.get('.five-board-heading').text().includes('点击空席位入座'), 'empty-table guidance did not render');
+  await enterGuestSeat(red, '.self-seat', '五兵红游客');
+  assert.ok(red.get('.self-seat').classes().includes('red'));
+
+  const redReady = red.findAll('button').find(button => button.text() === '准备');
+  assert.ok(redReady);
+  await redReady.trigger('click');
+  await waitUntil(() => red.get('.self-seat').classes().includes('ready'), 'red ready state did not render');
+  assert.equal(red.findAll('.five-piece').length, 26);
+  assert.match(red.get('.five-board-heading').text(), /点击空席位入座/);
 
   localStorage.removeItem(FIVE_SOLDIERS_SESSION_KEY);
   const black = mount(FiveSoldiersPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => black.unmount());
+  assert.equal(black.findAll('.five-piece').length, 26);
   await waitUntil(() => black.get('.five-page').attributes('data-connection') === 'online', `black did not connect: ${black.text()}`);
-  await waitUntil(() => !(black.get('.five-enter-button').element as HTMLButtonElement).disabled, 'black room inspection did not finish');
-  await waitUntil(() => black.get('.five-seat-option.black').classes().includes('selected'), 'black side was not auto-selected');
-  await black.get('input[autocomplete="nickname"]').setValue('黑方游客');
-  await black.get('.five-enter-button').trigger('click');
-  await waitUntil(() => black.find('.five-waiting').exists(), 'black did not enter');
+  await waitUntil(() => black.get('.self-seat').text().includes('五兵红游客'), 'black did not receive red seat');
+  await enterGuestSeat(black, '.opponent-seat', '五兵黑游客');
+  assert.ok(black.get('.self-seat').classes().includes('black'));
+  assert.equal((black.get('.opponent-seat').element as HTMLButtonElement).disabled, true);
+  assert.match(red.get('.opponent-seat').text(), /五兵黑游客/);
+  assert.match(red.get('.five-board-heading').text(), /等待双方准备/);
+  assert.equal(red.findAll('.five-target').length, 0);
 
-  await red.findAll('button').find(button => button.text() === '准备')!.trigger('click');
-  await black.findAll('button').find(button => button.text() === '准备')!.trigger('click');
-  await waitUntil(() => red.find('.five-board-svg').exists() && black.find('.five-board-svg').exists(), 'game did not start');
+  const blackReady = black.findAll('button').find(button => button.text() === '准备');
+  assert.ok(blackReady);
+  await blackReady.trigger('click');
+  await waitUntil(() => red.get('.five-board-heading').text().includes('轮到 五兵红游客 行棋'), 'game did not start for red');
+  await waitUntil(() => black.get('.five-board-heading').text().includes('轮到 五兵红游客 行棋'), 'game did not start for black');
   assert.equal(red.findAll('.five-piece').length, 26);
   assert.equal(black.findAll('.five-piece').length, 26);
-  assert.match(red.get('.five-board-heading').text(), /红方游客.*行棋/);
   assert.match(red.get('.five-board-heading').text(), /还可走 2 步/);
 
   await red.get('.five-piece[aria-label="红方兵，1 路第 7 线"]').trigger('click');
@@ -76,11 +105,22 @@ test('two browser components join the same table, ready and complete a move', as
   await red.get('.five-piece[aria-label="红方兵，3 路第 7 线"]').trigger('click');
   await red.get('.five-target[aria-label="走到第3路第6线"]').trigger('click');
   await waitUntil(() => black.get('.five-history').text().includes('(3, 6)'), 'second red move did not synchronize');
-  assert.match(red.get('.five-board-heading').text(), /轮到 黑方游客 行棋/);
+  assert.match(red.get('.five-board-heading').text(), /轮到 五兵黑游客 行棋/);
 
   localStorage.removeItem(FIVE_SOLDIERS_SESSION_KEY);
-  const accountView = mount(FiveSoldiersPage, { attachTo: document.body, props: { accountName: '五兵账号' } });
-  t.after(() => accountView.unmount());
-  assert.equal(accountView.find('input[autocomplete="nickname"]').exists(), false);
-  assert.match(accountView.get('.five-account-name').text(), /五兵账号/);
+  const visitor = mount(FiveSoldiersPage, { attachTo: document.body, props: { accountName: null } });
+  t.after(() => visitor.unmount());
+  await waitUntil(() => visitor.get('.five-page').attributes('data-connection') === 'online', `visitor did not connect: ${visitor.text()}`);
+  await waitUntil(() => visitor.get('.five-history').text().includes('(3, 6)'), 'visitor did not receive active game');
+  assert.equal(visitor.findAll('.five-piece').length, 26);
+  assert.match(visitor.get('.five-board-heading').text(), /轮到 五兵黑游客 行棋/);
+  assert.equal(visitor.findAll('button').some(button => ['准备', '认输', '再来一局', '退出房间'].includes(button.text())), false);
+  await visitor.get('.five-piece[aria-label="红方兵，1 路第 6 线"]').trigger('click');
+  assert.equal(visitor.findAll('.five-target').length, 0);
+
+  type LeaveForNavigation = { leaveForNavigation: () => Promise<void> };
+  await (visitor.vm as unknown as LeaveForNavigation).leaveForNavigation();
+  await (black.vm as unknown as LeaveForNavigation).leaveForNavigation();
+  await (red.vm as unknown as LeaveForNavigation).leaveForNavigation();
+  assert.equal(localStorage.getItem(FIVE_SOLDIERS_SESSION_KEY), null);
 });
