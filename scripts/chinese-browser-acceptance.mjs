@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
@@ -22,6 +23,7 @@ if (!chromePath) throw new Error('找不到可用的 Chrome 或 Edge。');
 
 const delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
 const profileDir = await mkdtemp(join(tmpdir(), 'three-chess-chinese-acceptance-'));
+const createdAccounts = [];
 await mkdir(screenshotDir, { recursive: true });
 
 class DevTools {
@@ -275,6 +277,7 @@ async function main() {
     })()`);
 
     const accountName = `头像验收${Date.now().toString().slice(-6)}`;
+    createdAccounts.push(accountName);
     const registration = await evaluate(devtools, red, `fetch('/three-chess/api/auth/register', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: ${JSON.stringify(accountName)}, password: '1234', remember: true }),
@@ -412,6 +415,15 @@ async function main() {
         await rm(resolvedProfile, { recursive: true, force: true });
       } catch (error) {
         stage(`临时浏览器目录稍后由系统清理：${error.code ?? error.message}`);
+      }
+    }
+    if (['localhost', '127.0.0.1'].includes(new URL(appUrl).hostname) && existsSync(join(root, '.data', 'auth.sqlite'))) {
+      const database = new DatabaseSync(join(root, '.data', 'auth.sqlite'));
+      try {
+        const remove = database.prepare('DELETE FROM auth_users WHERE username = ?');
+        for (const account of createdAccounts) remove.run(account);
+      } finally {
+        database.close();
       }
     }
   }
