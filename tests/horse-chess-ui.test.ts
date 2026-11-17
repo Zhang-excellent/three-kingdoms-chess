@@ -31,54 +31,58 @@ const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 
 
 async function enterGuestSeat(
   wrapper: Awaited<ReturnType<typeof mount>>,
-  seatSelector: '.self-seat' | '.opponent-seat',
+  seatSelector: '.game-table-seat.red' | '.game-table-seat.black',
   nickname: string,
 ) {
   await waitUntil(
     () => !(wrapper.get(seatSelector).element as HTMLButtonElement).disabled,
     `${seatSelector} did not become available`,
   );
-  await wrapper.get(seatSelector).trigger('click');
-  assert.equal((wrapper.get('.horse-seat-dialog').element as HTMLDialogElement).open, true);
+  const side = seatSelector.endsWith('.red') ? 'red' : 'black';
+  (wrapper.vm as unknown as { openSeat: (side: 'red' | 'black') => void }).openSeat(side);
+  const dialog = wrapper.get('.horse-seat-dialog').element as HTMLDialogElement;
+  await waitUntil(() => dialog.open, 'Horse Chess seat dialog did not open');
   await wrapper.get('.horse-seat-dialog input').setValue(nickname);
   await wrapper.get('.horse-seat-dialog form').trigger('submit');
-  await waitUntil(() => wrapper.text().includes(nickname), `${nickname} did not take a seat`);
+  await waitUntil(() => wrapper.findAll('.horse-piece').length === 18
+    && wrapper.text().includes(nickname), `${nickname} did not enter the board`);
 }
 
 test('Horse Chess opens as one table, seats by avatar, starts after both ready, and stays read-only for visitors', async t => {
   localStorage.removeItem(HORSE_CHESS_SESSION_KEY);
   const red = mount(HorseChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => red.unmount());
-  assert.equal(red.findAll('.horse-piece').length, 18);
-  assert.equal(red.findAll('.horse-table-seat').length, 2);
-  assert.match(red.get('.self-seat').text(), /红方席位/);
+  assert.equal(red.findAll('.game-table-seat').length, 2);
+  assert.equal(red.findAll('.horse-piece').length, 0);
+  assert.match(red.get('.game-table-center').text(), /马棋/);
 
   await waitUntil(() => red.get('.horse-page').attributes('data-connection') === 'online', 'red did not connect');
-  await waitUntil(() => red.get('.horse-board-heading').text().includes('点击空席位入座'), 'empty-table guidance did not render');
-  await enterGuestSeat(red, '.self-seat', '马棋红游客');
+  await waitUntil(() => !(red.get('.game-table-seat.red').element as HTMLButtonElement).disabled, 'red table seat did not become available');
+  await enterGuestSeat(red, '.game-table-seat.red', '马棋红游客');
+  assert.equal(red.findAll('.horse-piece').length, 18);
   assert.ok(red.get('.self-seat').classes().includes('red'));
 
-  const redReady = red.findAll('button').find(button => button.text() === '准备');
+  const redReady = red.findAll('button').find(button => button.text() === '开始');
   assert.ok(redReady);
   await redReady.trigger('click');
   await waitUntil(() => red.get('.self-seat').classes().includes('ready'), 'red ready state did not render');
   assert.equal(red.findAll('.horse-piece').length, 18);
-  assert.match(red.get('.horse-board-heading').text(), /点击空席位入座/);
 
   localStorage.removeItem(HORSE_CHESS_SESSION_KEY);
   const black = mount(HorseChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => black.unmount());
-  assert.equal(black.findAll('.horse-piece').length, 18);
+  assert.equal(black.findAll('.game-table-seat').length, 2);
+  assert.equal(black.findAll('.horse-piece').length, 0);
   await waitUntil(() => black.get('.horse-page').attributes('data-connection') === 'online', 'black did not connect');
-  await waitUntil(() => black.get('.self-seat').text().includes('马棋红游客'), 'black did not receive red seat');
-  await enterGuestSeat(black, '.opponent-seat', '马棋黑游客');
+  await waitUntil(() => black.get('.game-table-seat.red').text().includes('马棋红游客'), 'black did not receive red seat');
+  assert.ok(black.get('.game-table-seat.red').classes().includes('occupied'));
+  assert.equal((black.get('.game-table-seat.red').element as HTMLButtonElement).disabled, true);
+  await enterGuestSeat(black, '.game-table-seat.black', '马棋黑游客');
   assert.ok(black.get('.self-seat').classes().includes('black'));
-  assert.equal((black.get('.opponent-seat').element as HTMLButtonElement).disabled, true);
   assert.match(red.get('.opponent-seat').text(), /马棋黑游客/);
-  assert.match(red.get('.horse-board-heading').text(), /等待双方准备/);
   assert.equal(red.findAll('.horse-target').length, 0);
 
-  const blackReady = black.findAll('button').find(button => button.text() === '准备');
+  const blackReady = black.findAll('button').find(button => button.text() === '开始');
   assert.ok(blackReady);
   await blackReady.trigger('click');
   await waitUntil(() => red.get('.horse-board-heading').text().includes('轮到 马棋红游客 行棋'), 'game did not start for red');
@@ -95,7 +99,10 @@ test('Horse Chess opens as one table, seats by avatar, starts after both ready, 
   const visitor = mount(HorseChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => visitor.unmount());
   await waitUntil(() => visitor.get('.horse-page').attributes('data-connection') === 'online', 'visitor did not connect');
-  await waitUntil(() => visitor.get('.horse-history').text().includes('(3, 8)'), 'visitor did not receive active game');
+  await waitUntil(() => visitor.get('.game-table-center').classes().includes('active'), 'visitor table did not show active game');
+  assert.equal(visitor.findAll('.horse-piece').length, 0);
+  await visitor.get('.game-table-center').trigger('click');
+  await waitUntil(() => visitor.get('.horse-history').text().includes('(3, 8)'), 'visitor did not enter the spectator board');
   assert.equal(visitor.findAll('.horse-piece').length, 18);
   assert.match(visitor.get('.horse-board-heading').text(), /轮到 马棋黑游客 行棋/);
   assert.equal(visitor.findAll('button').some(button => ['准备', '认输', '再来一局', '退出房间'].includes(button.text())), false);

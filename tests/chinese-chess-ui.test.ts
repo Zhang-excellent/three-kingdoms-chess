@@ -32,20 +32,21 @@ const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 
 
 async function enterGuestSeat(
   wrapper: Awaited<ReturnType<typeof mount>>,
-  seatSelector: '.self-seat' | '.opponent-seat',
+  seatSelector: '.game-table-seat.red' | '.game-table-seat.black',
   nickname: string,
 ) {
   await waitUntil(
     () => !(wrapper.get(seatSelector).element as HTMLButtonElement).disabled,
     `${seatSelector} did not become available`,
   );
-  await wrapper.get(seatSelector).trigger('click');
+  const side = seatSelector.endsWith('.red') ? 'red' : 'black';
+  (wrapper.vm as unknown as { openSeat: (side: 'red' | 'black') => void }).openSeat(side);
   const dialog = wrapper.get('.chinese-seat-dialog').element as HTMLDialogElement;
-  assert.equal(dialog.open, true);
+  await waitUntil(() => dialog.open, 'Chinese chess seat dialog did not open');
   await wrapper.get('.chinese-seat-dialog input').setValue(nickname);
   await wrapper.get('.chinese-seat-dialog form').trigger('submit');
-  await waitUntil(() => wrapper.get('.chinese-seat-copy').text().includes(nickname)
-    || wrapper.text().includes(nickname), `${nickname} did not take a seat`);
+  await waitUntil(() => wrapper.findAll('.chinese-piece').length === 32
+    && wrapper.text().includes(nickname), `${nickname} did not enter the board`);
 }
 
 test('Chinese chess opens as one table, seats players by avatar, starts after both ready, and stays read-only for visitors', async t => {
@@ -53,39 +54,40 @@ test('Chinese chess opens as one table, seats players by avatar, starts after bo
   const red = mount(ChineseChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => red.unmount());
 
-  assert.equal(red.findAll('.chinese-piece').length, 32);
-  assert.equal(red.findAll('.chinese-table-seat').length, 2);
-  assert.match(red.get('.self-seat').text(), /红方席位/);
+  assert.equal(red.findAll('.game-table-seat').length, 2);
+  assert.equal(red.findAll('.chinese-piece').length, 0);
+  assert.match(red.get('.game-table-center').text(), /中国象棋/);
 
   await waitUntil(() => red.get('.chinese-page').attributes('data-connection') === 'online', `red did not connect: ${red.text()}`);
-  await waitUntil(() => red.get('.chinese-board-heading').text().includes('点击空席位入座'), 'empty table guidance did not render');
-  await enterGuestSeat(red, '.self-seat', '中国象棋红游客');
+  await waitUntil(() => !(red.get('.game-table-seat.red').element as HTMLButtonElement).disabled, 'red table seat did not become available');
+  await enterGuestSeat(red, '.game-table-seat.red', '中国象棋红游客');
+  assert.equal(red.findAll('.chinese-piece').length, 32);
   assert.ok(red.get('.self-seat').classes().includes('red'));
   assert.match(red.get('.self-seat').text(), /中国象棋红游客/);
 
-  const redReady = red.findAll('button').find(button => button.text() === '准备');
+  const redReady = red.findAll('button').find(button => button.text() === '开始');
   assert.ok(redReady);
   await redReady.trigger('click');
   await waitUntil(() => red.get('.self-seat').classes().includes('ready'), 'red ready state did not render');
   assert.equal(red.findAll('.chinese-piece').length, 32);
   assert.equal(red.get('.chinese-history-heading').text().includes('0'), true);
-  assert.match(red.get('.chinese-board-heading').text(), /点击空席位入座/);
 
   localStorage.removeItem(CHINESE_CHESS_SESSION_KEY);
   const black = mount(ChineseChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => black.unmount());
-  assert.equal(black.findAll('.chinese-piece').length, 32);
+  assert.equal(black.findAll('.game-table-seat').length, 2);
+  assert.equal(black.findAll('.chinese-piece').length, 0);
   await waitUntil(() => black.get('.chinese-page').attributes('data-connection') === 'online', `black did not connect: ${black.text()}`);
-  await waitUntil(() => black.get('.self-seat').text().includes('中国象棋红游客'), 'black did not receive occupied red seat');
-  await enterGuestSeat(black, '.opponent-seat', '中国象棋黑游客');
+  await waitUntil(() => black.get('.game-table-seat.red').text().includes('中国象棋红游客'), 'black did not receive occupied red seat');
+  assert.ok(black.get('.game-table-seat.red').classes().includes('occupied'));
+  assert.equal((black.get('.game-table-seat.red').element as HTMLButtonElement).disabled, true);
+  await enterGuestSeat(black, '.game-table-seat.black', '中国象棋黑游客');
   assert.ok(black.get('.self-seat').classes().includes('black'));
   assert.match(black.get('.self-seat').text(), /中国象棋黑游客/);
-  assert.equal((black.get('.opponent-seat').element as HTMLButtonElement).disabled, true);
   assert.match(red.get('.opponent-seat').text(), /中国象棋黑游客/);
-  assert.match(red.get('.chinese-board-heading').text(), /等待双方准备/);
   assert.equal(red.findAll('.chinese-target').length, 0);
 
-  const blackReady = black.findAll('button').find(button => button.text() === '准备');
+  const blackReady = black.findAll('button').find(button => button.text() === '开始');
   assert.ok(blackReady);
   await blackReady.trigger('click');
   await waitUntil(() => red.get('.chinese-board-heading').text().includes('轮到 中国象棋红游客 行棋'), 'game did not start for red');
@@ -104,7 +106,10 @@ test('Chinese chess opens as one table, seats players by avatar, starts after bo
   const visitor = mount(ChineseChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => visitor.unmount());
   await waitUntil(() => visitor.get('.chinese-page').attributes('data-connection') === 'online', `visitor did not connect: ${visitor.text()}`);
-  await waitUntil(() => visitor.get('.chinese-history').text().includes('(1, 6)'), 'visitor did not receive the active game');
+  await waitUntil(() => visitor.get('.game-table-center').classes().includes('active'), 'visitor table did not show active game');
+  assert.equal(visitor.findAll('.chinese-piece').length, 0);
+  await visitor.get('.game-table-center').trigger('click');
+  await waitUntil(() => visitor.get('.chinese-history').text().includes('(1, 6)'), 'visitor did not enter the spectator board');
   assert.equal(visitor.findAll('.chinese-piece').length, 32);
   assert.match(visitor.get('.chinese-board-heading').text(), /轮到 中国象棋黑游客 行棋/);
   assert.equal(visitor.findAll('button').some(button => ['准备', '认输', '再来一局', '退出房间'].includes(button.text())), false);

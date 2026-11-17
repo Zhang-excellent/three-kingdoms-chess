@@ -234,10 +234,39 @@ test('recovery user flow is removed while the legacy recovery column remains int
     const rawRow = verification.prepare('SELECT recovery_hash FROM auth_users WHERE id = ?').get('legacy-user');
     const row = rawRow as unknown as { recovery_hash: string };
     const gameTable = verification.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_records'").get();
+    const avatarColumn = verification.prepare("SELECT name FROM pragma_table_info('auth_users') WHERE name = 'avatar_data'").get();
     verification.close();
-    assert.equal(version.user_version, 3);
+    assert.equal(version.user_version, 4);
     assert.equal(row.recovery_hash, 'legacy-preserved');
     assert.ok(gameTable);
+    assert.ok(avatarColumn);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('authenticated accounts can upload, serve, and remove a bounded square avatar', async () => {
+  const { server, origin } = await startServer();
+  try {
+    const registered = await register(origin, '头像玩家');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const uploaded = await api(origin, 'avatar', 'POST', { avatarData: png }, registered.cookie);
+    assert.equal(uploaded.status, 200);
+    const user = uploaded.body.user as { avatarUrl: string | null };
+    assert.match(user.avatarUrl ?? '', /^\/three-chess\/api\/avatar\//);
+
+    const image = await fetch(`${origin}${user.avatarUrl}`);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('content-type'), 'image/png');
+    assert.ok((await image.arrayBuffer()).byteLength > 20);
+
+    const invalid = await api(origin, 'avatar', 'POST', { avatarData: 'not-an-image' }, registered.cookie);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.code, 'INVALID_AVATAR');
+
+    const removed = await api(origin, 'avatar', 'POST', { avatarData: null }, registered.cookie);
+    assert.equal(removed.status, 200);
+    assert.equal((removed.body.user as { avatarUrl: string | null }).avatarUrl, null);
   } finally {
     await closeServer(server);
   }

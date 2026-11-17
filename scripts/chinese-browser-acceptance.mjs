@@ -260,37 +260,60 @@ async function main() {
     const red = await createPage(devtools, { width: 1440, height: 1000 });
     stage('检查桌面空桌');
     await waitFor(devtools, red, `document.querySelector('.chinese-page[data-connection="online"]') !== null`, '红方页面连接');
-    await waitFor(devtools, red, `document.querySelector('.self-seat') && !document.querySelector('.self-seat').disabled`, '红方空位');
+    await waitFor(devtools, red, `document.querySelector('.game-table-seat.red') && !document.querySelector('.game-table-seat.red').disabled`, '红方棋桌席位');
 
-    const emptyScreenshot = await capture(devtools, red, '中国象棋-桌面-空桌.png');
+    const emptyScreenshot = await capture(devtools, red, '中国象棋-棋桌-空桌.png');
     const desktopMetrics = await evaluate(devtools, red, `(() => {
-      const board = document.querySelector('.chinese-board-frame').getBoundingClientRect();
+      const table = document.querySelector('.game-table-center').getBoundingClientRect();
       return {
         innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
-        boardWidth: board.width,
-        boardLeft: board.left,
-        seats: [...document.querySelectorAll('.chinese-table-seat')].map(element => element.getBoundingClientRect().width),
+        tableWidth: table.width,
+        tableLeft: table.left,
+        seats: [...document.querySelectorAll('.game-table-seat')].map(element => element.getBoundingClientRect().width),
       };
     })()`);
 
-    await clickSelector(devtools, red, '.self-seat', '红方空头像');
+    const accountName = `头像验收${Date.now().toString().slice(-6)}`;
+    const registration = await evaluate(devtools, red, `fetch('/three-chess/api/auth/register', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: ${JSON.stringify(accountName)}, password: '1234', remember: true }),
+    }).then(response => response.json())`);
+    if (!registration.ok) throw new Error(`头像验收账号注册失败：${registration.error}`);
+    await devtools.send('Page.reload', {}, red.sessionId);
+    await waitFor(devtools, red, `document.querySelector('.account-button')?.textContent.includes(${JSON.stringify(accountName)})`, '账号登录状态');
+    await clickSelector(devtools, red, '.account-button', '个人中心');
+    await waitFor(devtools, red, `document.querySelector('.auth-dialog')?.open === true`, '个人中心弹窗');
+    await devtools.send('DOM.enable', {}, red.sessionId);
+    const documentRoot = await devtools.send('DOM.getDocument', {}, red.sessionId);
+    const avatarInput = await devtools.send('DOM.querySelector', {
+      nodeId: documentRoot.root.nodeId, selector: '.avatar-file-input',
+    }, red.sessionId);
+    await devtools.send('DOM.setFileInputFiles', {
+      nodeId: avatarInput.nodeId, files: [join(root, 'tests', 'fixtures', 'account-avatar.png')],
+    }, red.sessionId);
+    await waitFor(devtools, red, `document.querySelector('.profile-avatar img')?.src.includes('/three-chess/api/avatar/')`, '头像上传完成');
+    const avatarScreenshot = await capture(devtools, red, '账号-上传头像.png');
+    await clickSelector(devtools, red, '.profile-close', '关闭个人中心');
+
+    await clickSelector(devtools, red, '.game-table-seat.red', '红方棋桌头像');
     stage('红方通过头像入座');
-    await fillSeatDialog(devtools, red, '中国象棋红游客');
-    await waitFor(devtools, red, `document.querySelector('.self-seat .chinese-seat-copy strong')?.textContent.includes('中国象棋红游客')`, '红方入座');
-    await clickButton(devtools, red, '准备');
+    await waitFor(devtools, red, `document.querySelectorAll('.chinese-piece').length === 32 && document.querySelector('.self-seat .chinese-seat-copy strong')?.textContent.includes(${JSON.stringify(accountName)})`, '红方入座');
+    await waitFor(devtools, red, `document.querySelector('.self-seat img')?.src.includes('/three-chess/api/avatar/')`, '对局头像使用上传图片');
+    await clickButton(devtools, red, '开始');
     await waitFor(devtools, red, `document.querySelector('.self-seat')?.classList.contains('ready')`, '红方准备');
+    const waitingScreenshot = await capture(devtools, red, '中国象棋-等待开局.png');
 
     const black = await createPage(devtools, { width: 1440, height: 1000 });
     stage('黑方打开同一棋桌');
     await waitFor(devtools, black, `document.querySelector('.chinese-page[data-connection="online"]') !== null`, '黑方页面连接');
-    await waitFor(devtools, black, `document.querySelector('.self-seat')?.textContent.includes('中国象棋红游客')`, '黑方看到红方席位');
-    await clickSelector(devtools, black, '.opponent-seat', '黑方空头像');
+    await waitFor(devtools, black, `document.querySelector('.game-table-seat.red')?.textContent.includes(${JSON.stringify(accountName)})`, '黑方看到红方席位');
+    await clickSelector(devtools, black, '.game-table-seat.black', '黑方棋桌头像');
     await fillSeatDialog(devtools, black, '中国象棋黑游客');
     await waitFor(devtools, black, `document.querySelector('.self-seat.black .chinese-seat-copy strong')?.textContent.includes('中国象棋黑游客')`, '黑方入座');
-    await clickButton(devtools, black, '准备');
+    await clickButton(devtools, black, '开始');
     stage('双方准备并开始对局');
-    await waitFor(devtools, red, `document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 中国象棋红游客 行棋')`, '双方准备后开局');
+    await waitFor(devtools, red, `document.querySelector('.chinese-board-heading h2')?.textContent.includes(${JSON.stringify(`轮到 ${accountName} 行棋`)})`, '双方准备后开局');
 
     await clickSelector(devtools, red, '.chinese-piece[aria-label="红方兵，1 路第 7 线"]', '红方一路兵');
     await waitFor(devtools, red, `document.querySelector('.chinese-target') !== null`, '红方合法落点');
@@ -301,6 +324,9 @@ async function main() {
     const visitor = await createPage(devtools, { width: 1440, height: 1000 });
     stage('访客只读验收');
     await waitFor(devtools, visitor, `document.querySelector('.chinese-page[data-connection="online"]') !== null`, '访客页面连接');
+    await waitFor(devtools, visitor, `document.querySelector('.game-table-center')?.classList.contains('active')`, '访客棋桌状态');
+    const activeTableScreenshot = await capture(devtools, visitor, '中国象棋-棋桌-进行中.png');
+    await clickSelector(devtools, visitor, '.game-table-center', '中间棋桌观战');
     await waitFor(devtools, visitor, `document.querySelector('.chinese-history')?.textContent.includes('(1, 6)')`, '访客只读局面');
     const visitorAudit = await evaluate(devtools, visitor, `(() => ({
       pieces: document.querySelectorAll('.chinese-piece').length,
@@ -311,24 +337,26 @@ async function main() {
     }))()`);
     const visitorScreenshot = await capture(devtools, visitor, '中国象棋-桌面-观战.png');
 
-    await clickButton(devtools, black, '认输');
-    stage('终局与再来一局');
-    await waitFor(devtools, black, `document.querySelector('.reset-dialog[open]') !== null`, '认输确认框');
-    await clickButton(devtools, black, '确认认输');
-    await waitFor(devtools, black, `document.querySelector('.result-banner') !== null`, '终局结果');
+    await clickSelector(devtools, red, '.game-action-menu-toggle', '左侧对局菜单');
+    const menuScreenshot = await capture(devtools, red, '中国象棋-对局菜单.png');
+    await clickButton(devtools, red, '提和');
+    await waitFor(devtools, black, `document.querySelector('.draw-offer-bar') !== null`, '黑方收到提和');
+    await clickButton(devtools, black, '同意');
+    stage('和棋终局与再来一局');
+    await waitFor(devtools, black, `document.querySelector('.result-banner')?.textContent.includes('双方同意和棋')`, '和棋终局结果');
     const finishedScreenshot = await capture(devtools, black, '中国象棋-桌面-终局.png');
 
     await clickButton(devtools, black, '再来一局');
-    await waitFor(devtools, black, `!document.querySelector('.result-banner') && document.querySelector('.chinese-board-heading h2')?.textContent.includes('等待双方准备')`, '同房间再来一局');
+    await waitFor(devtools, black, `!document.querySelector('.result-banner') && document.querySelector('.game-board-waiting-card') !== null`, '同房间再来一局');
     const rematchAudit = await evaluate(devtools, black, `(() => ({
       pieces: document.querySelectorAll('.chinese-piece').length,
       players: [...document.querySelectorAll('.chinese-seat-copy strong')].map(element => element.textContent.trim()),
       readySeats: document.querySelectorAll('.chinese-table-seat.ready').length,
-      prepareButtons: [...document.querySelectorAll('button')].filter(button => button.textContent.trim() === '准备').length,
+      prepareButtons: [...document.querySelectorAll('button')].filter(button => button.textContent.trim() === '开始').length,
     }))()`);
-    await clickButton(devtools, red, '准备');
-    await clickButton(devtools, black, '准备');
-    await waitFor(devtools, black, `document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 中国象棋红游客 行棋')`, '第二局开局');
+    await clickButton(devtools, red, '开始');
+    await clickButton(devtools, black, '开始');
+    await waitFor(devtools, black, `document.querySelector('.chinese-board-heading h2')?.textContent.includes(${JSON.stringify(`轮到 ${accountName} 行棋`)})`, '第二局开局');
 
     await clickSelector(devtools, red, '.chinese-page-nav button', '返回其他玩法');
     stage('验证主动导航释放席位');
@@ -363,6 +391,10 @@ async function main() {
       rematchAudit,
       screenshots: {
         emptyScreenshot,
+        avatarScreenshot,
+        waitingScreenshot,
+        menuScreenshot,
+        activeTableScreenshot,
         playingScreenshot,
         visitorScreenshot,
         finishedScreenshot,

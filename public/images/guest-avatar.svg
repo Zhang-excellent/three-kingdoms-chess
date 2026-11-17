@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="游客企鹅头像">
+  <rect width="256" height="256" rx="28" fill="#e8e4dc"/>
+  <circle cx="128" cy="141" r="78" fill="#343c46"/>
+  <path d="M58 92c11-34 36-56 70-56s59 22 70 56c-16-11-41-18-70-18s-54 7-70 18Z" fill="#4b5662"/>
+  <path d="M78 204c8-45 24-70 50-70s42 25 50 70c-11 20-29 31-50 31s-39-11-50-31Z" fill="#f4f0e8"/>
+  <ellipse cx="96" cy="116" rx="9" ry="12" fill="#fff"/>
+  <ellipse cx="160" cy="116" rx="9" ry="12" fill="#fff"/>
+  <circle cx="98" cy="119" r="5" fill="#263039"/>
+  <circle cx="158" cy="119" r="5" fill="#263039"/>
+  <path d="M111 139c10-10 24-10 34 0-3 13-11 20-17 20s-14-7-17-20Z" fill="#e6a33d"/>
+  <path d="M49 154c-29 7-42 24-40 45 24 12 47 4 57-20 5-12 0-23-17-25Zm158 0c29 7 42 24 40 45-24 12-47 4-57-20-5-12 0-23 17-25Z" fill="#343c46"/>
+  <path d="M82 236h92" stroke="#cf9b4c" stroke-width="12" stroke-linecap="round"/>
+</svg>

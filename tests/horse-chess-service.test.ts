@@ -112,15 +112,37 @@ test('leaving horse chess releases the seat immediately and notifies observers',
   } finally { service.dispose(); }
 });
 
+test('Horse Chess players can agree to a draw', () => {
+  const service = new HorseChessService(() => undefined);
+  try {
+    const red = service.join('马棋和棋红', 'red', 'red');
+    const black = service.join('马棋和棋黑', 'black', 'black');
+    if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('join failed');
+    service.setReady(red.ack.data.reconnectToken, true, 'red');
+    service.setReady(black.ack.data.reconnectToken, true, 'black');
+    const offered = service.offerDraw(red.ack.data.reconnectToken, 'red');
+    assert.equal(offered.ok, true);
+    if (!offered.ack.ok) return;
+    assert.equal(offered.ack.data.state.drawOfferBy, 'red');
+    const accepted = service.respondDraw(black.ack.data.reconnectToken, true, 'black');
+    assert.equal(accepted.ok, true);
+    if (!accepted.ack.ok) return;
+    assert.equal(accepted.ack.data.state.phase, 'finished');
+    assert.equal(accepted.ack.data.state.game?.winner, null);
+    assert.equal(accepted.ack.data.state.game?.endReason, 'draw');
+  } finally { service.dispose(); }
+});
+
 test('authenticated horse chess identity uses the server account', () => {
   const service = new HorseChessService(() => undefined);
   try {
-    service.setSocketAccount('account-a', 'user-a');
+    service.setSocketAccount('account-a', 'user-a', '/three-chess/api/avatar/user-a?v=1');
     service.setSocketAccount('account-b', 'user-b');
     const joined = service.join('账号马棋', 'red', 'account-a');
     assert.equal(joined.ok, true);
     if (!joined.ack.ok) return;
     assert.equal(joined.ack.data.state.players[0].identity, 'account');
+    assert.equal(joined.ack.data.state.players[0].avatar, '/three-chess/api/avatar/user-a?v=1');
     const mismatch = service.resume(joined.ack.data.reconnectToken, 'account-b');
     assert.equal(mismatch.ok, false);
   } finally { service.dispose(); }

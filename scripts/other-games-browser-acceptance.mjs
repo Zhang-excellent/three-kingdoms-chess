@@ -221,6 +221,8 @@ const games = [
     url: `${origin}/?mode=five-soldiers`,
     root: '.five-page',
     seat: '.five-table-seat',
+    tableSeat: '.game-table-seat',
+    tableCenter: '.game-table-center',
     dialog: '.five-seat-dialog',
     board: '.five-board-frame',
     history: '.five-history',
@@ -239,6 +241,8 @@ const games = [
     url: `${origin}/?mode=horse-chess`,
     root: '.horse-page',
     seat: '.horse-table-seat',
+    tableSeat: '.game-table-seat',
+    tableCenter: '.game-table-center',
     dialog: '.horse-seat-dialog',
     board: '.horse-board-frame',
     history: '.horse-history',
@@ -262,28 +266,31 @@ async function runGame(devtools, game) {
   try {
     const red = await create({ width: 1440, height: 1000 });
     await waitFor(devtools, red, `document.querySelector('${game.root}[data-connection="online"]') !== null`, `${game.name}连接`);
-    await waitFor(devtools, red, `document.querySelectorAll('${game.pieces}').length === ${game.pieceCount}`, `${game.name}初始棋盘`);
-    const empty = await screenshot(devtools, red, `${game.name}-桌面-空桌.png`);
+    await waitFor(devtools, red, `document.querySelectorAll('${game.tableSeat}').length === 2`, `${game.name}棋桌`);
+    await waitFor(devtools, red, `document.querySelectorAll('${game.pieces}').length === 0`, `${game.name}初始棋桌`);
+    const empty = await screenshot(devtools, red, `${game.name}-棋桌-桌面.png`);
     const desktop = await evaluate(devtools, red, `(() => ({
       innerWidth,
       scrollWidth: document.documentElement.scrollWidth,
-      boardWidth: document.querySelector('${game.board}').getBoundingClientRect().width,
-      seats: [...document.querySelectorAll('${game.seat}')].map(element => element.getBoundingClientRect().width),
+      tableWidth: document.querySelector('${game.tableCenter}').getBoundingClientRect().width,
+      seats: [...document.querySelectorAll('${game.tableSeat}')].map(element => element.getBoundingClientRect().width),
     }))()`);
 
-    await enterGuest(devtools, red, '.self-seat', game.dialog, `${game.name}红游客`);
-    await clickButton(devtools, red, '准备');
+    await enterGuest(devtools, red, '.game-table-seat.red', game.dialog, `${game.name}红游客`);
+    await waitFor(devtools, red, `document.querySelectorAll('${game.pieces}').length === ${game.pieceCount}`, `${game.name}入座后棋盘`);
+    await clickButton(devtools, red, '开始');
     await waitFor(devtools, red, `document.querySelector('.self-seat')?.classList.contains('ready')`, `${game.name}红方准备`);
 
     const black = await create({ width: 1440, height: 1000 });
     await waitFor(devtools, black, `document.querySelector('${game.root}[data-connection="online"]') !== null`, `${game.name}黑方连接`);
-    await waitFor(devtools, black, `document.querySelector('.self-seat')?.textContent.includes(${JSON.stringify(`${game.name}红游客`)})`, `${game.name}红方席位同步`);
-    await enterGuest(devtools, black, '.opponent-seat', game.dialog, `${game.name}黑游客`);
-    await clickButton(devtools, black, '准备');
+    await waitFor(devtools, black, `document.querySelector('.game-table-seat.red')?.textContent.includes(${JSON.stringify(`${game.name}红游客`)})`, `${game.name}红方席位同步`);
+    await enterGuest(devtools, black, '.game-table-seat.black', game.dialog, `${game.name}黑游客`);
+    await clickButton(devtools, black, '开始');
     await waitFor(devtools, red, `document.querySelector('.${game.key}-board-heading h2')?.textContent.includes('轮到 ${game.name}红游客 行棋')`, `${game.name}开局`);
 
     for (const [pieceLabel, targetLabel, coordinate] of game.moves) {
       await clickSelector(devtools, red, `${game.pieces}[aria-label="${pieceLabel}"]`, pieceLabel);
+      await waitFor(devtools, red, `document.querySelector('.${game.key}-target[aria-label="${targetLabel}"]') !== null`, `${game.name}合法落点`);
       await clickSelector(devtools, red, `.${game.key}-target[aria-label="${targetLabel}"]`, targetLabel);
       await waitFor(devtools, black, `document.querySelector('${game.history}')?.textContent.includes(${JSON.stringify(coordinate)})`, `${game.name}实时走子 ${coordinate}`);
     }
@@ -291,6 +298,9 @@ async function runGame(devtools, game) {
 
     const visitor = await create({ width: 1440, height: 1000 });
     await waitFor(devtools, visitor, `document.querySelector('${game.root}[data-connection="online"]') !== null`, `${game.name}访客连接`);
+    await waitFor(devtools, visitor, `document.querySelector('${game.tableCenter}')?.classList.contains('active')`, `${game.name}访客棋桌状态`);
+    const activeTable = await screenshot(devtools, visitor, `${game.name}-棋桌-进行中.png`);
+    await clickSelector(devtools, visitor, game.tableCenter, '中间棋桌观战');
     await waitFor(devtools, visitor, `document.querySelector('${game.history}')?.textContent.includes(${JSON.stringify(game.moves.at(-1)[2])})`, `${game.name}访客盘面`);
     const audit = await evaluate(devtools, visitor, `(() => ({
       pieces: document.querySelectorAll('${game.pieces}').length,
@@ -316,7 +326,7 @@ async function runGame(devtools, game) {
     await waitFor(devtools, red, `new URL(location.href).searchParams.get('mode') === 'other'`, `${game.name}返回其他玩法`);
     await waitFor(devtools, black, `document.querySelector('.opponent-seat')?.textContent.includes('等待棋友')`, `${game.name}主动离席释放`);
 
-    return { desktop, mobile, audit, screenshots: { empty, playing, spectator, mobileShot } };
+    return { desktop, mobile, audit, screenshots: { empty, activeTable, playing, spectator, mobileShot } };
   } finally {
     for (const page of pages) {
       await devtools.send('Target.disposeBrowserContext', { browserContextId: page.browserContextId }).catch(() => undefined);

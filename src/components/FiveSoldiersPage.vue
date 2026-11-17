@@ -22,9 +22,11 @@ import type {
   FiveState,
 } from '../five-soldiers.ts';
 import { appRouteUrl } from '../navigation.ts';
+import OtherGameTable from './OtherGameTable.vue';
 
-const props = defineProps<{ accountName: string | null }>();
+const props = defineProps<{ accountName: string | null; accountAvatar?: string | null }>();
 const emit = defineEmits<{ other: [] }>();
+const guestAvatar = 'images/guest-avatar.svg';
 
 interface SavedSession {
   reconnectToken: string;
@@ -49,10 +51,12 @@ const selectedId = ref<string | null>(null), flipped = ref(false);
 const inviteVisible = ref(false), inviteText = ref('');
 const resignDialog = ref<HTMLDialogElement | null>(null), leaveDialog = ref<HTMLDialogElement | null>(null);
 const seatDialog = ref<HTMLDialogElement | null>(null);
+const watching = ref(false), menuOpen = ref(false);
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
 const roomState = computed(() => state.value ?? inspected.value);
+const showTableView = computed(() => !session.value && !watching.value);
 const game = computed<FiveGame>(() => roomState.value?.game ?? newFiveGame());
 const myPlayer = computed(() => state.value?.players.find(player => player.id === state.value?.selfId) ?? null);
 const mySide = computed(() => myPlayer.value?.side ?? null);
@@ -69,7 +73,8 @@ const boardTitle = computed(() => {
     return '等待双方准备';
   }
   if (room.phase === 'finished') {
-    if (!game.value.winner || !mySide.value) return '本局结束';
+    if (!game.value.winner) return '本局和棋';
+    if (!mySide.value) return '本局结束';
     return game.value.winner === mySide.value ? '你获胜' : '你失败';
   }
   const active = room.players.find(player => player.side === game.value.turn);
@@ -88,6 +93,7 @@ const targetAt = (point: FivePoint) => fivePieceAt(game.value.pieces, point);
 const topSide = computed<FiveSide>(() => flipped.value ? 'red' : 'black');
 const bottomSide = computed<FiveSide>(() => otherFiveSide(topSide.value));
 const sidePlayer = (side: FiveSide) => roomState.value?.players.find(player => player.side === side) ?? null;
+const avatarFor = (side: FiveSide) => sidePlayer(side)?.avatar || (sidePlayer(side) ? guestAvatar : null);
 const sideLabel = (side: FiveSide) => fiveSideName(side);
 const pieceLabel = (piece: FivePiece) => `${fiveSideName(piece.side)}${fivePieceName(piece)}，${piece.x + 1} 路第 ${piece.y + 1} 线`;
 const playerState = (side: FiveSide) => {
@@ -95,13 +101,19 @@ const playerState = (side: FiveSide) => {
   if (!player) return roomState.value?.phase === 'lobby' ? '等待棋友' : '未入座';
   if (roomState.value?.phase === 'lobby') return player.ready ? '已准备' : '未准备';
   if (!player.online) return '离线';
-  if (roomState.value?.phase === 'finished') return game.value.winner === side ? '胜利' : '失败';
+  if (roomState.value?.phase === 'finished') return !game.value.winner ? '和棋' : game.value.winner === side ? '胜利' : '失败';
   return game.value.turn === side ? '行棋中' : '对局中';
 };
 const canSeat = (side: FiveSide) => !session.value && roomState.value?.phase === 'lobby'
   && roomState.value.players.length < 2 && !sidePlayer(side);
+const canWatchTable = computed(() => !session.value && !watching.value
+  && (roomState.value?.phase === 'playing' || roomState.value?.phase === 'finished'));
+const drawOfferBy = computed(() => roomState.value?.drawOfferBy ?? null);
+const canRespondDraw = computed(() => !!session.value && roomState.value?.phase === 'playing'
+  && !!drawOfferBy.value && drawOfferBy.value !== mySide.value);
 const resultText = computed(() => {
   if (game.value.status !== 'finished') return '';
+  if (game.value.endReason === 'draw') return '双方同意和棋。';
   if (!mySide.value) return game.value.winner ? `${fiveSideName(game.value.winner)}获胜` : '本局结束';
   return game.value.winner === mySide.value ? '五兵夺帅，胜局已定。' : '本局落败，可以再来一局。';
 });
@@ -322,6 +334,43 @@ async function rematch() {
   } finally { busy.value = false; }
 }
 
+function openSpectator() {
+  if (!canWatchTable.value) return;
+  watching.value = true;
+  selectedId.value = null;
+}
+
+async function returnToTable(): Promise<void> {
+  if (!session.value) await emitAck('five:unwatch', {});
+  watching.value = false;
+  menuOpen.value = false;
+}
+
+async function requestDraw() {
+  if (!session.value || busy.value) return;
+  menuOpen.value = false;
+  busy.value = true;
+  try {
+    const ack = await emitAck<{ state: FiveState }>('five:draw-offer', {
+      reconnectToken: session.value.reconnectToken,
+    });
+    if (!ack.ok) error.value = ack.error;
+    else { acceptState(ack.data.state); notice.value = '已提出和棋申请。'; }
+  } finally { busy.value = false; }
+}
+
+async function respondDraw(accept: boolean) {
+  if (!session.value || busy.value) return;
+  busy.value = true;
+  try {
+    const ack = await emitAck<{ state: FiveState }>('five:draw-respond', {
+      reconnectToken: session.value.reconnectToken, accept,
+    });
+    if (!ack.ok) error.value = ack.error;
+    else acceptState(ack.data.state);
+  } finally { busy.value = false; }
+}
+
 async function leaveRoom(): Promise<void> {
   leaveDialog.value?.close();
   const saved = session.value;
@@ -332,6 +381,8 @@ async function leaveRoom(): Promise<void> {
   } finally {
     busy.value = false;
     clearSession();
+    watching.value = false;
+    menuOpen.value = false;
     const ack = await emitAck<FiveState>('five:watch', {});
     if (ack.ok) inspected.value = ack.data;
   }
@@ -370,10 +421,10 @@ function selectInvite(event: FocusEvent) {
 watch(mySide, side => {
   if (side) flipped.value = side === 'black';
 });
-watch(() => props.accountName, name => {
-  if (name) {
+watch([() => props.accountName, () => props.accountAvatar], ([name], [previousName, previousAvatar]) => {
+  if (name || props.accountAvatar !== previousAvatar) {
     guestName.value = '';
-    if (!session.value) {
+    if (name !== previousName || props.accountAvatar !== previousAvatar) {
       socket?.disconnect();
       socket?.connect();
     }
@@ -387,7 +438,7 @@ onBeforeUnmount(() => {
   socket = null;
 });
 
-defineExpose({ leaveForNavigation });
+defineExpose({ leaveForNavigation, openSeat });
 </script>
 
 <template>
@@ -409,15 +460,34 @@ defineExpose({ leaveForNavigation });
     <p v-else-if="error" class="connection-note error" role="alert">{{ error }}</p>
     <p v-else-if="notice" class="connection-note" role="status">{{ notice }}</p>
 
-    <button class="five-table-seat opponent-seat" :class="[topSide, { empty: !sidePlayer(topSide), ready: sidePlayer(topSide)?.ready, active: roomState?.phase === 'playing' && game.turn === topSide }]"
-      type="button" :disabled="!canSeat(topSide)" :aria-label="`${sideLabel(topSide)}席位，${playerState(topSide)}`" @click="openSeat(topSide)">
-      <span class="five-seat-avatar" :class="{ placeholder: !sidePlayer(topSide) }">{{ sidePlayer(topSide) ? (topSide === 'red' ? '帅' : '将') : '?' }}</span>
+    <OtherGameTable v-if="showTableView" title="五兵联盟" eyebrow="FIVE SOLDIERS"
+      :phase="roomState?.phase ?? 'lobby'" :players="roomState?.players ?? []" :busy="busy || !roomState"
+      @seat="openSeat" @watch="openSpectator" />
+
+    <template v-else>
+    <article class="five-table-seat opponent-seat" :class="[topSide, { ready: sidePlayer(topSide)?.ready, active: roomState?.phase === 'playing' && game.turn === topSide }]">
+      <span class="five-seat-avatar" :class="{ placeholder: !sidePlayer(topSide) }">
+        <img v-if="avatarFor(topSide)" :src="avatarFor(topSide)!" alt="">
+        <template v-else>?</template>
+      </span>
       <span class="five-seat-copy"><strong>{{ sidePlayer(topSide)?.nickname || '等待棋友' }}</strong><small>{{ sideLabel(topSide) }}席位</small></span>
-      <em>{{ canSeat(topSide) ? '入座' : playerState(topSide) }}</em>
-    </button>
+      <em>{{ playerState(topSide) }}</em>
+    </article>
 
     <section class="five-game-layout">
       <div class="five-board-column">
+        <div class="game-board-menu-row">
+          <button v-if="!session" class="tool-button board-back-to-table" type="button" @click="returnToTable">← 返回棋桌</button>
+          <div v-else class="game-action-menu">
+            <button class="game-action-menu-toggle" type="button" :aria-expanded="menuOpen" aria-label="打开对局菜单" @click="menuOpen = !menuOpen">‹</button>
+            <div v-if="menuOpen" class="game-action-menu-list">
+              <button type="button" :disabled="roomState?.phase !== 'playing' || !!drawOfferBy" @click="requestDraw">提和</button>
+              <button type="button" :disabled="roomState?.phase !== 'playing'" @click="menuOpen = false; resignDialog?.showModal()">认输</button>
+              <button type="button" :disabled="busy" @click="menuOpen = false; requestLeave()">离开</button>
+            </div>
+          </div>
+          <span v-if="session" class="game-board-role">{{ sideLabel(mySide!) }}方</span>
+        </div>
         <div class="five-board-heading"><div><h2>{{ boardTitle }}</h2><small v-if="turnBudget">{{ turnBudget }}</small></div><span>{{ roomState?.phase === 'lobby' ? '等待开局' : `第 ${game.history.length} 手` }}</span></div>
         <div class="board-frame five-board-frame">
           <svg class="board-svg five-board-svg" :class="{ playable: roomState?.phase === 'playing' && isMyTurn }" viewBox="0 0 540 595" role="group" :aria-label="`五兵联盟棋盘，${flipped ? '黑方' : '红方'}视角`">
@@ -449,20 +519,34 @@ defineExpose({ leaveForNavigation });
               <circle class="five-selection-ring" r="27"/><circle class="five-piece-shadow" cy="2.5" r="23"/><circle class="five-piece-face" r="23"/><circle class="five-piece-rim" r="19.5"/><text :class="{ general: piece.kind === 'general' }" y="1">{{ fivePieceName(piece) }}</text>
             </g>
           </svg>
+          <div v-if="session && roomState?.phase === 'lobby'" class="game-board-waiting-card">
+            <span class="eyebrow">棋桌准备</span>
+            <h3>{{ roomState.players.length < 2 ? '等待棋友' : '双方已入座' }}</h3>
+            <p>{{ myPlayer?.ready ? '已准备，等待对手。' : '准备后即可等待开局。' }}</p>
+            <div class="game-waiting-actions">
+              <button class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消开始' : '开始' }}</button>
+              <button class="tool-button" type="button" @click="copyInvite">邀请好友</button>
+            </div>
+          </div>
         </div>
-        <button class="five-table-seat self-seat" :class="[bottomSide, { empty: !sidePlayer(bottomSide), ready: sidePlayer(bottomSide)?.ready, active: roomState?.phase === 'playing' && game.turn === bottomSide, self: mySide === bottomSide }]"
-          type="button" :disabled="!canSeat(bottomSide)" :aria-label="`${sideLabel(bottomSide)}席位，${playerState(bottomSide)}`" @click="openSeat(bottomSide)">
-          <span class="five-seat-avatar" :class="{ placeholder: !sidePlayer(bottomSide) }">{{ sidePlayer(bottomSide) ? (bottomSide === 'red' ? '帅' : '将') : '?' }}</span>
+        <article class="five-table-seat self-seat" :class="[bottomSide, { ready: sidePlayer(bottomSide)?.ready, active: roomState?.phase === 'playing' && game.turn === bottomSide, self: mySide === bottomSide }]">
+          <span class="five-seat-avatar" :class="{ placeholder: !sidePlayer(bottomSide) }">
+            <img v-if="avatarFor(bottomSide)" :src="avatarFor(bottomSide)!" alt="">
+            <template v-else>?</template>
+          </span>
           <span class="five-seat-copy"><strong>{{ sidePlayer(bottomSide)?.nickname || '等待棋友' }}</strong><small>{{ sideLabel(bottomSide) }}席位</small></span>
-          <em>{{ canSeat(bottomSide) ? '入座' : playerState(bottomSide) }}</em>
-        </button>
+          <em>{{ playerState(bottomSide) }}</em>
+        </article>
+        <div v-if="drawOfferBy && roomState?.phase === 'playing'" class="draw-offer-bar">
+          <span>{{ drawOfferBy === mySide ? '已提和，等待对手回应。' : `${sideLabel(drawOfferBy)}提出和棋。` }}</span>
+          <div v-if="canRespondDraw">
+            <button type="button" :disabled="busy" @click="respondDraw(true)">同意</button>
+            <button type="button" :disabled="busy" @click="respondDraw(false)">拒绝</button>
+          </div>
+        </div>
         <div class="board-tools five-table-actions">
-          <button v-if="session && roomState?.phase === 'lobby'" class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消准备' : '准备' }}</button>
-          <button class="tool-button" type="button" @click="copyInvite">邀请好友</button>
           <button class="tool-button" type="button" @click="flipped = !flipped">翻转棋盘</button>
-          <button v-if="session && roomState?.phase === 'playing'" class="tool-button resign-button" type="button" @click="resignDialog?.showModal()">认输</button>
           <button v-if="session && roomState?.phase === 'finished'" class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="rematch">再来一局</button>
-          <button v-if="session" class="tool-button leave-button" type="button" :disabled="busy" @click="requestLeave">退出房间</button>
         </div>
         <textarea v-if="inviteVisible" class="five-invite-text" :value="inviteText" readonly rows="2" aria-label="五兵联盟邀请链接" @focus="selectInvite"></textarea>
         <div v-if="roomState?.phase === 'finished'" class="result-banner"><strong>{{ resultText }}</strong><span>{{ mySide && game.winner ? `${fiveSideName(game.winner)}吃将获胜` : '本局已结束' }}</span></div>
@@ -476,6 +560,7 @@ defineExpose({ leaveForNavigation });
         <details class="five-live-rules"><summary>玩法说明</summary><p>五兵红方每回合连续走两步，黑方每回合走一步；不强制应将，吃掉将帅即胜。</p></details>
       </aside>
     </section>
+    </template>
 
     <dialog ref="resignDialog" class="reset-dialog">
       <h2>确认认输？</h2><p>本局立即判负，仍可留在房间查看结果。</p>
@@ -581,4 +666,5 @@ defineExpose({ leaveForNavigation });
 .five-heading{align-items:center;margin-bottom:18px}.five-heading p{max-width:520px}.five-game-layout{gap:18px}.five-board-column{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.five-board-column>.five-board-frame{width:100%;max-width:660px}.five-table-seat{--seat-color:#a64b3c;display:flex;align-items:center;gap:12px;width:min(660px,100%);min-height:62px;margin:0 auto;padding:9px 13px;border:1px solid #d6c7b3;border-radius:12px;background:linear-gradient(145deg,#fffdf8,#f8f2e8);color:#4d4236;text-align:left;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}.five-table-seat.black{--seat-color:#343e48}.five-table-seat.opponent-seat{margin-bottom:12px}.five-table-seat.self-seat{margin-top:2px}.five-table-seat.active{border-color:var(--seat-color);box-shadow:inset 3px 0 var(--seat-color),0 7px 18px #59432310}.five-table-seat.empty{border-style:dashed;background:#f3eee5;cursor:pointer}.five-table-seat.empty:hover:not(:disabled){border-color:#aa8a5a;background:#faf4e8;transform:translateY(-1px)}.five-table-seat:disabled{opacity:1;cursor:default}.five-table-seat.self{border-color:color-mix(in srgb,var(--seat-color) 55%,#d6c7b3)}.five-table-seat.ready>em{background:#e4efe4;color:#39704b}.five-table-seat.active .five-seat-avatar{box-shadow:inset 0 0 0 3px #fff4df66,0 0 0 4px color-mix(in srgb,var(--seat-color) 18%,transparent)}.five-seat-avatar{display:grid;place-items:center;width:44px;height:44px;flex:none;border:1px solid var(--seat-color);border-radius:50%;background:var(--seat-color);color:#fff8e8;font:700 23px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff4df4d}.five-seat-avatar.placeholder{border-color:#c8bbab;background:#e7e1d7;color:#9c9080;box-shadow:none}.five-seat-copy{display:grid;gap:2px;min-width:0;flex:1}.five-seat-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 18px/1.3 "Songti SC","SimSun",serif}.five-seat-copy small{color:#8c7d6a;font-size:10px}.five-table-seat.empty .five-seat-copy strong{color:#8f8372;font-weight:600}.five-table-seat>em{padding:3px 8px;border-radius:999px;background:#eee6da;color:#786a58;font-size:9px;font-style:normal;white-space:nowrap}.five-board-heading{width:min(660px,100%);margin:0 auto 12px;padding:0 2px}.five-board-heading h2{font:700 20px/1.25 "Songti SC","SimSun",serif}.five-board-svg:not(.playable) .five-piece{cursor:default}.five-table-actions{justify-content:center;flex-wrap:wrap;padding:2px 0 4px}.five-table-actions>button{min-height:42px}.five-table-actions .primary-button{min-width:130px;padding-inline:22px}.five-invite-text{width:min(660px,100%);margin:0 auto;padding:9px 11px;border:1px solid #d8cab5;border-radius:8px;background:#fffefb;color:#625444;font:500 11px/1.55 ui-monospace,Consolas,monospace;resize:none}.five-table-aside{position:sticky;top:16px}.five-seat-dialog{width:min(380px,calc(100vw - 32px));padding:24px;border:1px solid #d6c5aa;border-radius:14px;background:#fffaf0;color:#493d31;box-shadow:0 24px 70px #3d2d1a33}.five-seat-dialog::backdrop,.five-page .reset-dialog::backdrop{background:#372c204f;backdrop-filter:blur(2px)}.five-seat-dialog form{display:grid;gap:16px}.five-seat-dialog h2{font:700 22px/1.25 "Songti SC","SimSun",serif}.five-seat-dialog label{display:grid;gap:7px;color:#615344;font:600 14px/1.2 "Songti SC","SimSun",serif}.five-seat-dialog input{height:46px;border:1px solid #d8cab5;border-radius:9px;background:#fffefb;padding:0 13px;color:#3f352b;font:500 16px/1 inherit;outline:none}.five-seat-dialog input:focus{border-color:#a78147;box-shadow:0 0 0 3px #a7814718}.five-seat-dialog .connection-note{margin:0!important}.five-seat-dialog .dialog-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}.five-seat-dialog .dialog-actions button{min-height:44px}.five-table-seat:focus-visible,.five-table-actions button:focus-visible,.five-seat-dialog button:focus-visible{outline:3px solid #9c7f43;outline-offset:3px}
 @media(max-width:860px){.five-table-aside{position:static}.five-history{margin-top:0}}
 @media(max-width:640px){.five-page{padding:14px 0 38px}.five-page-nav{margin-bottom:14px}.five-heading p{display:none}.five-heading h1{font-size:31px}.five-board-heading h2{font-size:17px}.five-board-heading span{padding:4px 8px;font-size:9px}.five-table-seat{min-height:58px;padding:8px 10px;gap:9px}.five-seat-avatar{width:38px;height:38px;font-size:20px}.five-seat-copy strong{font-size:15px}.five-table-seat>em{max-width:74px;overflow:hidden;text-overflow:ellipsis;font-size:8px}.five-table-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.five-table-actions>button{width:100%;min-height:44px;margin:0}.five-table-actions .primary-button{min-width:0}.five-history{padding:12px}.five-invite-text{font-size:10px}.five-seat-dialog{padding:20px}}
+.five-seat-avatar{border-radius:9px;overflow:hidden}.five-seat-avatar img{width:100%;height:100%;object-fit:cover}
 </style>

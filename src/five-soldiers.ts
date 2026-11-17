@@ -5,6 +5,7 @@ export const FIVE_SOLDIERS_SESSION_KEY = 'three-kingdoms-chess:five-soldiers-ses
 export type FiveSide = 'red' | 'black';
 export type FiveKind = 'general' | 'advisor' | 'elephant' | 'horse' | 'rook' | 'cannon' | 'pawn';
 export type FivePhase = 'lobby' | 'playing' | 'finished';
+export type FiveEndReason = 'capture' | 'resignation' | 'draw' | null;
 
 export interface FivePoint {
   x: number;
@@ -35,6 +36,7 @@ export interface FiveGame {
   movesRemaining: 0 | 1 | 2;
   status: 'playing' | 'finished';
   winner: FiveSide | null;
+  endReason: FiveEndReason;
   lastMove: FiveMoveRecord | null;
   history: FiveMoveRecord[];
 }
@@ -42,6 +44,7 @@ export interface FiveGame {
 export interface FivePlayerView {
   id: string;
   nickname: string;
+  avatar: string | null;
   identity: 'account' | 'guest';
   side: FiveSide;
   ready: boolean;
@@ -56,6 +59,7 @@ export interface FiveState {
   round: number;
   players: FivePlayerView[];
   game: FiveGame | null;
+  drawOfferBy: FiveSide | null;
   selfId: string | null;
 }
 
@@ -127,6 +131,7 @@ export function newFiveGame(): FiveGame {
     movesRemaining: 2,
     status: 'playing',
     winner: null,
+    endReason: null,
     lastMove: null,
     history: [],
   };
@@ -208,6 +213,7 @@ export function validFiveGame(value: unknown): value is FiveGame {
   if (game.schema !== 2 || game.rulesVersion !== FIVE_SOLDIERS_RULES_VERSION
     || (game.turn !== 'red' && game.turn !== 'black') || (game.status !== 'playing' && game.status !== 'finished')
     || (game.winner !== null && game.winner !== 'red' && game.winner !== 'black')
+    || !['capture', 'resignation', 'draw', null].includes(game.endReason)
     || !Array.isArray(game.pieces) || !Array.isArray(game.history)) return false;
   const ids = new Set<string>(), points = new Set<string>();
   for (const piece of game.pieces) {
@@ -219,9 +225,11 @@ export function validFiveGame(value: unknown): value is FiveGame {
     ids.add(piece.id); points.add(point);
   }
   if (game.status === 'playing') {
-    if (game.winner !== null || ![1, 2].includes(game.movesRemaining)) return false;
+    if (game.winner !== null || game.endReason !== null || ![1, 2].includes(game.movesRemaining)) return false;
     if (game.turn === 'black' && game.movesRemaining !== 1) return false;
-  } else if (game.winner === null || game.movesRemaining !== 0) return false;
+  } else if (game.endReason === 'draw') {
+    if (game.winner !== null || game.movesRemaining !== 0) return false;
+  } else if (game.winner === null || game.endReason === null || game.movesRemaining !== 0) return false;
   return true;
 }
 
@@ -253,6 +261,7 @@ export function playFiveMove(game: FiveGame, pieceId: string, to: FivePoint): { 
   if (captured?.kind === 'general') {
     next.status = 'finished';
     next.winner = next.turn;
+    next.endReason = 'capture';
     next.movesRemaining = 0;
   } else if (next.turn === 'red' && next.movesRemaining === 2) {
     next.movesRemaining = 1;
@@ -268,6 +277,17 @@ export function resignFiveGame(game: FiveGame, side: FiveSide): FiveGame {
   const next = structuredClone(game);
   next.status = 'finished';
   next.winner = otherFiveSide(side);
+  next.endReason = 'resignation';
+  next.movesRemaining = 0;
+  return next;
+}
+
+export function drawFiveGame(game: FiveGame): FiveGame {
+  if (game.status !== 'playing') return structuredClone(game);
+  const next = structuredClone(game);
+  next.status = 'finished';
+  next.winner = null;
+  next.endReason = 'draw';
   next.movesRemaining = 0;
   return next;
 }

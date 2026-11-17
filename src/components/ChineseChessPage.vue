@@ -22,9 +22,11 @@ import type {
   ChineseState,
 } from '../chinese-chess.ts';
 import { appRouteUrl } from '../navigation.ts';
+import OtherGameTable from './OtherGameTable.vue';
 
-const props = defineProps<{ accountName: string | null }>();
+const props = defineProps<{ accountName: string | null; accountAvatar?: string | null }>();
 const emit = defineEmits<{ other: [] }>();
+const guestAvatar = 'images/guest-avatar.svg';
 
 interface SavedSession { reconnectToken: string; playerId: string }
 
@@ -46,10 +48,12 @@ const selectedId = ref<string | null>(null), flipped = ref(false);
 const inviteVisible = ref(false), inviteText = ref('');
 const resignDialog = ref<HTMLDialogElement | null>(null), leaveDialog = ref<HTMLDialogElement | null>(null);
 const seatDialog = ref<HTMLDialogElement | null>(null);
+const watching = ref(false), menuOpen = ref(false);
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
 const roomState = computed(() => state.value ?? inspected.value);
+const showTableView = computed(() => !session.value && !watching.value);
 const game = computed<ChineseGame>(() => roomState.value?.game ?? newChineseGame());
 const myPlayer = computed(() => state.value?.players.find(player => player.id === state.value?.selfId) ?? null);
 const mySide = computed(() => myPlayer.value?.side ?? null);
@@ -66,7 +70,8 @@ const boardTitle = computed(() => {
     return '等待双方准备';
   }
   if (room.phase === 'finished') {
-    if (!game.value.winner || !mySide.value) return '本局结束';
+    if (!game.value.winner) return '本局和棋';
+    if (!mySide.value) return '本局结束';
     return game.value.winner === mySide.value ? '你获胜' : '你失败';
   }
   const active = room.players.find(player => player.side === game.value.turn);
@@ -74,6 +79,7 @@ const boardTitle = computed(() => {
 });
 const resultText = computed(() => {
   if (game.value.status !== 'finished') return '';
+  if (game.value.endReason === 'draw') return '双方同意和棋。';
   if (!mySide.value) return game.value.winner ? `${chineseSideName(game.value.winner)}获胜` : '本局结束';
   if (game.value.winner !== mySide.value) return '本局落败，可以再来一局。';
   if (game.value.endReason === 'checkmate') return '将死对手，胜局已定。';
@@ -90,6 +96,7 @@ const targetAt = (point: ChinesePoint) => chinesePieceAt(game.value.pieces, poin
 const topSide = computed<ChineseSide>(() => flipped.value ? 'red' : 'black');
 const bottomSide = computed<ChineseSide>(() => otherChineseSide(topSide.value));
 const sidePlayer = (side: ChineseSide) => roomState.value?.players.find(player => player.side === side) ?? null;
+const avatarFor = (side: ChineseSide) => sidePlayer(side)?.avatar || (sidePlayer(side) ? guestAvatar : null);
 const sideLabel = (side: ChineseSide) => chineseSideName(side);
 const pieceLabel = (piece: ChinesePiece) =>
   `${chineseSideName(piece.side)}${chinesePieceName(piece)}，${piece.x + 1} 路第 ${piece.y + 1} 线`;
@@ -97,11 +104,16 @@ const playerState = (side: ChineseSide) => {
   const player = sidePlayer(side);
   if (!player) return roomState.value?.phase === 'lobby' ? '等待棋友' : '未入座';
   if (roomState.value?.phase === 'lobby') return player.ready ? '已准备' : '未准备';
-  if (roomState.value?.phase === 'finished') return game.value.winner === side ? '胜利' : '失败';
+  if (roomState.value?.phase === 'finished') return !game.value.winner ? '和棋' : game.value.winner === side ? '胜利' : '失败';
   return game.value.turn === side ? '行棋中' : '对局中';
 };
 const canSeat = (side: ChineseSide) => !session.value && roomState.value?.phase === 'lobby'
   && roomState.value.players.length < 2 && !sidePlayer(side);
+const canWatchTable = computed(() => !session.value && !watching.value
+  && (roomState.value?.phase === 'playing' || roomState.value?.phase === 'finished'));
+const drawOfferBy = computed(() => roomState.value?.drawOfferBy ?? null);
+const canRespondDraw = computed(() => !!session.value && roomState.value?.phase === 'playing'
+  && !!drawOfferBy.value && drawOfferBy.value !== mySide.value);
 
 function saveSession(receipt: ChineseReceipt): boolean {
   if (!receipt || receipt.gameId !== CHINESE_CHESS_GAME_ID || receipt.playerId !== receipt.state.selfId) return false;
@@ -309,6 +321,43 @@ async function rematch() {
   } finally { busy.value = false; }
 }
 
+function openSpectator() {
+  if (!canWatchTable.value) return;
+  watching.value = true;
+  selectedId.value = null;
+}
+
+async function returnToTable(): Promise<void> {
+  if (!session.value) await emitAck('chinese:unwatch', {});
+  watching.value = false;
+  menuOpen.value = false;
+}
+
+async function requestDraw() {
+  if (!session.value || busy.value) return;
+  menuOpen.value = false;
+  busy.value = true;
+  try {
+    const ack = await emitAck<{ state: ChineseState }>('chinese:draw-offer', {
+      reconnectToken: session.value.reconnectToken,
+    });
+    if (!ack.ok) error.value = ack.error;
+    else { acceptState(ack.data.state); notice.value = '已提出和棋申请。'; }
+  } finally { busy.value = false; }
+}
+
+async function respondDraw(accept: boolean) {
+  if (!session.value || busy.value) return;
+  busy.value = true;
+  try {
+    const ack = await emitAck<{ state: ChineseState }>('chinese:draw-respond', {
+      reconnectToken: session.value.reconnectToken, accept,
+    });
+    if (!ack.ok) error.value = ack.error;
+    else acceptState(ack.data.state);
+  } finally { busy.value = false; }
+}
+
 async function leaveRoom(): Promise<void> {
   leaveDialog.value?.close();
   const saved = session.value;
@@ -319,6 +368,8 @@ async function leaveRoom(): Promise<void> {
   } finally {
     busy.value = false;
     clearSession();
+    watching.value = false;
+    menuOpen.value = false;
     const watched = await emitAck<ChineseState>('chinese:watch', {});
     if (watched.ok) inspected.value = watched.data;
   }
@@ -355,10 +406,10 @@ function selectInvite(event: FocusEvent) {
 }
 
 watch(mySide, side => { if (side) flipped.value = side === 'black'; });
-watch(() => props.accountName, name => {
-  if (name) {
+watch([() => props.accountName, () => props.accountAvatar], ([name], [previousName, previousAvatar]) => {
+  if (name || props.accountAvatar !== previousAvatar) {
     guestName.value = '';
-    if (!session.value) {
+    if (name !== previousName || props.accountAvatar !== previousAvatar) {
       socket?.disconnect();
       socket?.connect();
     }
@@ -372,7 +423,7 @@ onBeforeUnmount(() => {
   socket = null;
 });
 
-defineExpose({ leaveForNavigation });
+defineExpose({ leaveForNavigation, openSeat });
 </script>
 
 <template>
@@ -383,15 +434,34 @@ defineExpose({ leaveForNavigation });
     <p v-else-if="error" class="connection-note error" role="alert">{{ error }}</p>
     <p v-else-if="notice" class="connection-note" role="status">{{ notice }}</p>
 
-    <button class="chinese-table-seat opponent-seat" :class="[topSide, { empty: !sidePlayer(topSide), ready: sidePlayer(topSide)?.ready, active: roomState?.phase === 'playing' && game.turn === topSide }]"
-      type="button" :disabled="!canSeat(topSide)" :aria-label="`${sideLabel(topSide)}席位，${playerState(topSide)}`" @click="openSeat(topSide)">
-      <span class="chinese-seat-avatar" :class="{ placeholder: !sidePlayer(topSide) }">{{ sidePlayer(topSide) ? (topSide === 'red' ? '帅' : '将') : '?' }}</span>
+    <OtherGameTable v-if="showTableView" title="中国象棋" eyebrow="CHINESE CHESS"
+      :phase="roomState?.phase ?? 'lobby'" :players="roomState?.players ?? []" :busy="busy || !roomState"
+      @seat="openSeat" @watch="openSpectator" />
+
+    <template v-else>
+    <article class="chinese-table-seat opponent-seat" :class="[topSide, { ready: sidePlayer(topSide)?.ready, active: roomState?.phase === 'playing' && game.turn === topSide }]">
+      <span class="chinese-seat-avatar" :class="{ placeholder: !sidePlayer(topSide) }">
+        <img v-if="avatarFor(topSide)" :src="avatarFor(topSide)!" alt="">
+        <template v-else>?</template>
+      </span>
       <span class="chinese-seat-copy"><strong>{{ sidePlayer(topSide)?.nickname || '等待棋友' }}</strong><small>{{ sideLabel(topSide) }}席位</small></span>
-      <em>{{ canSeat(topSide) ? '入座' : playerState(topSide) }}</em>
-    </button>
+      <em>{{ playerState(topSide) }}</em>
+    </article>
 
     <section class="chinese-game-layout">
       <div class="chinese-board-column">
+        <div class="game-board-menu-row">
+          <button v-if="!session" class="tool-button board-back-to-table" type="button" @click="returnToTable">← 返回棋桌</button>
+          <div v-else class="game-action-menu">
+            <button class="game-action-menu-toggle" type="button" :aria-expanded="menuOpen" aria-label="打开对局菜单" @click="menuOpen = !menuOpen">‹</button>
+            <div v-if="menuOpen" class="game-action-menu-list">
+              <button type="button" :disabled="roomState?.phase !== 'playing' || !!drawOfferBy" @click="requestDraw">提和</button>
+              <button type="button" :disabled="roomState?.phase !== 'playing'" @click="menuOpen = false; resignDialog?.showModal()">认输</button>
+              <button type="button" :disabled="busy" @click="menuOpen = false; requestLeave()">离开</button>
+            </div>
+          </div>
+          <span v-if="session" class="game-board-role">{{ sideLabel(mySide!) }}方</span>
+        </div>
         <div class="chinese-board-heading"><h2>{{ boardTitle }}</h2><span>{{ roomState?.phase === 'lobby' ? '等待开局' : `第 ${game.history.length} 手` }}</span></div>
         <div class="board-frame chinese-board-frame">
           <svg class="board-svg chinese-board-svg" :class="{ playable: roomState?.phase === 'playing' && isMyTurn }" viewBox="0 0 540 595" role="group" :aria-label="`中国象棋棋盘，${flipped ? '黑方' : '红方'}视角`">
@@ -404,20 +474,34 @@ defineExpose({ leaveForNavigation });
               <g v-for="point in moves" :key="`${point.x},${point.y}`" class="chinese-target" role="button" tabindex="0" :aria-label="`${targetAt(point) ? '吃子到' : '走到'}第${point.x+1}路第${point.y+1}线`" @click.stop="clickPoint(point)" @keydown.enter.prevent.stop="clickPoint(point)" @keydown.space.prevent.stop="clickPoint(point)"><circle :cx="viewX(point.x)" :cy="viewY(point.y)" r="23" fill="transparent"/><circle :cx="viewX(point.x)" :cy="viewY(point.y)" :r="targetAt(point) ? 27 : 6" :class="targetAt(point) ? 'capture-ring' : 'move-dot'"/></g>
               <g v-for="piece in game.pieces" :key="piece.id" class="chinese-piece" :class="[piece.side, { selected: selectedId === piece.id }]" :style="{transform: `translate(${viewX(piece.x)}px, ${viewY(piece.y)}px)`}" role="button" tabindex="0" :aria-disabled="roomState?.phase !== 'playing' || !isMyTurn" :aria-label="pieceLabel(piece)" @click.stop="clickPoint(piece)" @keydown.enter.prevent.stop="clickPoint(piece)"><circle class="chinese-selection-ring" r="27"/><circle class="chinese-piece-shadow" cy="2.5" r="23"/><circle class="chinese-piece-face" r="23"/><circle class="chinese-piece-rim" r="19.5"/><text :class="{general: piece.kind === 'king'}" y="1">{{ chinesePieceName(piece) }}</text></g>
           </svg>
+          <div v-if="session && roomState?.phase === 'lobby'" class="game-board-waiting-card">
+            <span class="eyebrow">棋桌准备</span>
+            <h3>{{ roomState.players.length < 2 ? '等待棋友' : '双方已入座' }}</h3>
+            <p>{{ myPlayer?.ready ? '已准备，等待对手。' : '准备后即可等待开局。' }}</p>
+            <div class="game-waiting-actions">
+              <button class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消开始' : '开始' }}</button>
+              <button class="tool-button" type="button" @click="copyInvite">邀请好友</button>
+            </div>
+          </div>
         </div>
-        <button class="chinese-table-seat self-seat" :class="[bottomSide, { empty: !sidePlayer(bottomSide), ready: sidePlayer(bottomSide)?.ready, active: roomState?.phase === 'playing' && game.turn === bottomSide, self: mySide === bottomSide }]"
-          type="button" :disabled="!canSeat(bottomSide)" :aria-label="`${sideLabel(bottomSide)}席位，${playerState(bottomSide)}`" @click="openSeat(bottomSide)">
-          <span class="chinese-seat-avatar" :class="{ placeholder: !sidePlayer(bottomSide) }">{{ sidePlayer(bottomSide) ? (bottomSide === 'red' ? '帅' : '将') : '?' }}</span>
+        <div v-if="drawOfferBy && roomState?.phase === 'playing'" class="draw-offer-bar">
+          <span>{{ drawOfferBy === mySide ? '已提和，等待对手回应。' : `${sideLabel(drawOfferBy)}提出和棋。` }}</span>
+          <div v-if="canRespondDraw">
+            <button type="button" :disabled="busy" @click="respondDraw(true)">同意</button>
+            <button type="button" :disabled="busy" @click="respondDraw(false)">拒绝</button>
+          </div>
+        </div>
+        <article class="chinese-table-seat self-seat" :class="[bottomSide, { ready: sidePlayer(bottomSide)?.ready, active: roomState?.phase === 'playing' && game.turn === bottomSide, self: mySide === bottomSide }]">
+          <span class="chinese-seat-avatar" :class="{ placeholder: !sidePlayer(bottomSide) }">
+            <img v-if="avatarFor(bottomSide)" :src="avatarFor(bottomSide)!" alt="">
+            <template v-else>?</template>
+          </span>
           <span class="chinese-seat-copy"><strong>{{ sidePlayer(bottomSide)?.nickname || '等待棋友' }}</strong><small>{{ sideLabel(bottomSide) }}席位</small></span>
-          <em>{{ canSeat(bottomSide) ? '入座' : playerState(bottomSide) }}</em>
-        </button>
+          <em>{{ playerState(bottomSide) }}</em>
+        </article>
         <div class="board-tools chinese-table-actions">
-          <button v-if="session && roomState?.phase === 'lobby'" class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消准备' : '准备' }}</button>
-          <button class="tool-button" type="button" @click="copyInvite">邀请好友</button>
           <button class="tool-button" type="button" @click="flipped = !flipped">翻转棋盘</button>
-          <button v-if="session && roomState?.phase === 'playing'" class="tool-button resign-button" type="button" @click="resignDialog?.showModal()">认输</button>
           <button v-if="session && roomState?.phase === 'finished'" class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="rematch">再来一局</button>
-          <button v-if="session" class="tool-button leave-button" type="button" :disabled="busy" @click="requestLeave">退出房间</button>
         </div>
         <textarea v-if="inviteVisible" class="chinese-invite-text" :value="inviteText" readonly rows="2" aria-label="中国象棋邀请链接" @focus="selectInvite"></textarea>
         <div v-if="roomState?.phase === 'finished'" class="result-banner"><strong>{{ resultText }}</strong><span>{{ mySide && game.winner ? `${chineseSideName(game.winner)}获胜` : '本局已结束' }}</span></div>
@@ -430,6 +514,7 @@ defineExpose({ leaveForNavigation });
         <details class="chinese-live-rules"><summary>玩法说明</summary><p>经典中国象棋规则；不能送将，将死或困毙判负。仅浏览棋盘不会占座。</p></details>
       </aside>
     </section>
+    </template>
     <dialog ref="seatDialog" class="chinese-seat-dialog" @cancel.prevent="seatDialog?.close()">
       <form @submit.prevent="confirmGuestSeat">
         <div class="dialog-heading"><h2>入座 {{ pendingSide ? sideLabel(pendingSide) : '' }}</h2><button class="dialog-close" type="button" aria-label="关闭" @click="seatDialog?.close()">×</button></div>
@@ -450,4 +535,5 @@ defineExpose({ leaveForNavigation });
 .chinese-page{min-width:0;overflow-x:clip}.chinese-heading{align-items:center;margin-bottom:18px}.chinese-heading p{max-width:520px}.chinese-table-seat{min-height:62px}.chinese-table-seat:disabled{opacity:1}.chinese-table-seat.empty .chinese-seat-copy strong{color:#8f8372;font-weight:600}.chinese-table-seat.ready>em{background:#e4efe4;color:#39704b}.chinese-table-seat.active .chinese-seat-avatar{box-shadow:inset 0 0 0 3px #fff4df66,0 0 0 4px color-mix(in srgb,var(--seat-color) 18%,transparent)}.chinese-table-seat:focus-visible,.chinese-table-actions button:focus-visible,.chinese-seat-dialog button:focus-visible{outline:3px solid #9c7f43;outline-offset:3px}.chinese-board-column{grid-template-columns:minmax(0,1fr)}.chinese-board-column>.chinese-board-frame{width:100%}.chinese-board-heading{width:min(660px,100%);margin:0 auto 12px;padding:0 2px}.chinese-board-heading h2{font:700 20px/1.25 "Songti SC","SimSun",serif}.chinese-board-svg:not(.playable) .chinese-piece{cursor:default}.chinese-table-actions{justify-content:center;flex-wrap:wrap;padding:2px 0 4px}.chinese-table-actions>button{min-height:42px}.chinese-table-actions .primary-button{min-width:130px;padding-inline:22px}.chinese-table-aside{position:sticky;top:16px}.chinese-live-rules{font-size:11px}.chinese-live-rules[open] p{margin-bottom:0}.chinese-seat-dialog::backdrop,.chinese-page .reset-dialog::backdrop{background:#372c204f;backdrop-filter:blur(2px)}.chinese-seat-dialog{border:1px solid #d6c5aa;border-radius:14px;background:#fffaf0;color:#493d31;box-shadow:0 24px 70px #3d2d1a33}.chinese-seat-dialog .dialog-heading h2{font:700 22px/1.25 "Songti SC","SimSun",serif}.chinese-seat-dialog label{font-size:14px}.chinese-seat-dialog input{font-size:16px}.chinese-seat-dialog .dialog-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}.chinese-seat-dialog .dialog-actions button{min-height:44px}
 @media(max-width:860px){.chinese-table-aside{position:static}.chinese-history{margin-top:0}.chinese-heading p{max-width:390px}.chinese-table-seat,.chinese-board-column>.chinese-board-frame{max-width:680px}.chinese-table-actions{justify-content:flex-start}}
 @media(max-width:640px){.chinese-page{padding:14px 0 38px}.chinese-page-nav{margin-bottom:14px}.chinese-heading p{display:none}.chinese-heading h1{font-size:31px}.chinese-board-heading{gap:8px}.chinese-board-heading h2{font-size:17px}.chinese-board-heading span{padding:4px 8px;font-size:9px}.chinese-table-seat{min-height:58px;padding:8px 10px}.chinese-table-seat>em{max-width:74px;overflow:hidden;text-overflow:ellipsis}.chinese-table-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.chinese-table-actions>button{width:100%;min-height:44px;margin:0}.chinese-table-actions .primary-button{min-width:0}.chinese-history{padding:12px}.chinese-invite-text{margin-top:2px}.chinese-seat-dialog{padding:20px}.chinese-result-banner{margin-top:8px}}
+.chinese-seat-avatar{border-radius:9px;overflow:hidden}.chinese-seat-avatar img{width:100%;height:100%;object-fit:cover}
 </style>

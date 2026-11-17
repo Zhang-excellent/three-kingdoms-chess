@@ -1,6 +1,7 @@
 export interface AuthUser {
   id: string;
   username: string;
+  avatarUrl: string | null;
 }
 
 export const USERNAME_MIN_LENGTH = 2;

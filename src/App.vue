@@ -335,6 +335,12 @@ async function changeAccountPassword(currentPassword: string, newPassword: strin
   authNotice.value = '密码已修改，其他旧登录会话已经失效。';
   await online.authChanged();
 }
+async function uploadAccountAvatar(avatarData: string | null) {
+  const result = await auth.uploadAvatar(avatarData);
+  if (!result.ok) return;
+  authNotice.value = avatarData ? '头像已更新。' : '已恢复默认头像。';
+  await online.authChanged();
+}
 async function logoutAccount() {
   if (accountRoomLocked.value) {
     auth.setError('请先退出当前房间，再退出账号。');
@@ -743,11 +749,11 @@ async function requestRematch() {
 
     <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" @horse="openHorsePage" @chinese="openChinesePage" />
 
-    <FiveSoldiersPage v-else-if="page === 'five'" ref="fivePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
+    <FiveSoldiersPage v-else-if="page === 'five'" ref="fivePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
-    <HorseChessPage v-else-if="page === 'horse'" ref="horsePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
+    <HorseChessPage v-else-if="page === 'horse'" ref="horsePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
-    <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" @other="openOtherPage" />
+    <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
     <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname" :account-name="authUser?.username ?? null"
       :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
@@ -937,8 +943,8 @@ async function requestRematch() {
     </dialog>
     <dialog ref="otherRulesDialog" class="rules-dialog">
       <div class="dialog-heading"><h2>其他玩法规则</h2><button class="dialog-close" aria-label="关闭规则" @click="otherRulesDialog?.close()">×</button></div>
-      <p>当前开放两种独立双人玩法：</p>
-      <ul><li>五兵联盟：红方五兵、士象全和主帅，对阵标准十六子；红方每回合连续两步，吃掉将帅获胜。</li><li>马棋：双方各九马，马走日且受马腿阻挡，先踏入对方中央帅位获胜。</li><li>中国象棋：经典三十二子规则，不能送将，将死、困毙或认输决定胜负。</li></ul>
+      <p>当前开放三种独立双人玩法：</p>
+      <ul><li>五兵联盟：红方五兵、士象全和主帅，对阵标准十六子；红方每回合连续两步，吃掉将帅获胜。</li><li>马棋：双方各九马，马走日且受马腿阻挡，先踏入对方中央帅位获胜。</li><li>中国象棋：经典三十二子规则，不能送将，将死、困毙、认输或双方同意和棋决定结果。</li><li>三种玩法均先在棋桌选择红方或黑方入座，双方开始后行棋；左侧菜单可提和、认输或离开。</li></ul>
       <button class="primary-button" @click="otherRulesDialog?.close()">知道了</button>
     </dialog>
     <dialog ref="settingsDialog" class="settings-dialog">
@@ -969,6 +975,7 @@ async function requestRematch() {
       :notice="authNotice" :logout-blocked="accountRoomLocked"
       :recent-games="authRecentGames" :recent-loading="authRecentLoading" :recent-error="authRecentError"
       @login="loginAccount" @register="registerAccount" @change-password="changeAccountPassword"
+      @upload-avatar="uploadAccountAvatar"
       @logout="logoutAccount" @replay="openHistoricalReplay" @refresh-recent="auth.loadRecent"
       @clear-error="auth.clearError" />
   </div>

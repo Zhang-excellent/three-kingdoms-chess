@@ -66,6 +66,8 @@ export function useAuth() {
     run(() => request<{ user: AuthUser }>('auth/register', { username, password, remember }));
   const changePassword = (currentPassword: string, newPassword: string, remember: boolean) =>
     run(() => request<{ user: AuthUser }>('auth/password', { currentPassword, newPassword, remember }));
+  const uploadAvatar = (avatarData: string | null) =>
+    run(() => request<{ user: AuthUser }>('auth/avatar', { avatarData }));
 
   async function loadRecent(): Promise<void> {
     if (!user.value) {
@@ -112,6 +114,6 @@ export function useAuth() {
 
   return {
     user, ready, busy, error, recentGames, recentLoading, recentError,
-    refresh, login, register, changePassword, loadRecent, loadGame, logout, clearError, setError,
+    refresh, login, register, changePassword, uploadAvatar, loadRecent, loadGame, logout, clearError, setError,
   };
 }

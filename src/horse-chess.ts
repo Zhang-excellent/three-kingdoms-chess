@@ -4,6 +4,7 @@ export const HORSE_CHESS_SESSION_KEY = 'three-kingdoms-chess:horse-chess-session
 
 export type HorseSide = 'red' | 'black';
 export type HorsePhase = 'lobby' | 'playing' | 'finished';
+export type HorseEndReason = 'goal' | 'resignation' | 'draw' | null;
 
 export interface HorsePoint {
   x: number;
@@ -31,6 +32,7 @@ export interface HorseGame {
   turn: HorseSide;
   status: 'playing' | 'finished';
   winner: HorseSide | null;
+  endReason: HorseEndReason;
   lastMove: HorseMoveRecord | null;
   history: HorseMoveRecord[];
 }
@@ -38,6 +40,7 @@ export interface HorseGame {
 export interface HorsePlayerView {
   id: string;
   nickname: string;
+  avatar: string | null;
   identity: 'account' | 'guest';
   side: HorseSide;
   ready: boolean;
@@ -52,6 +55,7 @@ export interface HorseState {
   round: number;
   players: HorsePlayerView[];
   game: HorseGame | null;
+  drawOfferBy: HorseSide | null;
   selfId: string | null;
 }
 
@@ -107,6 +111,7 @@ export function newHorseGame(): HorseGame {
     turn: 'red',
     status: 'playing',
     winner: null,
+    endReason: null,
     lastMove: null,
     history: [],
   };
@@ -134,6 +139,7 @@ export function validHorseGame(value: unknown): value is HorseGame {
   if (game.schema !== 1 || game.rulesVersion !== HORSE_CHESS_RULES_VERSION
     || !isHorseSide(game.turn) || (game.status !== 'playing' && game.status !== 'finished')
     || (game.winner !== null && !isHorseSide(game.winner))
+    || !['goal', 'resignation', 'draw', null].includes(game.endReason)
     || !Array.isArray(game.pieces) || !Array.isArray(game.history)) return false;
   const ids = new Set<string>(), points = new Set<string>();
   for (const piece of game.pieces) {
@@ -144,7 +150,9 @@ export function validHorseGame(value: unknown): value is HorseGame {
     if (ids.has(piece.id) || points.has(point)) return false;
     ids.add(piece.id); points.add(point);
   }
-  return game.status === 'playing' ? game.winner === null : game.winner !== null;
+  if (game.status === 'playing') return game.winner === null && game.endReason === null;
+  if (game.endReason === 'draw') return game.winner === null;
+  return game.winner !== null && game.endReason !== null;
 }
 
 export function playHorseMove(game: HorseGame, pieceId: string, to: HorsePoint):
@@ -176,6 +184,7 @@ export function playHorseMove(game: HorseGame, pieceId: string, to: HorsePoint):
   if (to.x === goal.x && to.y === goal.y) {
     next.status = 'finished';
     next.winner = next.turn;
+    next.endReason = 'goal';
   } else {
     next.turn = otherHorseSide(next.turn);
   }
@@ -187,5 +196,15 @@ export function resignHorseGame(game: HorseGame, side: HorseSide): HorseGame {
   const next = structuredClone(game);
   next.status = 'finished';
   next.winner = otherHorseSide(side);
+  next.endReason = 'resignation';
+  return next;
+}
+
+export function drawHorseGame(game: HorseGame): HorseGame {
+  if (game.status !== 'playing') return structuredClone(game);
+  const next = structuredClone(game);
+  next.status = 'finished';
+  next.winner = null;
+  next.endReason = 'draw';
   return next;
 }

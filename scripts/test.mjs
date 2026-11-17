@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(root, 'tests/.compiled-app.mts');
 const componentOutputs = [];
-for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthDialog', 'OtherGamesPage', 'FiveSoldiersPage', 'HorseChessPage', 'ChineseChessPage']) {
+for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthDialog', 'OtherGamesPage', 'OtherGameTable', 'FiveSoldiersPage', 'HorseChessPage', 'ChineseChessPage']) {
   const sourcePath = resolve(root, 'src/components', `${name}.vue`);
   const componentSource = readFileSync(sourcePath, 'utf8');
   const component = parse(componentSource, { filename: `${name}.vue` });
@@ -22,6 +22,7 @@ for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthD
     .replaceAll("'../game-history.ts'", "'../src/game-history.ts'")
     .replaceAll("'../game.ts'", "'../src/game.ts'")
     .replaceAll("'../navigation.ts'", "'../src/navigation.ts'")
+    .replaceAll("'./OtherGameTable.vue'", "'./.compiled-OtherGameTable.mts'")
     .replaceAll("'../online.ts'", "'../src/online.ts'"));
   componentOutputs.push(componentOutput);
 }

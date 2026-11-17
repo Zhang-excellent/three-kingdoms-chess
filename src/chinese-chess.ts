@@ -5,7 +5,7 @@ export const CHINESE_CHESS_SESSION_KEY = 'three-kingdoms-chess:chinese-chess-ses
 export type ChineseSide = 'red' | 'black';
 export type ChineseKind = 'king' | 'advisor' | 'elephant' | 'horse' | 'rook' | 'cannon' | 'pawn';
 export type ChinesePhase = 'lobby' | 'playing' | 'finished';
-export type ChineseEndReason = 'checkmate' | 'stalemate' | 'resignation' | null;
+export type ChineseEndReason = 'checkmate' | 'stalemate' | 'resignation' | 'draw' | null;
 
 export interface ChinesePoint {
   x: number;
@@ -43,6 +43,7 @@ export interface ChineseGame {
 export interface ChinesePlayerView {
   id: string;
   nickname: string;
+  avatar: string | null;
   identity: 'account' | 'guest';
   side: ChineseSide;
   ready: boolean;
@@ -57,6 +58,7 @@ export interface ChineseState {
   round: number;
   players: ChinesePlayerView[];
   game: ChineseGame | null;
+  drawOfferBy: ChineseSide | null;
   selfId: string | null;
 }
 
@@ -249,7 +251,7 @@ export function validChineseGame(value: unknown): value is ChineseGame {
   if (game.schema !== 1 || game.rulesVersion !== CHINESE_CHESS_RULES_VERSION
     || !isChineseSide(game.turn) || (game.status !== 'playing' && game.status !== 'finished')
     || (game.winner !== null && !isChineseSide(game.winner))
-    || !['checkmate', 'stalemate', 'resignation', null].includes(game.endReason)
+    || !['checkmate', 'stalemate', 'resignation', 'draw', null].includes(game.endReason)
     || !Array.isArray(game.pieces) || !Array.isArray(game.history)) return false;
   const ids = new Set<string>(), points = new Set<string>();
   for (const piece of game.pieces) {
@@ -261,6 +263,7 @@ export function validChineseGame(value: unknown): value is ChineseGame {
     ids.add(piece.id); points.add(point);
   }
   if (game.status === 'playing') return game.winner === null && game.endReason === null;
+  if (game.endReason === 'draw') return game.winner === null;
   return game.winner !== null && game.endReason !== null;
 }
 
@@ -306,5 +309,14 @@ export function resignChineseGame(game: ChineseGame, side: ChineseSide): Chinese
   next.status = 'finished';
   next.winner = otherChineseSide(side);
   next.endReason = 'resignation';
+  return next;
+}
+
+export function drawChineseGame(game: ChineseGame): ChineseGame {
+  if (game.status !== 'playing') return structuredClone(game);
+  const next = structuredClone(game);
+  next.status = 'finished';
+  next.winner = null;
+  next.endReason = 'draw';
   return next;
 }
