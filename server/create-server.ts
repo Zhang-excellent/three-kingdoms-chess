@@ -224,7 +224,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   io.on('connection', socket => {
     const currentUser = (): AuthUser | null => {
       const user = authService.authenticate(cookieToken(socket.handshake.headers.cookie));
-      rooms.setSocketAccount(socket.id, user?.id ?? null);
+      rooms.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       five.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       horse.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       chinese.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);

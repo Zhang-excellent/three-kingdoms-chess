@@ -83,13 +83,13 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
       await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
       others.push(success(await send<SessionReceipt>(socket, 'room:join', { roomCode: code, nickname })));
     }
-    await wrapper.findAll('button').find(button => button.text() === '魏 · 曹操')!.trigger('click');
+    await wrapper.get('.player-card.wei.selectable').trigger('click');
     for (const [index, faction] of ['shu', 'wu'].entries()) {
       success(await send(otherClients[index], 'room:choose-faction', { roomCode: code, reconnectToken: others[index].reconnectToken, faction, round: 1 }));
       success(await send(otherClients[index], 'room:ready', { roomCode: code, reconnectToken: others[index].reconnectToken, ready: true, round: 1 }));
     }
-    await wrapper.findAll('button').find(button => button.text() === '我已准备')!.trigger('click');
-    await waitUntil(() => wrapper.find('.board-panel').exists(), 'Three players did not start the game');
+    await wrapper.findAll('button').find(button => button.text() === '开始')!.trigger('click');
+    await waitUntil(() => !wrapper.find('.room-lobby').exists(), 'Three players did not start the game');
     assert.deepEqual(wrapper.findAll('.player-card h2').map(item => item.text()), ['界面魏', ...guestNames]);
     assert.equal(wrapper.findAll('.player-card h2')[1].attributes('title'), guestNames[0]);
     assert.match(wrapper.get('.board-heading').text(), /轮到 界面魏 行棋/);
@@ -162,8 +162,8 @@ test('navigation away from an active room confirms exit and releases the server 
     await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Lobby join did not open the waiting room');
     await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.find(player => player.nickname === '大厅吴')?.faction === 'wu',
       'Lobby player faction was not recorded');
-    await wrapper.findAll('button').find(button => button.text() === '我已准备')!.trigger('click');
-    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Three lobby players did not start the game');
+    await wrapper.findAll('button').find(button => button.text() === '开始')!.trigger('click');
+    await waitUntil(() => !wrapper!.find('.room-lobby').exists(), 'Three lobby players did not start the game');
 
     const room = server.rooms.getRoom(a.roomCode)!;
     const appPlayer = room.players.find(player => player.nickname === '大厅吴')!;
@@ -371,9 +371,20 @@ test('leaving a finished room to local play releases identity and keeps the resu
     history.replaceState(null, '', `${origin}/three-chess/?mode=online&room=${a.roomCode}`);
     wrapper = mount(App, { attachTo: document.body });
     await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Finished-room player did not resume');
+    await wrapper.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');
+    await wrapper.get('g.legal-point[aria-label="走到第1路第6线"]').trigger('click');
+    await waitUntil(() => server.rooms.getRoom(a.roomCode)?.game?.history.length === 1, 'Finished-room move did not reach the server');
     success(await send(players[1], 'game:resign', { roomCode: a.roomCode, reconnectToken: b.reconnectToken }));
     success(await send(players[2], 'game:resign', { roomCode: a.roomCode, reconnectToken: c.reconnectToken }));
     await waitUntil(() => wrapper!.find('.result-banner').exists(), 'Finished result did not render');
+    await wrapper.get('.board-tools .rematch-button').trigger('click');
+    await waitUntil(() => wrapper!.find('.room-lobby').exists(), 'Rematch did not return to the waiting board');
+    const previous = wrapper.get('.room-previous-game');
+    assert.match(previous.text(), /上一局结果/);
+    assert.match(previous.text(), /查看上一局棋谱（1 步）/);
+    assert.match(previous.get('summary').text(), /1 步/);
+    assert.match(previous.get('details').text(), /1\. 结束后离房 · 兵 \(1, 7\).*\(1, 6\)/);
+    assert.equal(wrapper.find('.result-banner').exists(), false);
 
     await wrapper.findAll('.header-actions button').find(button => button.text() === '首页')!.trigger('click');
     await waitUntil(() => wrapper!.find('.home-page').exists(), 'Finished-room navigation did not open home');
@@ -549,14 +560,15 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     await wrapper.get('input[aria-label="观战房间号"]').setValue(a.roomCode);
     await waitUntil(() => wrapper!.findAll('button').some(button => button.text() === '进入观战' && button.attributes('disabled') === undefined), 'Watch socket did not connect');
     await wrapper.findAll('button').find(button => button.text() === '进入观战')!.trigger('click');
-    await waitUntil(() => wrapper!.find('.watch-entry h2').text().includes(a.roomCode), 'Watcher did not enter full waiting room');
-    assert.match(wrapper.get('.watch-entry').text(), /正在观战/);
+    await waitUntil(() => wrapper!.find('.room-lobby').exists() && wrapper!.get('.room-heading h2').text().includes(a.roomCode), 'Watcher did not enter the waiting board');
+    assert.match(wrapper.get('.room-lobby').text(), /房间/);
+    assert.equal(wrapper.findAll('.room-lobby button').some(button => ['开始', '取消开始', '复制邀请链接'].includes(button.text())), false);
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
     for (const [index, faction] of ['wei', 'shu', 'wu'].entries())
       success(await send(players[index], 'room:choose-faction', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, faction, round: 1 }));
     for (let index = 0; index < 3; index++)
       success(await send(players[index], 'room:ready', { roomCode: a.roomCode, reconnectToken: receipts[index].reconnectToken, ready: true, round: 1 }));
-    await waitUntil(() => wrapper!.find('.board-panel').exists(), 'Watcher did not follow game start');
+    await waitUntil(() => wrapper!.find('.board-panel').exists() && !wrapper!.find('.room-lobby').exists(), 'Watcher did not follow game start');
     assert.match(wrapper.get('.board-heading').text(), new RegExp(`房间 ${a.roomCode}`));
     assert.equal(wrapper.findAll('.board-tools button').some(button => button.text() === '认输'), false);
     await wrapper.get('g.piece[aria-label="魏方兵，第1路第7线"]').trigger('click');

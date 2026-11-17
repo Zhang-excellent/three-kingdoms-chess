@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(root, 'tests/.compiled-app.mts');
 const componentOutputs = [];
-for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'RoomWaiting', 'AuthDialog', 'OtherGamesPage', 'OtherGameTable', 'FiveSoldiersPage', 'HorseChessPage', 'ChineseChessPage']) {
+for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'AuthDialog', 'OtherGamesPage', 'OtherGameTable', 'FiveSoldiersPage', 'HorseChessPage', 'ChineseChessPage']) {
   const sourcePath = resolve(root, 'src/components', `${name}.vue`);
   const componentSource = readFileSync(sourcePath, 'utf8');
   const component = parse(componentSource, { filename: `${name}.vue` });
@@ -34,7 +34,6 @@ writeFileSync(output, result.content
   .replaceAll("'./components/HomePage.vue'", "'./.compiled-HomePage.mts'")
   .replaceAll("'./components/LobbyPage.vue'", "'./.compiled-LobbyPage.mts'")
   .replaceAll("'./components/InvitePage.vue'", "'./.compiled-InvitePage.mts'")
-  .replaceAll("'./components/RoomWaiting.vue'", "'./.compiled-RoomWaiting.mts'")
   .replaceAll("'./components/AuthDialog.vue'", "'./.compiled-AuthDialog.mts'")
   .replaceAll("'./components/OtherGamesPage.vue'", "'./.compiled-OtherGamesPage.mts'")
   .replaceAll("'./components/FiveSoldiersPage.vue'", "'./.compiled-FiveSoldiersPage.mts'")

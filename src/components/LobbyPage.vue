@@ -38,6 +38,7 @@ const emit = defineEmits<{
 }>();
 
 const online = computed(() => props.connection === 'online');
+const guestAvatar = 'images/guest-avatar.svg';
 const effectiveNickname = computed(() => props.accountName ?? props.nickname);
 const phaseLabel = (phase: RoomPhase) => phase === 'lobby' ? '等待中' : phase === 'playing' ? '对局中' : '已结束';
 const title = computed(() => props.mode === 'public' ? '公开对战大厅' : '好友对弈');
@@ -46,6 +47,10 @@ const tableSlots = computed(() => Array.from({ length: 9 }, (_, index) =>
   props.rooms.filter(room => room.code !== PUBLIC_ROOM_CODE)[index] ?? null));
 const playerAt = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) =>
   room?.players.find(player => player.faction === faction) ?? null;
+const avatarAt = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) => {
+  const player = playerAt(room, faction);
+  return player ? player.avatar || guestAvatar : null;
+};
 const playerLabel = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) => {
   const player = playerAt(room, faction);
   return player ? `${player.identity === 'guest' ? '游客 · ' : ''}${player.nickname}` : '空位';
@@ -184,7 +189,7 @@ watch(effectiveNickname, value => { tableNickname.value = value; });
       <div class="chess-club-tables">
         <article class="chess-club-table public-table" :class="{ active: publicRoom?.playerCount }">
           <button type="button" class="club-seat wei" :class="{ occupied: playerAt(publicRoom, 'wei') }" :disabled="hasRoom || busy || !online || !!playerAt(publicRoom, 'wei')" @click="openTableDialog(publicRoom, 'wei', 1)">
-            <span class="club-seat-mark">曹</span><span><strong>曹操</strong><small>{{ playerLabel(publicRoom, 'wei') }}</small></span>
+            <span class="club-seat-mark"><img v-if="avatarAt(publicRoom, 'wei')" :src="avatarAt(publicRoom, 'wei')!" alt=""><template v-else>曹</template></span><span><strong>曹操</strong><small>{{ playerLabel(publicRoom, 'wei') }}</small></span>
           </button>
           <div class="club-table-center" :class="{ watchable: publicRoom && !publicRoom.joinable }" @click="publicRoom && !publicRoom.joinable && emit('watch', publicRoom.code)">
             <span class="club-table-label">常驻棋桌</span>
@@ -199,10 +204,10 @@ watch(effectiveNickname, value => { tableNickname.value = value; });
             </div>
           </div>
           <button type="button" class="club-seat shu" :class="{ occupied: playerAt(publicRoom, 'shu') }" :disabled="hasRoom || busy || !online || !!playerAt(publicRoom, 'shu')" @click="openTableDialog(publicRoom, 'shu', 1)">
-            <span class="club-seat-mark">刘</span><span><strong>刘备</strong><small>{{ playerLabel(publicRoom, 'shu') }}</small></span>
+            <span class="club-seat-mark"><img v-if="avatarAt(publicRoom, 'shu')" :src="avatarAt(publicRoom, 'shu')!" alt=""><template v-else>刘</template></span><span><strong>刘备</strong><small>{{ playerLabel(publicRoom, 'shu') }}</small></span>
           </button>
           <button type="button" class="club-seat wu" :class="{ occupied: playerAt(publicRoom, 'wu') }" :disabled="hasRoom || busy || !online || !!playerAt(publicRoom, 'wu')" @click="openTableDialog(publicRoom, 'wu', 1)">
-            <span class="club-seat-mark">孙</span><span><strong>孙权</strong><small>{{ playerLabel(publicRoom, 'wu') }}</small></span>
+            <span class="club-seat-mark"><img v-if="avatarAt(publicRoom, 'wu')" :src="avatarAt(publicRoom, 'wu')!" alt=""><template v-else>孙</template></span><span><strong>孙权</strong><small>{{ playerLabel(publicRoom, 'wu') }}</small></span>
           </button>
         </article>
 
@@ -211,7 +216,7 @@ watch(effectiveNickname, value => { tableNickname.value = value; });
             <button type="button" class="club-seat" :class="[faction, { occupied: playerAt(room, faction) }]"
               :disabled="hasRoom || busy || !online || !!playerAt(room, faction) || (!!room && !room.joinable)"
               @click="openTableDialog(room, faction, index + 2)">
-              <span class="club-seat-mark">{{ PLAYERS[faction].initial }}</span>
+              <span class="club-seat-mark"><img v-if="avatarAt(room, faction)" :src="avatarAt(room, faction)!" alt=""><template v-else>{{ PLAYERS[faction].initial }}</template></span>
               <span><strong>{{ PLAYERS[faction].name }}</strong><small>{{ playerLabel(room, faction) }}</small></span>
             </button>
             <div v-if="faction === 'wei'" class="club-table-center" :class="{ watchable: room && !room.joinable }" @click="room && !room.joinable && emit('watch', room.code)">

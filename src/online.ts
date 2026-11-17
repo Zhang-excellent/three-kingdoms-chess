@@ -6,6 +6,7 @@ export type PlayerIdentity = 'account' | 'guest';
 export interface RoomPlayerView {
   id: string;
   nickname: string;
+  avatar: string | null;
   identity: PlayerIdentity;
   faction: Faction | null;
   ready: boolean;
@@ -35,6 +36,7 @@ export interface RoomView {
 
 export interface PublicRoomPlayer {
   nickname: string;
+  avatar: string | null;
   identity: PlayerIdentity;
   faction: Faction | null;
   ready: boolean;

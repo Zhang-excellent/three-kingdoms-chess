@@ -9,6 +9,7 @@ interface Player {
   id: string;
   token: string;
   nickname: string;
+  avatar: string | null;
   accountId: string | null;
   faction: Faction | null;
   ready: boolean;
@@ -59,6 +60,7 @@ export class RoomService {
   private readonly tokenRoom = new Map<string, string>();
   private readonly socketRoom = new Map<string, { code: string; playerId: string }>();
   private readonly socketAccounts = new Map<string, string | null>();
+  private readonly socketAvatars = new Map<string, string | null>();
   private readonly spectatorRoom = new Map<string, string>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -200,6 +202,7 @@ export class RoomService {
     if (replacedSocketId) this.socketRoom.delete(replacedSocketId);
     this.cancelExpiry(player.id);
     player.online = true; player.socketId = socketId; player.offlineUntil = null;
+    player.avatar = player.accountId ? this.socketAvatars.get(socketId) ?? null : null;
     this.socketRoom.set(socketId, { code, playerId: player.id });
     if (changed) room.version++;
     return { room, replacedSocketId, ack: { ok: true, data: this.receipt(room, player) } };
@@ -363,6 +366,7 @@ export class RoomService {
     const found = this.playerForSocket(socketId);
     this.socketRoom.delete(socketId);
     this.socketAccounts.delete(socketId);
+    this.socketAvatars.delete(socketId);
     if (!found || found.player.socketId !== socketId) return undefined;
     const { room, player } = found;
     player.online = false; player.socketId = null; player.ready = false;
@@ -472,8 +476,9 @@ export class RoomService {
     return { ok: true, room, player };
   }
 
-  setSocketAccount(socketId: string, accountId: string | null): void {
+  setSocketAccount(socketId: string, accountId: string | null, avatar: string | null = null): void {
     this.socketAccounts.set(socketId, accountId);
+    this.socketAvatars.set(socketId, avatar);
   }
 
   private accountMatches(player: Player, socketId: string): boolean {
@@ -521,6 +526,7 @@ export class RoomService {
     if (player.socketId) {
       this.socketRoom.delete(player.socketId);
       this.socketAccounts.delete(player.socketId);
+      this.socketAvatars.delete(player.socketId);
     }
     room.players = room.players.filter(item => item !== player);
     room.version++;
@@ -550,7 +556,11 @@ export class RoomService {
     for (const player of room.players) {
       this.cancelExpiry(player.id);
       this.tokenRoom.delete(player.token);
-      if (player.socketId) this.socketRoom.delete(player.socketId);
+      if (player.socketId) {
+        this.socketRoom.delete(player.socketId);
+        this.socketAccounts.delete(player.socketId);
+        this.socketAvatars.delete(player.socketId);
+      }
     }
     room.players = [];
     room.version++;
@@ -652,8 +662,10 @@ export class RoomService {
 
   private newPlayer(nickname: string, socketId: string): Player {
     const id = randomUUID();
+    const accountId = this.socketAccounts.get(socketId) ?? null;
     return { id, token: randomBytes(32).toString('base64url'), nickname: nickname || `游客${id.slice(0, 4).toUpperCase()}`,
-      accountId: this.socketAccounts.get(socketId) ?? null,
+      avatar: accountId ? this.socketAvatars.get(socketId) ?? null : null,
+      accountId,
       faction: null, ready: false, online: true, offlineUntil: null, socketId };
   }
 
@@ -672,8 +684,8 @@ export class RoomService {
       phase: room.phase,
       playerCount: room.players.length,
       maxPlayers: 3,
-      players: room.players.map(({ nickname, accountId, faction, ready, online }) =>
-        ({ nickname, identity: accountId ? 'account' : 'guest', faction, ready, online })),
+      players: room.players.map(({ nickname, avatar, accountId, faction, ready, online }) =>
+        ({ nickname, avatar, identity: accountId ? 'account' : 'guest', faction, ready, online })),
       joinable: this.canJoin(room),
       watchable: true,
     };
@@ -684,15 +696,15 @@ export class RoomService {
   }
 
   private view(room: Room, self: Player): RoomView {
-    const players: RoomPlayerView[] = room.players.map(({ id, nickname, accountId, faction, ready, online, offlineUntil }) =>
-      ({ id, nickname, identity: accountId ? 'account' : 'guest', faction, ready, online, offlineUntil }));
+    const players: RoomPlayerView[] = room.players.map(({ id, nickname, avatar, accountId, faction, ready, online, offlineUntil }) =>
+      ({ id, nickname, avatar, identity: accountId ? 'account' : 'guest', faction, ready, online, offlineUntil }));
     return { code: room.code, phase: room.phase, version: room.version, round: room.round, players, game: room.game ? structuredClone(room.game) : null,
       drawOffer: room.drawOffer ? structuredClone(room.drawOffer) : null, selfId: self.id };
   }
 
   private publicView(room: Room): RoomView {
-    const players: RoomPlayerView[] = room.players.map(({ id, nickname, accountId, faction, ready, online, offlineUntil }) =>
-      ({ id, nickname, identity: accountId ? 'account' : 'guest', faction, ready, online, offlineUntil }));
+    const players: RoomPlayerView[] = room.players.map(({ id, nickname, avatar, accountId, faction, ready, online, offlineUntil }) =>
+      ({ id, nickname, avatar, identity: accountId ? 'account' : 'guest', faction, ready, online, offlineUntil }));
     return { code: room.code, phase: room.phase, version: room.version, round: room.round, players,
       game: room.game ? structuredClone(room.game) : null, drawOffer: room.drawOffer ? structuredClone(room.drawOffer) : null, selfId: null };
   }

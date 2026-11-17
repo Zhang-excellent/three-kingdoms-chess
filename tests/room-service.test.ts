@@ -126,6 +126,25 @@ test('room inspection returns only the public invitation summary', () => {
   failure(service.inspectRoom('999998'), 'ROOM_NOT_FOUND');
 });
 
+test('authenticated avatars appear in room state, inspection, and public lobby summaries', () => {
+  const service = new RoomService();
+  const avatar = '/three-chess/api/avatar/user-avatar?v=7';
+  service.setSocketAccount('avatar-socket', 'user-avatar', avatar);
+  const joined = receipt(service.createRoom('001235', '头像玩家', 'avatar-socket'));
+  assert.equal(joined.state.players[0].identity, 'account');
+  assert.equal(joined.state.players[0].avatar, avatar);
+  assert.equal(service.getRoom('001235')?.players[0].avatar, avatar);
+
+  const inspected = service.inspectRoom('001235');
+  assert.equal(inspected.ack.ok, true);
+  if (!inspected.ack.ok) assert.fail('room inspection failed');
+  assert.equal(inspected.ack.data.players[0].avatar, avatar);
+
+  const summary = service.publicRooms().find(room => room.code === '001235');
+  assert.equal(summary?.players[0].avatar, avatar);
+  assert.equal(JSON.stringify(summary).includes('reconnectToken'), false);
+});
+
 test('server enforces faction ownership, turn, legal moves, and three-slot order', async () => {
   const { service, code, players, room } = startedRoom();
   failure(await service.submitMove(code, players[1].reconnectToken, intent('wrongturn1', room.version, 'wei-pawn-0-6', 0, 5)), 'NOT_YOUR_TURN');

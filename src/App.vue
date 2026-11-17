@@ -15,7 +15,6 @@ import type { AppPage } from './navigation.ts';
 import HomePage from './components/HomePage.vue';
 import LobbyPage from './components/LobbyPage.vue';
 import InvitePage from './components/InvitePage.vue';
-import RoomWaiting from './components/RoomWaiting.vue';
 import AuthDialog from './components/AuthDialog.vue';
 import OtherGamesPage from './components/OtherGamesPage.vue';
 import FiveSoldiersPage from './components/FiveSoldiersPage.vue';
@@ -114,8 +113,7 @@ const isReplaying = computed(() => online.mode.value === 'local' && localPanel.v
 const replayFrame = computed(() => replayDocument.value?.frames[replayIndex.value] ?? null);
 const game = computed(() => isReplaying.value && replayFrame.value ? replayFrame.value : liveGame.value);
 const previousGame = computed(() => online.room.value?.phase === 'lobby' && online.room.value.game?.status === 'finished' ? online.room.value.game : null);
-const showGame = computed(() => (page.value === 'room' && !!room.value && room.value.phase !== 'lobby')
-  || (page.value === 'spectate' && !!room.value && room.value.phase !== 'lobby')
+const showGame = computed(() => ((page.value === 'room' || page.value === 'spectate') && !!room.value)
   || page.value === 'local');
 const roomRouteMismatch = computed(() => page.value === 'room' && !!requestedRoomCode.value
   && !!room.value && room.value.code !== requestedRoomCode.value);
@@ -123,11 +121,18 @@ const showLobbyPage = computed(() => page.value === 'lobby' || page.value === 'f
 const showInvitePage = computed(() => page.value === 'room' && !!requestedRoomCode.value
   && (roomRouteMismatch.value || (!room.value && !hasSession.value)));
 const rematchBusy = ref(false);
+const kingdomMenuOpen = ref(false);
 const ownFaction = computed(() => online.mode.value === 'online' ? online.faction.value : null);
+const roomLobby = computed(() => mode.value === 'online' && room.value?.phase === 'lobby');
+const unassignedRoomPlayers = computed(() => room.value?.players.filter(player => !player.faction) ?? []);
 const flipOverride = ref(false);
 const flipped = computed(() => (ownFaction.value === 'shu' || ownFaction.value === 'wu') !== flipOverride.value);
 watch([ownFaction, mode], () => { flipOverride.value = false; });
 const roomPlayer = (faction: Faction) => online.room.value?.players.find(player => player.faction === faction);
+const roomPlayerAvatar = (faction: Faction) => {
+  const player = roomPlayer(faction);
+  return player ? player.avatar || 'images/guest-avatar.svg' : null;
+};
 const playerDisplayName = (faction: Faction) => mode.value === 'online'
   ? roomPlayer(faction)?.nickname || PLAYERS[faction].name
   : PLAYERS[faction].name;
@@ -137,6 +142,12 @@ type PlayerStatusTone = 'active' | 'offline' | 'result' | 'out' | 'guest';
 function playerStatuses(faction: Faction): Array<{ label: string; tone: PlayerStatusTone }> {
   const statuses: Array<{ label: string; tone: PlayerStatusTone }> = [];
   const player = mode.value === 'online' ? roomPlayer(faction) : undefined;
+  if (roomLobby.value) {
+    if (!player) return [];
+    if (!player.online) statuses.push({ label: '离线', tone: 'offline' });
+    statuses.push({ label: player.ready ? '已准备' : '未准备', tone: 'guest' });
+    return statuses;
+  }
   if (player?.identity === 'guest') statuses.push({ label: '游客', tone: 'guest' });
   if (player && !player.online) statuses.push({ label: '离线', tone: 'offline' });
   if (game.value.eliminated.includes(faction)) statuses.push({ label: '已出局', tone: 'out' });
@@ -148,6 +159,11 @@ function playerStatuses(faction: Faction): Array<{ label: string; tone: PlayerSt
   return statuses;
 }
 const factionTaken = (faction: Faction) => !!online.room.value?.players.some(player => player.id !== online.room.value?.selfId && player.faction === faction);
+const canChooseRoomFaction = (faction: Faction) => !!roomLobby.value && !spectating.value
+  && !!self.value && !factionTaken(faction) && self.value.faction !== faction;
+function chooseRoomFaction(faction: Faction) {
+  if (canChooseRoomFaction(faction)) void online.chooseFaction(faction);
+}
 const drawOffer = computed(() => online.mode.value === 'online' ? online.room.value?.drawOffer ?? null : null);
 const canOfferDraw = computed(() => !spectating.value && !!ownFaction.value && game.value.status === 'playing'
   && game.value.turn === ownFaction.value && !game.value.eliminated.includes(ownFaction.value) && !drawOffer.value);
@@ -163,7 +179,7 @@ const boardWaitingFaction = computed<Faction | null>(() => {
   if (game.value.status === 'playing') return game.value.turn;
   return game.value.status === 'finished' && game.value.winner === null ? game.value.turnBeforeEnd ?? null : null;
 });
-const highlightedFaction = computed<Faction | null>(() => boardWaitingFaction.value);
+const highlightedFaction = computed<Faction | null>(() => roomLobby.value ? null : boardWaitingFaction.value);
 const latest = computed(() => game.value.lastMove);
 const records = computed(() => game.value.history.slice(-20).reverse());
 const replayCurrentStep = computed(() => replayDocument.value && replayIndex.value > 0
@@ -539,6 +555,7 @@ async function previewSelectedMusic() {
 }
 async function cellClick(x: number, y: number) {
   if (isReplaying.value) return;
+  if (roomLobby.value) { notify('等待三人准备后再行棋。'); return; }
   if (spectating.value) { notify('正在观战，不能操作棋子。', true); return; }
   if (drawOffer.value) { notify('请先处理和棋申请，再继续行棋。', true); return; }
   if (online.mode.value === 'local' && compatibilityWarning.value) { notify('旧规则存档不能按三方独立规则续局，请另开一局。', true); return; }
@@ -772,16 +789,12 @@ async function requestRematch() {
       @join="joinInvitedRoom" @watch="watchInvitedRoom" @retry="retryInvite" @lobby="openLobbyPage"
       @return-room="openCurrentRoom" @exit-room="requestInviteExit" />
 
-    <main v-else-if="page === 'spectate' && (!room || room.phase === 'lobby')" class="online-shell">
+    <main v-else-if="page === 'spectate' && !room" class="online-shell">
       <section class="online-entry watch-entry">
-        <h2>{{ room ? `正在观战 · 房间 ${room.code}` : '输入房间号观战' }}</h2>
-        <p v-if="room">{{ room.phase === 'lobby' ? '等待玩家准备' : '棋局正在进行' }}</p>
-        <div v-if="room" class="lobby-players"><article v-for="player in room.players" :key="player.id"><span class="online-dot" :class="{off: !player.online}"></span><div><strong>{{ player.identity === 'guest' ? '游客 · ' : '' }}{{ player.nickname }}</strong><small>{{ player.online ? '在线' : '离线' }}</small></div><b>{{ player.faction ? PLAYERS[player.faction].nation + '方' : '未选阵营' }}</b><em>{{ player.ready ? '已准备' : '未准备' }}</em></article></div>
-        <div v-if="room" class="room-heading-actions"><button class="tool-button" @click="exitWatchingToLobby">退出观战</button><button class="tool-button" @click="exitWatchingToLobby">更换房间</button></div>
-        <form v-else class="join-row watch-join" @submit.prevent="watchOnlineRoom()"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" type="button" :disabled="onlineBusy || connection !== 'online'" @click="watchOnlineRoom()">进入观战</button></form>
-        <button v-if="!room" class="tool-button" @click="openLobbyPage">返回联机大厅</button>
+        <h2>输入房间号观战</h2>
+        <form class="join-row watch-join" @submit.prevent="watchOnlineRoom()"><input v-model="watchCode" maxlength="6" inputmode="numeric" autocomplete="off" aria-label="观战房间号" placeholder="输入 6 位房间号" @input="watchCode = watchCode.toUpperCase()"><button class="primary-button" type="button" :disabled="onlineBusy || connection !== 'online'" @click="watchOnlineRoom()">进入观战</button></form>
+        <button class="tool-button" @click="openLobbyPage">返回联机大厅</button>
         <p v-if="connection !== 'online' || onlineError" class="connection-note" :class="{error: onlineError}">{{ onlineError || '连接中断，正在重连…' }}</p>
-        <div v-if="previousGame" class="previous-game"><div class="previous-game-heading"><strong>上一局结果</strong><button class="record-export-button" @click="exportGameRecord(previousGame)">导出棋谱</button></div><p v-for="faction in ORDER" :key="faction">{{ PLAYERS[faction].name }} · {{ resultLabel(previousGame, faction) }}</p><details><summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary><ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ PLAYERS[record.faction].name }} · {{ description(record) }}</li></ol></details></div>
       </section>
     </main>
 
@@ -792,12 +805,6 @@ async function requestRematch() {
         <p v-if="onlineError" class="connection-note error" role="status">{{ onlineError }}</p>
         <div class="entry-actions"><button class="primary-button" @click="openCurrentRoom" :disabled="!hasSession">重试恢复</button><button class="tool-button" @click="openLobbyPage">返回大厅</button></div>
       </section>
-    </main>
-
-    <main v-else-if="page === 'room' && room?.phase === 'lobby'" class="online-shell">
-      <RoomWaiting v-if="room" :room="room" :connection="connection" :error="onlineError"
-        @copy-invite="copyInvite" @leave="requestLeave" @choose-faction="online.chooseFaction"
-        @ready="online.setReady" @release-offline="releaseOffline" @export-record="exportGameRecord" />
     </main>
 
     <template v-else-if="showGame">
@@ -844,18 +851,27 @@ async function requestRematch() {
         <div class="section-label"><span>本局席位</span></div>
         <div class="player-cards">
           <section v-for="faction in ORDER" :key="faction" class="player-card"
-            :class="{active: highlightedFaction === faction, eliminated: game.eliminated.includes(faction), offline: mode === 'online' && roomPlayer(faction) && !roomPlayer(faction)?.online}"
+            :class="[faction, {active: highlightedFaction === faction, eliminated: !roomLobby && game.eliminated.includes(faction), offline: mode === 'online' && roomPlayer(faction) && !roomPlayer(faction)?.online, selectable: canChooseRoomFaction(faction), empty: roomLobby && !roomPlayer(faction)}]"
             :style="{'--faction-color': PLAYERS[faction].color}"
-            :aria-current="highlightedFaction === faction ? 'true' : undefined">
+            :aria-current="highlightedFaction === faction ? 'true' : undefined"
+            :role="canChooseRoomFaction(faction) ? 'button' : undefined"
+            :tabindex="canChooseRoomFaction(faction) ? 0 : undefined"
+            @click="chooseRoomFaction(faction)"
+            @keydown.enter.prevent="chooseRoomFaction(faction)"
+            @keydown.space.prevent="chooseRoomFaction(faction)">
             <div class="player-card-top">
-              <div class="avatar" :class="{'avatar-lit': highlightedFaction === faction}">{{ PLAYERS[faction].initial }}<span class="avatar-dot" v-if="highlightedFaction === faction"></span></div>
+              <div class="avatar" :class="{'avatar-lit': highlightedFaction === faction}">
+                <img v-if="roomPlayerAvatar(faction)" :src="roomPlayerAvatar(faction)!" alt="">
+                <template v-else>{{ PLAYERS[faction].initial }}</template>
+                <span class="avatar-dot" v-if="highlightedFaction === faction"></span>
+              </div>
               <div class="player-name">
                 <h2 tabindex="0" :title="playerDisplayName(faction)" :aria-label="`${playerDisplayName(faction)}，${PLAYERS[faction].name}`">{{ playerDisplayName(faction) }}</h2>
                 <span class="player-name-tooltip" aria-hidden="true">{{ playerDisplayName(faction) }}</span>
               </div>
             </div>
             <div class="player-card-bottom">
-              <span>{{ count(faction) }} 枚子力</span>
+              <span>{{ roomLobby ? (roomPlayer(faction) ? `${PLAYERS[faction].nation}方已入座` : '点击选择此阵营') : `${count(faction)} 枚子力` }}</span>
               <div class="player-status-list">
                 <strong v-for="status in playerStatuses(faction)" :key="status.label" class="player-status" :class="`status-${status.tone}`">{{ status.label }}</strong>
               </div>
@@ -865,8 +881,20 @@ async function requestRematch() {
         <div v-if="game.status === 'finished'" class="ranking-card"><strong>本局结果</strong><p v-for="faction in ORDER" :key="faction">{{ playerDisplayName(faction) }} · {{ resultLabel(game, faction) }}</p></div>
       </aside>
 
-      <section class="board-panel" aria-label="三国象棋棋盘">
-        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online' && !isReplaying" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">{{ finishedDrawHeading }}</h2><h2 v-else-if="isReplaying && replayIndex === 0 && boardWaitingFaction">初始局面 · 轮到<span :style="{color: PLAYERS[boardWaitingFaction].color}">{{ playerDisplayName(boardWaitingFaction) }}</span>行棋</h2><h2 v-else-if="isReplaying && replayCurrentStep && boardWaitingFaction">第 {{ replayIndex }} 步后 · 轮到<span :style="{color: PLAYERS[boardWaitingFaction].color}">{{ playerDisplayName(boardWaitingFaction) }}</span>行棋</h2><h2 v-else-if="isReplaying && replayCurrentStep">第 {{ replayIndex }} 步后 · 待行棋方未记录</h2><h2 v-else-if="isReplaying">初始局面 · 待行棋方未记录</h2><h2 v-else-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2></div><span v-if="isReplaying" class="move-count">第 <strong>{{ replayIndex }}</strong> / {{ replayTotal }} 步</span><span v-else class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
+      <section class="board-panel" :class="{ 'room-waiting-board': roomLobby }" aria-label="三国象棋棋盘">
+        <div v-if="mode === 'online' && !isReplaying" class="kingdom-board-toolbar">
+          <div v-if="!spectating" class="game-action-menu">
+            <button class="game-action-menu-toggle" type="button" :aria-expanded="kingdomMenuOpen" aria-label="打开对局菜单" @click="kingdomMenuOpen = !kingdomMenuOpen">‹</button>
+            <div v-if="kingdomMenuOpen" class="game-action-menu-list">
+              <button v-if="room?.phase === 'playing'" type="button" :disabled="!canOfferDraw" @click="kingdomMenuOpen = false; requestDraw()">提和</button>
+              <button v-if="room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" type="button" @click="kingdomMenuOpen = false; resignDialog?.showModal()">认输</button>
+              <button type="button" @click="kingdomMenuOpen = false; requestLeave()">离开</button>
+            </div>
+          </div>
+          <button v-else class="tool-button" type="button" @click="exitWatchingToLobby">退出观战</button>
+          <span v-if="ownFaction" class="game-board-role">{{ PLAYERS[ownFaction].nation }}方</span>
+        </div>
+        <div class="board-heading"><div class="board-heading-copy"><span v-if="mode === 'online' && !isReplaying" class="room-chip">房间 {{ room?.code }}</span><h2 v-if="roomLobby">等待三人准备</h2><h2 v-else-if="game.status === 'finished' && game.winner"><span :style="{color: PLAYERS[game.winner].color}">{{ winnerDisplayName }}</span> 获胜</h2><h2 v-else-if="game.status === 'finished'">{{ finishedDrawHeading }}</h2><h2 v-else-if="isReplaying && replayIndex === 0 && boardWaitingFaction">初始局面 · 轮到<span :style="{color: PLAYERS[boardWaitingFaction].color}">{{ playerDisplayName(boardWaitingFaction) }}</span>行棋</h2><h2 v-else-if="isReplaying && replayCurrentStep && boardWaitingFaction">第 {{ replayIndex }} 步后 · 轮到<span :style="{color: PLAYERS[boardWaitingFaction].color}">{{ playerDisplayName(boardWaitingFaction) }}</span>行棋</h2><h2 v-else-if="isReplaying && replayCurrentStep">第 {{ replayIndex }} 步后 · 待行棋方未记录</h2><h2 v-else-if="isReplaying">初始局面 · 待行棋方未记录</h2><h2 v-else-if="game.status === 'playing' && active">轮到 <span :style="{color: active.color}">{{ activePlayerName }}</span> 行棋</h2></div><span v-if="roomLobby" class="move-count"><strong>{{ room?.players.length }}</strong> / 3 人</span><span v-else-if="isReplaying" class="move-count">第 <strong>{{ replayIndex }}</strong> / {{ replayTotal }} 步</span><span v-else class="move-count">第 <strong>{{ game.history.length + (game.status === 'playing' ? 1 : 0) }}</strong> 步</span></div>
         <div v-if="mode === 'online' && connection !== 'online'" class="network-banner" role="alert">连接中断，正在重连…</div>
         <div v-if="mode === 'local' && compatibilityWarning" class="legacy-save-banner" role="alert"><div><strong>旧存档已保留</strong><p>旧规则、旧初始布局或名次存档不能按当前规则安全续局。</p></div><button class="primary-button" @click="reset">按新规则另开一局</button></div>
         <div v-if="drawOffer" class="draw-offer-card" role="status" aria-live="polite">
@@ -901,6 +929,33 @@ async function requestRematch() {
               <circle class="selection-ring" r="27"/><circle class="piece-shadow" cy="2.5" r="23"/><circle class="piece-face" r="23"/><circle class="piece-rim" r="19.5"/><text :class="{general: piece.kind === 'king'}" y="1">{{ pieceName(piece) }}</text>
             </g>
           </svg>
+          <section v-if="roomLobby" class="room-lobby board-waiting-panel">
+            <div class="room-heading">
+              <span class="eyebrow">三人棋桌</span>
+              <h2>房间 {{ room?.code }}</h2>
+              <p>{{ spectating ? '正在观战，等待玩家选择阵营并开始。' : room?.players.length === 3 ? '三人已入座，全部开始后自动开局。' : '等待另外两位棋友入座。' }}</p>
+            </div>
+            <div class="room-waiting-summary">
+              <span>{{ room?.players.length }}/3 人</span>
+              <span>已准备 {{ room?.players.filter(player => player.ready).length }}/3</span>
+            </div>
+            <p v-if="unassignedRoomPlayers.length" class="room-waiting-unassigned">
+              {{ unassignedRoomPlayers.map(player => player.nickname).join('、') }} 尚未选择阵营
+            </p>
+            <p v-else class="room-waiting-unassigned">{{ spectating ? '玩家到齐并全部开始后，棋盘会实时进入对局。' : '点击左侧头像选择空余阵营；三人到齐并开始后自动开局。' }}</p>
+            <div v-if="!spectating" class="room-heading-actions">
+              <button class="primary-button ready-button" type="button" :disabled="!self?.faction || connection !== 'online'" @click="online.setReady(!self?.ready)">{{ self?.ready ? '取消开始' : '开始' }}</button>
+              <button class="tool-button" type="button" @click="copyInvite">复制邀请链接</button>
+            </div>
+            <div v-if="previousGame" class="previous-game room-previous-game">
+              <div class="previous-game-heading"><strong>上一局结果</strong><button class="record-export-button" type="button" @click="exportGameRecord(previousGame)">导出棋谱</button></div>
+              <p v-for="faction in ORDER" :key="faction">{{ playerDisplayName(faction) }} · {{ resultLabel(previousGame, faction) }}</p>
+              <details>
+                <summary>查看上一局棋谱（{{ previousGame.history.length }} 步）</summary>
+                <ol><li v-for="record in previousGame.history" :key="record.number">{{ record.number }}. {{ playerDisplayName(record.faction) }} · {{ description(record) }}</li></ol>
+              </details>
+            </div>
+          </section>
         </div>
         <div class="board-tools"><button v-if="mode === 'local' && !isReplaying" class="tool-button" :disabled="compatibilityWarning || !undo.length" @click="undoMove"><span aria-hidden="true">↶</span> 悔棋</button><button v-if="mode === 'local' && !isReplaying" class="tool-button" @click="resetRequest"><span aria-hidden="true">↻</span> 重新开局</button><button v-if="mode === 'online' && !spectating && room?.phase === 'finished'" class="primary-button rematch-button" :disabled="rematchBusy || connection !== 'online'" @click="requestRematch">{{ rematchBusy ? '请稍候…' : '再来一局' }}</button><button class="tool-button flip-button" :aria-pressed="flipped" @click="flipOverride = !flipOverride">翻转棋盘</button><button v-if="isReplaying" class="tool-button" @click="switchLocalPanel('play')">退出复盘</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button draw-button" :disabled="!canOfferDraw || connection !== 'online'" :title="game.turn === ownFaction ? '向其他存活阵营发起和棋' : '只有轮到自己行棋时才能提和'" @click="requestDraw">提和</button><button v-if="mode === 'online' && !spectating && room?.phase === 'playing' && ownFaction && !game.eliminated.includes(ownFaction)" class="tool-button resign-button" @click="resignDialog?.showModal()">认输</button><button v-if="mode === 'online' && !spectating" class="tool-button leave-button" @click="requestLeave">退出房间</button><button v-if="spectating" class="tool-button leave-button" @click="exitWatchingToLobby">退出观战</button></div>
         <div v-if="isReplaying" class="replay-controls replay-controls-board">
@@ -914,7 +969,7 @@ async function requestRematch() {
           </div>
         </div>
         <p v-if="feedbackError || (!isReplaying && mode === 'local' && !!message)" class="feedback" :class="{error: feedbackError}" role="status" aria-live="polite"><span class="feedback-icon" aria-hidden="true">{{ feedbackError ? '!' : '›' }}</span>{{ message }}</p>
-        <div v-if="game.status === 'finished'" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : drawResultTitle }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。{{ boardWaitingFaction ? `结束前轮到${playerDisplayName(boardWaitingFaction)}。` : '结束前轮次未记录。' }}本局共 {{ game.history.length }} 步。</span></div>
+        <div v-if="game.status === 'finished' && !roomLobby" class="result-banner"><strong>{{ game.winner ? `${winnerDisplayName}获胜` : drawResultTitle }}</strong><span v-if="game.winner">{{ losersText }}失败。本局共 {{ game.history.length }} 步。</span><span v-else>{{ drawingText }}同意和棋{{ losersText ? `；${losersText}此前失败` : '' }}。{{ boardWaitingFaction ? `结束前轮到${playerDisplayName(boardWaitingFaction)}。` : '结束前轮次未记录。' }}本局共 {{ game.history.length }} 步。</span></div>
       </section>
 
       <aside class="history-panel" aria-label="行棋记录">
@@ -1108,4 +1163,6 @@ async function requestRematch() {
   .board-heading h2{font-size:18px}
   .move-count{padding:4px 8px}
 }
+.player-card.selectable{cursor:pointer}.player-card.selectable:hover{border-color:var(--faction-color);background:color-mix(in srgb,var(--faction-color) 6%,#fffdf8);transform:translateY(-1px)}.player-card.empty{border-style:dashed}.player-card .avatar{overflow:hidden;border-radius:9px}.player-card .avatar img{width:100%;height:100%;object-fit:cover}.kingdom-board-toolbar{display:flex;align-items:center;gap:9px;min-height:40px;margin-bottom:8px}.kingdom-board-toolbar .game-board-role{margin-left:auto}.board-tools>.draw-button,.board-tools>.resign-button,.board-tools>.leave-button{display:none}.board-waiting-panel{position:absolute;left:50%;top:50%;z-index:12;width:min(440px,calc(100% - 42px));max-height:calc(100% - 28px);overflow:auto;transform:translate(-50%,-50%);display:grid;gap:12px;padding:23px 24px;border:1px solid #c7b28d;border-radius:16px;background:#fffaf0ed;box-shadow:0 26px 70px #3b2a1838;backdrop-filter:blur(4px);text-align:center}.board-waiting-panel .room-heading{display:grid;justify-items:center;gap:5px}.board-waiting-panel .room-heading h2{margin:0;font:700 25px/1.25 "Songti SC","SimSun",serif;color:#46392d}.board-waiting-panel .room-heading p{margin:0;color:#81705b;font-size:11px;line-height:1.6}.room-waiting-summary{display:flex;justify-content:center;gap:8px}.room-waiting-summary span{padding:4px 9px;border:1px solid #d8c7ad;border-radius:999px;background:#f8f1e5;color:#796445;font-size:10px}.room-waiting-unassigned{margin:0;color:#835d43;font-size:10px;line-height:1.65}.board-waiting-panel .room-heading-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:2px}.board-waiting-panel .room-heading-actions button{min-height:43px}.board-waiting-panel .room-heading-actions .tool-button{border-color:#cdbb9f;background:#fffaf0;color:#745b39;justify-content:center}.board-waiting-panel .ready-button{width:100%;margin:0}.room-previous-game{margin:0;padding:10px 0 0;border:0;border-top:1px solid #dfd0ba;border-radius:0;background:transparent;text-align:left}.room-previous-game .previous-game-heading{margin-bottom:5px}.room-previous-game p{font-size:10px}.room-previous-game details{margin-top:7px}.room-previous-game summary{font-size:10px}.room-previous-game ol{max-height:130px;font-size:10px}
+@media(max-width:720px){.board-waiting-panel{width:calc(100% - 24px);padding:18px 14px}.board-waiting-panel .room-heading h2{font-size:21px}.board-waiting-panel .room-heading-actions{grid-template-columns:1fr;gap:6px}.player-card.selectable:hover{transform:none}}
 </style>
