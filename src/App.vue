@@ -56,7 +56,6 @@ let replayTimer: number | null = null;
 const rulesDialog = ref<HTMLDialogElement | null>(null), resetDialog = ref<HTMLDialogElement | null>(null);
 const fiveRulesDialog = ref<HTMLDialogElement | null>(null);
 const horseRulesDialog = ref<HTMLDialogElement | null>(null);
-const chineseRulesDialog = ref<HTMLDialogElement | null>(null);
 const otherRulesDialog = ref<HTMLDialogElement | null>(null);
 const resignDialog = ref<HTMLDialogElement | null>(null), exitDialog = ref<HTMLDialogElement | null>(null);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
@@ -307,7 +306,6 @@ function openRules() {
   if (page.value === 'other') otherRulesDialog.value?.showModal();
   else if (page.value === 'five') fiveRulesDialog.value?.showModal();
   else if (page.value === 'horse') horseRulesDialog.value?.showModal();
-  else if (page.value === 'chinese') chineseRulesDialog.value?.showModal();
   else rulesDialog.value?.showModal();
 }
 function openAuthDialog() {
@@ -735,7 +733,7 @@ async function requestRematch() {
         <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
         <button v-else class="plain-button account-button" @click="openAuthDialog">登录 / 注册</button>
         <button class="plain-button" @click="settingsDialog?.showModal()">设置</button>
-        <button class="plain-button" @click="openRules">玩法说明</button>
+        <button v-if="page !== 'chinese'" class="plain-button" @click="openRules">玩法说明</button>
       </div>
     </header>
     <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>
@@ -936,12 +934,6 @@ async function requestRematch() {
       <p>双人独立棋局，红方先行，双方每回合各走一步。</p>
       <ul><li>红黑双方各有九匹马，分布在本方底线九个交叉点。</li><li>马走“日”字，紧邻马头的马腿有棋子时不能移动。</li><li>可以吃掉对方马，不能吃本方马，也不能进入本方马所在位置。</li><li>先踏入对方中央底线帅位的一方立即获胜。</li><li>未登录玩家进入前须填写昵称；登录用户直接使用账号昵称。</li></ul>
       <button class="primary-button" @click="horseRulesDialog?.close()">知道了</button>
-    </dialog>
-    <dialog ref="chineseRulesDialog" class="rules-dialog chinese-rules-dialog">
-      <div class="dialog-heading"><h2>中国象棋规则</h2><button class="dialog-close" aria-label="关闭规则" @click="chineseRulesDialog?.close()">×</button></div>
-      <p>采用经典中国象棋规则，红方先行，双方每回合走一步。</p>
-      <ul><li>车、马、炮、兵卒、仕士、相象和将帅均按经典中国象棋规则移动与吃子。</li><li>马受马腿阻挡，相象受象眼阻挡且不能过河，仕士与将帅不能离开九宫。</li><li>兵卒过河后可横向移动；将帅不能照面。</li><li>不能走出使本方将帅被将军的着法，受到将军时必须解除。</li><li>将死对方，或使对方没有任何合法走法，即获胜。也可以认输。</li></ul>
-      <button class="primary-button" @click="chineseRulesDialog?.close()">知道了</button>
     </dialog>
     <dialog ref="otherRulesDialog" class="rules-dialog">
       <div class="dialog-heading"><h2>其他玩法规则</h2><button class="dialog-close" aria-label="关闭规则" @click="otherRulesDialog?.close()">×</button></div>

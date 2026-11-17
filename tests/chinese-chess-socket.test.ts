@@ -39,6 +39,12 @@ function success<T>(ack: ChineseAck<T>): T {
 }
 
 test('two clients start classic Chinese chess and receive one authoritative move', async () => {
+  const malformed = await client();
+  malformed.emit('chinese:join', null);
+  malformed.emit('chinese:ready', null);
+  malformed.emit('chinese:move', null);
+  assert.equal(success(await emit<ChineseState>(malformed, 'chinese:watch', {})).gameId, 'chinese-chess');
+
   const registered = await server.authService.register('中国象棋账号', '1234', false, '127.0.0.1');
   if (!registered.ok || !registered.sessionToken) assert.fail(JSON.stringify(registered));
   const [accountSocket, guestSocket, observer] = await Promise.all([

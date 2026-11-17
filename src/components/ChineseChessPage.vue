@@ -41,14 +41,16 @@ const state = ref<ChineseState | null>(null);
 const inspected = ref<ChineseState | null>(null);
 const connection = ref<'offline' | 'connecting' | 'online'>('offline');
 const busy = ref(false), error = ref(''), notice = ref('');
-const guestName = ref(''), selectedSide = ref<ChineseSide>('red');
+const guestName = ref(''), pendingSide = ref<ChineseSide | null>(null);
 const selectedId = ref<string | null>(null), flipped = ref(false);
 const inviteVisible = ref(false), inviteText = ref('');
 const resignDialog = ref<HTMLDialogElement | null>(null), leaveDialog = ref<HTMLDialogElement | null>(null);
+const seatDialog = ref<HTMLDialogElement | null>(null);
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
-const game = computed<ChineseGame>(() => state.value?.game ?? newChineseGame());
+const roomState = computed(() => state.value ?? inspected.value);
+const game = computed<ChineseGame>(() => roomState.value?.game ?? newChineseGame());
 const myPlayer = computed(() => state.value?.players.find(player => player.id === state.value?.selfId) ?? null);
 const mySide = computed(() => myPlayer.value?.side ?? null);
 const isMyTurn = computed(() => game.value.status === 'playing' && !!mySide.value && game.value.turn === mySide.value);
@@ -57,17 +59,18 @@ const moves = computed(() => selected.value ? legalChineseMoves(game.value.piece
 const latest = computed(() => game.value.lastMove);
 const history = computed(() => game.value.history.slice(-20).reverse());
 const boardTitle = computed(() => {
-  if (game.value.status === 'finished') {
+  const room = roomState.value;
+  if (!room) return '正在读取棋桌';
+  if (room.phase === 'lobby') {
+    if (room.players.length < 2) return '点击空席位入座';
+    return '等待双方准备';
+  }
+  if (room.phase === 'finished') {
     if (!game.value.winner || !mySide.value) return '本局结束';
     return game.value.winner === mySide.value ? '你获胜' : '你失败';
   }
-  const active = state.value?.players.find(player => player.side === game.value.turn);
+  const active = room.players.find(player => player.side === game.value.turn);
   return `轮到 ${active?.nickname || chineseSideName(game.value.turn)} 行棋`;
-});
-const selectedAvailable = computed(() => {
-  if (!inspected.value || inspected.value.phase !== 'lobby') return false;
-  return !inspected.value.players.some(player => player.side === selectedSide.value)
-    && inspected.value.players.length < 2;
 });
 const resultText = computed(() => {
   if (game.value.status !== 'finished') return '';
@@ -84,16 +87,21 @@ const viewX = (x: number) => px(flipped.value ? 8 - x : x);
 const viewY = (y: number) => py(flipped.value ? 9 - y : y);
 const coordinate = (point: ChinesePoint) => `(${point.x + 1}, ${point.y + 1})`;
 const targetAt = (point: ChinesePoint) => chinesePieceAt(game.value.pieces, point);
-const sidePlayer = (side: ChineseSide) => state.value?.players.find(player => player.side === side) ?? null;
-const inspectedSidePlayer = (side: ChineseSide) => inspected.value?.players.find(player => player.side === side) ?? null;
+const topSide = computed<ChineseSide>(() => flipped.value ? 'red' : 'black');
+const bottomSide = computed<ChineseSide>(() => otherChineseSide(topSide.value));
+const sidePlayer = (side: ChineseSide) => roomState.value?.players.find(player => player.side === side) ?? null;
 const sideLabel = (side: ChineseSide) => chineseSideName(side);
 const pieceLabel = (piece: ChinesePiece) =>
   `${chineseSideName(piece.side)}${chinesePieceName(piece)}，${piece.x + 1} 路第 ${piece.y + 1} 线`;
 const playerState = (side: ChineseSide) => {
   const player = sidePlayer(side);
-  if (!player) return '等待入座';
-  return player.ready ? '已准备' : '未准备';
+  if (!player) return roomState.value?.phase === 'lobby' ? '等待棋友' : '未入座';
+  if (roomState.value?.phase === 'lobby') return player.ready ? '已准备' : '未准备';
+  if (roomState.value?.phase === 'finished') return game.value.winner === side ? '胜利' : '失败';
+  return game.value.turn === side ? '行棋中' : '对局中';
 };
+const canSeat = (side: ChineseSide) => !session.value && roomState.value?.phase === 'lobby'
+  && roomState.value.players.length < 2 && !sidePlayer(side);
 
 function saveSession(receipt: ChineseReceipt): boolean {
   if (!receipt || receipt.gameId !== CHINESE_CHESS_GAME_ID || receipt.playerId !== receipt.state.selfId) return false;
@@ -185,33 +193,30 @@ function openSocket() {
   socket.connect();
 }
 
-function chooseSide(side: ChineseSide) {
-  if (state.value?.phase === 'lobby' && myPlayer.value) {
-    void chooseSideOnline(side);
+function openSeat(side: ChineseSide) {
+  if (busy.value || !canSeat(side)) return;
+  if (props.accountName) {
+    void joinSeat(side, '');
     return;
   }
-  if (inspectedSidePlayer(side)) return;
-  selectedSide.value = side;
+  pendingSide.value = side;
+  guestName.value = '';
+  error.value = '';
+  seatDialog.value?.showModal();
 }
 
-async function chooseSideOnline(side: ChineseSide) {
-  if (!session.value || busy.value || side === mySide.value) return;
-  busy.value = true;
-  try {
-    const ack = await emitAck<{ state: ChineseState }>('chinese:choose-side', {
-      reconnectToken: session.value.reconnectToken, side,
-    });
-    if (!ack.ok) error.value = ack.error;
-    else acceptState(ack.data.state);
-  } finally { busy.value = false; }
+function confirmGuestSeat() {
+  if (!pendingSide.value) return;
+  if (!guestName.value.trim()) {
+    error.value = '请输入昵称。';
+    return;
+  }
+  void joinSeat(pendingSide.value, guestName.value.trim());
 }
 
-async function enterRoom() {
+async function joinSeat(side: ChineseSide, nickname: string) {
+  if (busy.value || !canSeat(side)) return;
   error.value = ''; notice.value = '';
-  if (!props.accountName && !guestName.value.trim()) {
-    error.value = '未登录玩家需要填写昵称。';
-    return;
-  }
   if (!await ensureConnected()) {
     error.value = '暂时无法连接服务器，请稍后重试。';
     return;
@@ -219,10 +224,14 @@ async function enterRoom() {
   busy.value = true;
   try {
     const ack = await emitAck<ChineseReceipt>('chinese:join', {
-      nickname: guestName.value.trim(), side: selectedSide.value,
+      nickname, side,
     });
     if (!ack.ok) error.value = ack.error;
     else if (!saveSession(ack.data)) error.value = '服务器返回的席位信息不完整。';
+    else {
+      seatDialog.value?.close();
+      pendingSide.value = null;
+    }
   } finally { busy.value = false; }
 }
 
@@ -263,7 +272,7 @@ async function move(pieceId: string, to: ChinesePoint) {
 }
 
 function clickPoint(point: ChinesePoint) {
-  if (state.value?.phase !== 'playing' || !isMyTurn.value) return;
+  if (roomState.value?.phase !== 'playing' || !isMyTurn.value) return;
   const piece = targetAt(point);
   if (piece?.side === mySide.value) {
     selectedId.value = selectedId.value === piece.id ? null : piece.id;
@@ -323,7 +332,7 @@ async function leaveForNavigation(): Promise<void> {
 }
 
 function requestLeave() {
-  if (state.value?.phase === 'playing') leaveDialog.value?.showModal();
+  if (roomState.value?.phase === 'playing') leaveDialog.value?.showModal();
   else void leaveRoom();
 }
 
@@ -331,6 +340,7 @@ async function copyInvite() {
   const link = appRouteUrl(location.href, 'chinese');
   inviteText.value = link;
   try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
     await navigator.clipboard.writeText(link);
     inviteVisible.value = true;
     notice.value = '邀请链接已复制。';
@@ -345,13 +355,6 @@ function selectInvite(event: FocusEvent) {
 }
 
 watch(mySide, side => { if (side) flipped.value = side === 'black'; });
-watch(inspected, current => {
-  if (!current || session.value) return;
-  if (current.players.some(player => player.side === selectedSide.value)) {
-    const empty = (['red', 'black'] as ChineseSide[]).find(side => !current.players.some(player => player.side === side));
-    if (empty) selectedSide.value = empty;
-  }
-});
 watch(() => props.accountName, name => {
   if (name) {
     guestName.value = '';
@@ -380,45 +383,18 @@ defineExpose({ leaveForNavigation });
     <p v-else-if="error" class="connection-note error" role="alert">{{ error }}</p>
     <p v-else-if="notice" class="connection-note" role="status">{{ notice }}</p>
 
-    <section v-if="!session" class="chinese-entry-card">
-      <div class="chinese-seat-picker">
-        <button v-for="side in (['red', 'black'] as const)" :key="side" type="button"
-          class="chinese-seat-option" :class="[side, { selected: selectedSide === side, occupied: !!inspectedSidePlayer(side) }]"
-          :disabled="!!inspectedSidePlayer(side)" @click="chooseSide(side)">
-          <span class="chinese-piece-preview">{{ side === 'red' ? '帅' : '将' }}</span>
-          <span><strong>{{ sideLabel(side) }}</strong><small>{{ inspectedSidePlayer(side)?.nickname || '中国象棋' }}</small></span>
-          <em>{{ inspectedSidePlayer(side) ? '已入座' : selectedSide === side ? '已选择' : '可加入' }}</em>
-        </button>
-      </div>
-      <label v-if="!accountName" class="chinese-entry-field">昵称：<input v-model="guestName" maxlength="16" autocomplete="nickname" @keydown.enter="enterRoom"></label>
-      <div v-else class="chinese-account-name">账号昵称 <strong>{{ accountName }}</strong></div>
-      <button class="primary-button chinese-enter-button" type="button" :disabled="busy || connection !== 'online' || !selectedAvailable" @click="enterRoom">{{ inspected?.phase === 'playing' || inspected?.phase === 'finished' ? '当前对局进行中' : '进入对局' }}</button>
-      <details class="chinese-rules"><summary>玩法说明</summary><ul><li>红方先行，双方每回合走一步。</li><li>遵循经典中国象棋走法：马腿、象眼、九宫、炮架、过河兵与将帅照面。</li><li>不能送将；被将军时必须应对。</li><li>将死对方或无合法走法的一方获胜；也可认输。</li></ul></details>
-    </section>
+    <button class="chinese-table-seat opponent-seat" :class="[topSide, { empty: !sidePlayer(topSide), ready: sidePlayer(topSide)?.ready, active: roomState?.phase === 'playing' && game.turn === topSide }]"
+      type="button" :disabled="!canSeat(topSide)" :aria-label="`${sideLabel(topSide)}席位，${playerState(topSide)}`" @click="openSeat(topSide)">
+      <span class="chinese-seat-avatar" :class="{ placeholder: !sidePlayer(topSide) }">{{ sidePlayer(topSide) ? (topSide === 'red' ? '帅' : '将') : '?' }}</span>
+      <span class="chinese-seat-copy"><strong>{{ sidePlayer(topSide)?.nickname || '等待棋友' }}</strong><small>{{ sideLabel(topSide) }}席位</small></span>
+      <em>{{ canSeat(topSide) ? '入座' : playerState(topSide) }}</em>
+    </button>
 
-    <section v-else-if="state?.phase === 'lobby'" class="chinese-waiting">
-      <div class="chinese-waiting-heading"><div><span class="eyebrow">双人棋桌</span><h2>等待双方准备</h2></div><button class="tool-button" type="button" @click="copyInvite">复制邀请链接</button></div>
-      <div class="chinese-seat-picker">
-        <button v-for="side in (['red', 'black'] as const)" :key="side" type="button" class="chinese-seat-option" :class="[side, { selected: mySide === side }]" :disabled="busy || (!!sidePlayer(side) && mySide !== side)" @click="chooseSide(side)">
-          <span class="chinese-piece-preview">{{ side === 'red' ? '帅' : '将' }}</span><span><strong>{{ sidePlayer(side)?.nickname || '等待对手' }}</strong><small>{{ sideLabel(side) }}</small></span><em>{{ playerState(side) }}</em>
-        </button>
-      </div>
-      <div class="chinese-waiting-actions"><button class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消准备' : '准备' }}</button><button class="tool-button" type="button" :disabled="busy" @click="requestLeave">退出房间</button></div>
-      <textarea v-if="inviteVisible" :value="inviteText" readonly rows="2" aria-label="中国象棋邀请链接" @focus="selectInvite"></textarea>
-    </section>
-
-    <template v-else>
-      <section class="chinese-match-top">
-        <article v-for="side in (['red', 'black'] as const)" :key="side" class="chinese-player-card" :class="[side, { active: game.status === 'playing' && game.turn === side }]">
-          <span class="chinese-player-seal">{{ side === 'red' ? '帅' : '将' }}</span><div><strong>{{ sidePlayer(side)?.nickname || chineseSideName(side) }}</strong><small>{{ chineseSideName(side) }} · {{ sidePlayer(side)?.identity === 'guest' ? '游客' : '账号' }}</small></div><em v-if="game.status === 'finished'">{{ game.winner === side ? '胜利' : '失败' }}</em><em v-else-if="game.turn === side">行棋中</em>
-        </article>
-      </section>
-
-      <section class="chinese-game-layout">
-        <div class="chinese-board-column">
-          <div class="chinese-board-heading"><h2>{{ boardTitle }}</h2><span>第 {{ game.history.length }} 手</span></div>
-          <div class="board-frame chinese-board-frame">
-            <svg class="board-svg chinese-board-svg" viewBox="0 0 540 595" role="group" :aria-label="`中国象棋棋盘，${flipped ? '黑方' : '红方'}视角`">
+    <section class="chinese-game-layout">
+      <div class="chinese-board-column">
+        <div class="chinese-board-heading"><h2>{{ boardTitle }}</h2><span>{{ roomState?.phase === 'lobby' ? '等待开局' : `第 ${game.history.length} 手` }}</span></div>
+        <div class="board-frame chinese-board-frame">
+          <svg class="board-svg chinese-board-svg" :class="{ playable: roomState?.phase === 'playing' && isMyTurn }" viewBox="0 0 540 595" role="group" :aria-label="`中国象棋棋盘，${flipped ? '黑方' : '红方'}视角`">
               <defs><linearGradient id="chinese-wood" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#efdab4"/><stop offset="1" stop-color="#e5c897"/></linearGradient><marker id="chinese-trail-tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a77b36"/></marker></defs>
               <rect x="8" y="8" width="524" height="579" rx="8" fill="url(#chinese-wood)"/><rect x="37" y="37" width="466" height="521" fill="none" stroke="#674d2f" stroke-width="1.4"/>
               <g class="grid-lines"><line v-for="n in 10" :key="`h${n}`" :x1="px(0)" :x2="px(8)" :y1="py(n-1)" :y2="py(n-1)"/><template v-for="n in 9" :key="`v${n}`"><line :x1="px(n-1)" :x2="px(n-1)" :y1="py(0)" :y2="py(4)"/><line :x1="px(n-1)" :x2="px(n-1)" :y1="py(5)" :y2="py(9)"/></template><line :x1="px(0)" :x2="px(0)" :y1="py(4)" :y2="py(5)"/><line :x1="px(8)" :x2="px(8)" :y1="py(4)" :y2="py(5)"/><path :d="`M${px(3)} ${py(0)} L${px(5)} ${py(2)} M${px(5)} ${py(0)} L${px(3)} ${py(2)} M${px(3)} ${py(7)} L${px(5)} ${py(9)} M${px(5)} ${py(7)} L${px(3)} ${py(9)}`"/></g>
@@ -426,21 +402,42 @@ defineExpose({ leaveForNavigation });
               <text class="river" x="175" y="305">{{ flipped ? '汉 界' : '楚 河' }}</text><text class="river" x="365" y="305">{{ flipped ? '楚 河' : '汉 界' }}</text>
               <g v-if="latest" class="last-trail" aria-hidden="true"><line :x1="viewX(latest.from.x)" :y1="viewY(latest.from.y)" :x2="viewX(latest.to.x)" :y2="viewY(latest.to.y)" marker-end="url(#chinese-trail-tip)"/><rect :x="viewX(latest.from.x)-18" :y="viewY(latest.from.y)-18" width="36" height="36" rx="4"/><circle :cx="viewX(latest.to.x)" :cy="viewY(latest.to.y)" r="26"/></g>
               <g v-for="point in moves" :key="`${point.x},${point.y}`" class="chinese-target" role="button" tabindex="0" :aria-label="`${targetAt(point) ? '吃子到' : '走到'}第${point.x+1}路第${point.y+1}线`" @click.stop="clickPoint(point)" @keydown.enter.prevent.stop="clickPoint(point)" @keydown.space.prevent.stop="clickPoint(point)"><circle :cx="viewX(point.x)" :cy="viewY(point.y)" r="23" fill="transparent"/><circle :cx="viewX(point.x)" :cy="viewY(point.y)" :r="targetAt(point) ? 27 : 6" :class="targetAt(point) ? 'capture-ring' : 'move-dot'"/></g>
-              <g v-for="piece in game.pieces" :key="piece.id" class="chinese-piece" :class="[piece.side, { selected: selectedId === piece.id }]" :style="{transform: `translate(${viewX(piece.x)}px, ${viewY(piece.y)}px)`}" role="button" tabindex="0" :aria-label="pieceLabel(piece)" @click.stop="clickPoint(piece)" @keydown.enter.prevent.stop="clickPoint(piece)"><circle class="chinese-selection-ring" r="27"/><circle class="chinese-piece-shadow" cy="2.5" r="23"/><circle class="chinese-piece-face" r="23"/><circle class="chinese-piece-rim" r="19.5"/><text :class="{general: piece.kind === 'king'}" y="1">{{ chinesePieceName(piece) }}</text></g>
-            </svg>
-          </div>
-          <div class="board-tools"><button class="tool-button" type="button" @click="flipped = !flipped">翻转棋盘</button><button v-if="state?.phase === 'playing' && myPlayer" class="tool-button resign-button" type="button" @click="resignDialog?.showModal()">认输</button><button v-if="state?.phase === 'finished'" class="primary-button" type="button" :disabled="busy" @click="rematch">再来一局</button><button class="tool-button leave-button" type="button" :disabled="busy" @click="requestLeave">退出房间</button></div>
-          <div v-if="state?.phase === 'finished'" class="result-banner"><strong>{{ resultText }}</strong><span>{{ game.winner ? `${chineseSideName(game.winner)}获胜` : '本局结束' }}</span></div>
+              <g v-for="piece in game.pieces" :key="piece.id" class="chinese-piece" :class="[piece.side, { selected: selectedId === piece.id }]" :style="{transform: `translate(${viewX(piece.x)}px, ${viewY(piece.y)}px)`}" role="button" tabindex="0" :aria-disabled="roomState?.phase !== 'playing' || !isMyTurn" :aria-label="pieceLabel(piece)" @click.stop="clickPoint(piece)" @keydown.enter.prevent.stop="clickPoint(piece)"><circle class="chinese-selection-ring" r="27"/><circle class="chinese-piece-shadow" cy="2.5" r="23"/><circle class="chinese-piece-face" r="23"/><circle class="chinese-piece-rim" r="19.5"/><text :class="{general: piece.kind === 'king'}" y="1">{{ chinesePieceName(piece) }}</text></g>
+          </svg>
         </div>
-        <aside class="chinese-history">
-          <div class="chinese-history-heading"><strong>行棋记录</strong><span>{{ game.history.length }} 手</span></div>
-          <div v-if="latest" class="last-move-card"><span class="eyebrow">上一步</span><h3 :class="latest.side">{{ chineseSideName(latest.side) }} · {{ chinesePieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} → {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${chineseSideName(latest.captured.side)}${chinesePieceName(latest.captured)}` : '已标记起点和落点' }}</small></div>
-          <ol v-if="history.length" class="move-list"><li v-for="record in history" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2, '0') }}</span><div><strong :class="record.side">{{ chineseSideName(record.side) }}</strong><p>{{ chinesePieceName(record) }} {{ coordinate(record.from) }} → {{ coordinate(record.to) }}</p><small v-if="record.captured">吃掉{{ chineseSideName(record.captured.side) }}{{ chinesePieceName(record.captured) }}</small></div></li></ol>
-          <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>双方准备后开始棋局。</p></div>
-          <details class="chinese-live-rules"><summary>玩法说明</summary><p>经典中国象棋规则；不能送将，将死或困毙判负。</p></details>
-        </aside>
-      </section>
-    </template>
+        <button class="chinese-table-seat self-seat" :class="[bottomSide, { empty: !sidePlayer(bottomSide), ready: sidePlayer(bottomSide)?.ready, active: roomState?.phase === 'playing' && game.turn === bottomSide, self: mySide === bottomSide }]"
+          type="button" :disabled="!canSeat(bottomSide)" :aria-label="`${sideLabel(bottomSide)}席位，${playerState(bottomSide)}`" @click="openSeat(bottomSide)">
+          <span class="chinese-seat-avatar" :class="{ placeholder: !sidePlayer(bottomSide) }">{{ sidePlayer(bottomSide) ? (bottomSide === 'red' ? '帅' : '将') : '?' }}</span>
+          <span class="chinese-seat-copy"><strong>{{ sidePlayer(bottomSide)?.nickname || '等待棋友' }}</strong><small>{{ sideLabel(bottomSide) }}席位</small></span>
+          <em>{{ canSeat(bottomSide) ? '入座' : playerState(bottomSide) }}</em>
+        </button>
+        <div class="board-tools chinese-table-actions">
+          <button v-if="session && roomState?.phase === 'lobby'" class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消准备' : '准备' }}</button>
+          <button class="tool-button" type="button" @click="copyInvite">邀请好友</button>
+          <button class="tool-button" type="button" @click="flipped = !flipped">翻转棋盘</button>
+          <button v-if="session && roomState?.phase === 'playing'" class="tool-button resign-button" type="button" @click="resignDialog?.showModal()">认输</button>
+          <button v-if="session && roomState?.phase === 'finished'" class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="rematch">再来一局</button>
+          <button v-if="session" class="tool-button leave-button" type="button" :disabled="busy" @click="requestLeave">退出房间</button>
+        </div>
+        <textarea v-if="inviteVisible" class="chinese-invite-text" :value="inviteText" readonly rows="2" aria-label="中国象棋邀请链接" @focus="selectInvite"></textarea>
+        <div v-if="roomState?.phase === 'finished'" class="result-banner"><strong>{{ resultText }}</strong><span>{{ mySide && game.winner ? `${chineseSideName(game.winner)}获胜` : '本局已结束' }}</span></div>
+      </div>
+      <aside class="chinese-history chinese-table-aside">
+        <div class="chinese-history-heading"><strong>行棋记录</strong><span>{{ game.history.length }} 手</span></div>
+        <div v-if="latest" class="last-move-card"><span class="eyebrow">上一步</span><h3 :class="latest.side">{{ chineseSideName(latest.side) }} · {{ chinesePieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} → {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${chineseSideName(latest.captured.side)}${chinesePieceName(latest.captured)}` : '已标记起点和落点' }}</small></div>
+        <ol v-if="history.length" class="move-list"><li v-for="record in history" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2, '0') }}</span><div><strong :class="record.side">{{ chineseSideName(record.side) }}</strong><p>{{ chinesePieceName(record) }} {{ coordinate(record.from) }} → {{ coordinate(record.to) }}</p><small v-if="record.captured">吃掉{{ chineseSideName(record.captured.side) }}{{ chinesePieceName(record.captured) }}</small></div></li></ol>
+        <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>{{ roomState?.phase === 'lobby' ? '开局后显示正式棋谱。' : '暂无行棋记录。' }}</p></div>
+        <details class="chinese-live-rules"><summary>玩法说明</summary><p>经典中国象棋规则；不能送将，将死或困毙判负。仅浏览棋盘不会占座。</p></details>
+      </aside>
+    </section>
+    <dialog ref="seatDialog" class="chinese-seat-dialog" @cancel.prevent="seatDialog?.close()">
+      <form @submit.prevent="confirmGuestSeat">
+        <div class="dialog-heading"><h2>入座 {{ pendingSide ? sideLabel(pendingSide) : '' }}</h2><button class="dialog-close" type="button" aria-label="关闭" @click="seatDialog?.close()">×</button></div>
+        <label>昵称：<input v-model="guestName" maxlength="16" autocomplete="nickname" aria-label="座位昵称"></label>
+        <p v-if="error" class="connection-note error" role="alert">{{ error }}</p>
+        <div class="dialog-actions"><button class="tool-button" type="button" @click="seatDialog?.close()">取消</button><button class="primary-button" type="submit" :disabled="busy || connection !== 'online'">入座</button></div>
+      </form>
+    </dialog>
     <dialog ref="resignDialog" class="reset-dialog"><h2>确认认输？</h2><p>本局立即判负，仍可留在房间查看结果。</p><div class="dialog-actions"><button class="tool-button" type="button" @click="resignDialog?.close()">继续对局</button><button class="primary-button" type="button" @click="resign">确认认输</button></div></dialog>
     <dialog ref="leaveDialog" class="reset-dialog"><h2>退出中国象棋？</h2><p>对局进行中离开会按认输结算，席位立即释放。</p><div class="dialog-actions"><button class="tool-button" type="button" @click="leaveDialog?.close()">继续对局</button><button class="primary-button" type="button" @click="leaveRoom">确认退出</button></div></dialog>
   </main>
@@ -448,4 +445,9 @@ defineExpose({ leaveForNavigation });
 
 <style scoped>
 .chinese-page{width:min(1180px,100%);margin:0 auto;padding:24px 0 54px;--chinese-red:#a64b3c;--chinese-black:#343e48;--chinese-line:#d8c7aa}.chinese-page-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding-bottom:13px;border-bottom:1px solid #ded2c1}.chinese-page-nav .plain-button{font-size:15px;font-weight:600;color:#5b4d3e}.chinese-side-chip{padding:4px 10px;border:1px solid #d7c6ab;border-radius:999px;background:#fffaf0;color:#745e3f;font-size:10px;font-weight:700}.chinese-side-chip.red{color:var(--chinese-red);border-color:#d5a79e}.chinese-side-chip.black{color:var(--chinese-black);border-color:#afb5bb}.chinese-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:24px}.chinese-heading h1{margin:5px 0 0;font:700 42px/1.15 "Songti SC","SimSun",serif;letter-spacing:4px;color:#3c332a}.chinese-heading p{max-width:430px;margin:0 0 5px;color:#7e6e5b;font-size:12px;line-height:1.8;text-align:right}.chinese-entry-card,.chinese-waiting{padding:28px;border:1px solid var(--chinese-line);border-radius:18px;background:linear-gradient(150deg,#fffef9,#fbf5e9);box-shadow:0 18px 44px #59432310}.chinese-seat-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.chinese-seat-option{--side:#a64b3c;--soft:#faeee9;display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:11px;min-height:84px;padding:12px 14px;border:1px solid #d6c6b0;border-radius:12px;background:#fffdf8;color:#4f4438;text-align:left;transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease}.chinese-seat-option.black{--side:#343e48;--soft:#f0f2f3}.chinese-seat-option:hover:not(:disabled):not(.selected){border-color:var(--side);background:var(--soft);transform:translateY(-1px)}.chinese-seat-option.selected{border-color:var(--side);background:var(--soft);box-shadow:inset 0 0 0 1px var(--side)}.chinese-seat-option.occupied,.chinese-seat-option:disabled{opacity:.58;cursor:not-allowed}.chinese-seat-option:focus-visible,.chinese-entry-field input:focus-visible,.chinese-enter-button:focus-visible,.chinese-waiting-actions button:focus-visible{outline:2px solid #8c6d37;outline-offset:2px}.chinese-piece-preview,.chinese-player-seal{display:grid;place-items:center;width:44px;height:44px;border:1px solid var(--side,#a64b3c);border-radius:50%;background:#fffdf8;color:var(--side,#a64b3c);font:700 24px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff8e8}.chinese-seat-option.selected .chinese-piece-preview{background:var(--side);color:#fff8e9;box-shadow:inset 0 0 0 2px #fff4df4d}.chinese-seat-option>span:nth-child(2){display:grid;gap:3px;min-width:0}.chinese-seat-option strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 18px/1.25 "Songti SC","SimSun",serif}.chinese-seat-option small{color:#8b7b67;font-size:10px}.chinese-seat-option em{padding:3px 7px;border-radius:999px;background:#eee6da;color:#7c6c59;font-size:9px;font-style:normal;white-space:nowrap}.chinese-entry-field{display:grid;gap:7px;margin-top:18px;color:#615344;font-size:13px;font-weight:600}.chinese-entry-field input{height:46px;border:1px solid #d8cab5;border-radius:9px;background:#fffefb;padding:0 13px;color:#3f352b;font:500 15px/1 inherit;outline:none}.chinese-entry-field input:focus{border-color:#a78147;box-shadow:0 0 0 3px #a7814718}.chinese-account-name{margin-top:18px;padding:11px 13px;border:1px solid #e0d4c1;border-radius:9px;background:#f7f1e7;color:#776856;font-size:12px}.chinese-account-name strong{margin-left:5px;color:#4b3d2f}.chinese-enter-button{width:100%;height:48px;margin-top:18px;font-size:14px;font-weight:700;letter-spacing:.08em}.chinese-rules{margin-top:20px;padding-top:15px;border-top:1px solid #e1d6c5;color:#776857;font-size:12px;line-height:1.8}.chinese-rules summary,.chinese-live-rules summary{cursor:pointer;font-weight:600;color:#715b3c}.chinese-rules ul{margin:10px 0 0;padding-left:20px}.chinese-waiting-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}.chinese-waiting-heading h2{margin:4px 0 0;font:700 26px/1.2 "Songti SC","SimSun",serif}.chinese-waiting-actions{display:grid;grid-template-columns:minmax(150px,240px) auto;justify-content:end;gap:10px;margin-top:20px}.chinese-waiting-actions button{min-height:44px}.chinese-waiting textarea{width:100%;margin-top:16px;padding:10px 12px;border:1px solid #d8cab5;border-radius:8px;background:#fffefb;color:#5a4c3d;font:500 12px/1.6 ui-monospace,Consolas,monospace;resize:none}.chinese-match-top{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:16px}.chinese-player-card{--side:#a64b3c;display:flex;align-items:center;gap:12px;min-width:0;padding:12px 14px;border:1px solid #ddd0bd;border-radius:11px;background:#fffdf8}.chinese-player-card.black{--side:#343e48}.chinese-player-card.active{border-color:var(--side);box-shadow:inset 3px 0 var(--side),0 7px 18px #5943230d}.chinese-player-seal{--side:inherit;flex:none;width:42px;height:42px;font-size:21px}.chinese-player-card.red .chinese-player-seal{color:var(--chinese-red);border-color:var(--chinese-red)}.chinese-player-card.black .chinese-player-seal{color:var(--chinese-black);border-color:var(--chinese-black)}.chinese-player-card>div{display:grid;gap:3px;min-width:0}.chinese-player-card strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 19px/1.2 "Songti SC","SimSun",serif}.chinese-player-card small{margin-left:auto;color:#8a7b68;font-size:10px}.chinese-player-card em{padding:3px 7px;border-radius:999px;background:#f0e7da;color:#765f3e;font-size:9px;font-style:normal;white-space:nowrap}.chinese-game-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;align-items:start;gap:20px}.chinese-board-column,.chinese-history{min-width:0}.chinese-board-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.chinese-board-heading h2{margin:0;font-size:21px;color:#3f352b}.chinese-board-heading span{padding:5px 10px;border:1px solid #d8cab5;border-radius:999px;background:#fffdf8;color:#847461;font-size:10px}.chinese-board-frame{max-width:680px;margin:0 auto}.chinese-piece{cursor:pointer;transition:transform .18s ease;outline-offset:1px}.chinese-piece-shadow{fill:#603f3270}.chinese-piece-face{stroke-width:1.6;filter:drop-shadow(0 2px 2px #0002)}.chinese-piece.red .chinese-piece-face{fill:#b6503e;stroke:#83392e}.chinese-piece.black .chinese-piece-face{fill:#343e48;stroke:#202b36}.chinese-piece-rim{fill:none;stroke:#fff3d9;stroke-width:.8;opacity:.52}.chinese-piece text{text-anchor:middle;dominant-baseline:central;fill:#fff6e3;font:27px "STKaiti","KaiTi","Songti SC",serif;pointer-events:none}.chinese-piece text.general{font-size:18px;font-weight:600}.chinese-selection-ring{fill:none;stroke:#fffaf0;stroke-width:3;opacity:0}.chinese-piece.selected .chinese-selection-ring{opacity:1;filter:drop-shadow(0 0 2px #805c28)}.chinese-target{cursor:pointer}.chinese-history{padding:16px;border:1px solid #ddd0bd;border-radius:12px;background:#fffdf8}.chinese-history-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:13px;color:#645647;font-size:12px}.chinese-history-heading span{color:#94846f;font-size:10px}.chinese-history .last-move-card{padding:14px}.chinese-history h3.red,.chinese-history strong.red{color:var(--chinese-red)}.chinese-history h3.black,.chinese-history strong.black{color:var(--chinese-black)}.chinese-history .move-list{margin-top:13px;max-height:420px;overflow:auto}.chinese-history .empty-history{display:block;padding:24px 8px;text-align:center;border:0}.chinese-live-rules{margin-top:16px;padding-top:13px;border-top:1px solid #e4d9ca;color:#7e705f;font-size:11px;line-height:1.7}.chinese-live-rules p{margin:8px 0 0}.chinese-page .result-banner{margin-top:12px}@media(max-width:860px){.chinese-game-layout{grid-template-columns:1fr}.chinese-history{margin-top:4px}.chinese-history .move-list{max-height:260px}}@media(max-width:640px){.chinese-page{padding-top:16px}.chinese-heading{display:block;margin-bottom:17px}.chinese-heading h1{font-size:34px;letter-spacing:3px}.chinese-heading p{margin-top:8px;text-align:left;font-size:11px}.chinese-entry-card,.chinese-waiting{padding:17px;border-radius:14px}.chinese-seat-picker{grid-template-columns:1fr}.chinese-seat-option{min-height:70px}.chinese-seat-option strong{font-size:16px}.chinese-waiting-heading{align-items:flex-start}.chinese-waiting-heading h2{font-size:22px}.chinese-waiting-actions{grid-template-columns:1fr 1fr}.chinese-waiting-actions button{width:100%}.chinese-match-top{gap:7px}.chinese-player-card{padding:9px 10px;gap:8px}.chinese-player-seal{width:35px;height:35px;font-size:18px}.chinese-player-card strong{font-size:14px}.chinese-player-card small{display:none}.chinese-player-card em{padding:2px 5px;font-size:8px}.chinese-board-heading h2{font-size:18px}.chinese-history{padding:13px}.board-tools{flex-wrap:wrap}.board-tools button{flex:1 1 auto}}
+.chinese-table-heading{margin-bottom:16px}.chinese-table-heading h1{font-size:36px}.chinese-game-layout{gap:18px}.chinese-board-column{display:grid;gap:10px}.chinese-board-column>.chinese-board-frame{max-width:660px}.chinese-table-seat{--seat-color:#a64b3c;display:flex;align-items:center;gap:12px;width:min(660px,100%);min-height:66px;margin:0 auto;padding:9px 13px;border:1px solid #d6c7b3;border-radius:12px;background:linear-gradient(145deg,#fffdf8,#f8f2e8);color:#4d4236;text-align:left;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}.chinese-table-seat.black{--seat-color:#343e48}.chinese-table-seat.opponent-seat{margin-bottom:12px}.chinese-table-seat.self-seat{margin-top:2px}.chinese-table-seat.active{border-color:var(--seat-color);box-shadow:inset 3px 0 var(--seat-color),0 7px 18px #59432310}.chinese-table-seat.empty{border-style:dashed;background:#f3eee5;cursor:pointer}.chinese-table-seat.empty:hover:not(:disabled){border-color:#aa8a5a;background:#faf4e8;transform:translateY(-1px)}.chinese-table-seat:disabled{cursor:default}.chinese-table-seat.self{border-color:color-mix(in srgb,var(--seat-color) 55%,#d6c7b3)}.chinese-seat-avatar{display:grid;place-items:center;width:44px;height:44px;flex:none;border:1px solid var(--seat-color);border-radius:50%;background:var(--seat-color);color:#fff8e8;font:700 23px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff4df4d}.chinese-seat-avatar.placeholder{border-color:#c8bbab;background:#e7e1d7;color:#9c9080;box-shadow:none}.chinese-seat-copy{display:grid;gap:2px;min-width:0;flex:1}.chinese-seat-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 18px/1.3 "Songti SC","SimSun",serif}.chinese-seat-copy small{color:#8c7d6a;font-size:10px}.chinese-table-seat>em{padding:3px 8px;border-radius:999px;background:#eee6da;color:#786a58;font-size:9px;font-style:normal;white-space:nowrap}.chinese-table-seat.ready>em{background:#e4efe4;color:#39704b}.chinese-board-heading>div{display:grid;gap:3px}.chinese-board-heading small{color:#9b6f44;font-size:10px}.chinese-invite-text{width:min(660px,100%);margin:0 auto;padding:9px 11px;border:1px solid #d8cab5;border-radius:8px;background:#fffefb;color:#625444;font:500 11px/1.55 ui-monospace,Consolas,monospace;resize:none}.chinese-status-card{display:grid;gap:5px;margin-bottom:15px;padding:12px 13px;border:1px solid #ddd0bd;border-radius:10px;background:linear-gradient(145deg,#fffdf8,#f7f0e4)}.chinese-status-card strong{font:700 17px/1.35 "Songti SC","SimSun",serif;color:#4a3e32}.chinese-status-card p{margin:0;color:#847561;font-size:10px;line-height:1.65}.chinese-inline-history{border:0;background:transparent;padding:0}.chinese-seat-dialog{width:min(380px,calc(100vw - 32px));padding:24px}.chinese-seat-dialog form{display:grid;gap:16px}.chinese-seat-dialog h2{font:700 24px "Songti SC","SimSun",serif}.chinese-seat-dialog label{display:grid;gap:7px;color:#615344;font-size:12px;font-weight:600}.chinese-seat-dialog input{height:46px;border:1px solid #d8cab5;border-radius:9px;background:#fffefb;padding:0 13px;color:#3f352b;font:500 15px/1 inherit;outline:none}.chinese-seat-dialog input:focus{border-color:#a78147;box-shadow:0 0 0 3px #a7814718}.chinese-seat-dialog .connection-note{margin:0!important}@media(max-width:860px){.chinese-game-layout{grid-template-columns:1fr}.chinese-table-aside{display:grid;gap:12px}.chinese-inline-history{display:block}}@media(max-width:640px){.chinese-table-heading h1{font-size:32px}.chinese-table-seat{min-height:60px;padding:8px 10px;gap:9px}.chinese-seat-avatar{width:38px;height:38px;font-size:20px}.chinese-seat-copy strong{font-size:15px}.chinese-table-seat>em{font-size:8px}.chinese-menu .chinese-table-actions{display:grid;grid-template-columns:1fr 1fr}.chinese-board-column>.chinese-board-frame{order:2}.chinese-board-column>.chinese-table-seat{margin-top:0}.chinese-board-heading h2{font-size:18px}.chinese-invite-text{font-size:10px}}
+.chinese-board-column>.chinese-board-frame{order:0}
+.chinese-page{min-width:0;overflow-x:clip}.chinese-heading{align-items:center;margin-bottom:18px}.chinese-heading p{max-width:520px}.chinese-table-seat{min-height:62px}.chinese-table-seat:disabled{opacity:1}.chinese-table-seat.empty .chinese-seat-copy strong{color:#8f8372;font-weight:600}.chinese-table-seat.ready>em{background:#e4efe4;color:#39704b}.chinese-table-seat.active .chinese-seat-avatar{box-shadow:inset 0 0 0 3px #fff4df66,0 0 0 4px color-mix(in srgb,var(--seat-color) 18%,transparent)}.chinese-table-seat:focus-visible,.chinese-table-actions button:focus-visible,.chinese-seat-dialog button:focus-visible{outline:3px solid #9c7f43;outline-offset:3px}.chinese-board-column{grid-template-columns:minmax(0,1fr)}.chinese-board-column>.chinese-board-frame{width:100%}.chinese-board-heading{width:min(660px,100%);margin:0 auto 12px;padding:0 2px}.chinese-board-heading h2{font:700 20px/1.25 "Songti SC","SimSun",serif}.chinese-board-svg:not(.playable) .chinese-piece{cursor:default}.chinese-table-actions{justify-content:center;flex-wrap:wrap;padding:2px 0 4px}.chinese-table-actions>button{min-height:42px}.chinese-table-actions .primary-button{min-width:130px;padding-inline:22px}.chinese-table-aside{position:sticky;top:16px}.chinese-live-rules{font-size:11px}.chinese-live-rules[open] p{margin-bottom:0}.chinese-seat-dialog::backdrop,.chinese-page .reset-dialog::backdrop{background:#372c204f;backdrop-filter:blur(2px)}.chinese-seat-dialog{border:1px solid #d6c5aa;border-radius:14px;background:#fffaf0;color:#493d31;box-shadow:0 24px 70px #3d2d1a33}.chinese-seat-dialog .dialog-heading h2{font:700 22px/1.25 "Songti SC","SimSun",serif}.chinese-seat-dialog label{font-size:14px}.chinese-seat-dialog input{font-size:16px}.chinese-seat-dialog .dialog-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}.chinese-seat-dialog .dialog-actions button{min-height:44px}
+@media(max-width:860px){.chinese-table-aside{position:static}.chinese-history{margin-top:0}.chinese-heading p{max-width:390px}.chinese-table-seat,.chinese-board-column>.chinese-board-frame{max-width:680px}.chinese-table-actions{justify-content:flex-start}}
+@media(max-width:640px){.chinese-page{padding:14px 0 38px}.chinese-page-nav{margin-bottom:14px}.chinese-heading p{display:none}.chinese-heading h1{font-size:31px}.chinese-board-heading{gap:8px}.chinese-board-heading h2{font-size:17px}.chinese-board-heading span{padding:4px 8px;font-size:9px}.chinese-table-seat{min-height:58px;padding:8px 10px}.chinese-table-seat>em{max-width:74px;overflow:hidden;text-overflow:ellipsis}.chinese-table-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.chinese-table-actions>button{width:100%;min-height:44px;margin:0}.chinese-table-actions .primary-button{min-width:0}.chinese-history{padding:12px}.chinese-invite-text{margin-top:2px}.chinese-seat-dialog{padding:20px}.chinese-result-banner{margin-top:8px}}
 </style>

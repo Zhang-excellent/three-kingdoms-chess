@@ -10,6 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:server": "tsx watch server/index.ts",
+    "accept:chinese": "node scripts/chinese-browser-acceptance.mjs",
     "start": "tsx server/index.ts",
     "check": "vue-tsc --noEmit",
     "test": "node scripts/test.mjs",

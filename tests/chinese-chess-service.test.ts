@@ -46,6 +46,60 @@ test('both ready starts classic Chinese chess and enforces the current turn', ()
   } finally { service.dispose(); }
 });
 
+test('seat claims are atomic, a single ready player waits, and rematch keeps both sides', () => {
+  const service = new ChineseChessService(() => undefined);
+  try {
+    const red = service.join('座位红', 'red', 'red-a');
+    const competing = service.join('抢座红', 'red', 'red-b');
+    assert.equal(red.ok, true);
+    assert.equal(competing.ok, false);
+    if (competing.ack.ok) return;
+    assert.equal(competing.ack.code, 'SIDE_TAKEN');
+    const afterCompetingClaim = service.inspect();
+    if (!afterCompetingClaim.ok) assert.fail('inspect failed');
+    assert.equal(afterCompetingClaim.data.players.length, 1);
+    if (!red.ack.ok) return;
+
+    const readyAlone = service.setReady(red.ack.data.reconnectToken, true, 'red-a');
+    assert.equal(readyAlone.ok, true);
+    if (!readyAlone.ack.ok) return;
+    assert.equal(readyAlone.ack.data.state.phase, 'lobby');
+    assert.equal(readyAlone.ack.data.state.game, null);
+
+    const black = service.join('座位黑', 'black', 'black');
+    if (!black.ok || !black.ack.ok) assert.fail('black join failed');
+    const oneReadyAck = service.inspect();
+    if (!oneReadyAck.ok) assert.fail('inspect failed');
+    const oneReady = oneReadyAck.data;
+    assert.equal(oneReady.phase, 'lobby');
+    assert.equal(oneReady.game, null);
+    assert.deepEqual(oneReady.players.map(player => [player.side, player.ready]), [['red', true], ['black', false]]);
+
+    const started = service.setReady(black.ack.data.reconnectToken, true, 'black');
+    assert.equal(started.ok, true);
+    if (!started.ack.ok) return;
+    assert.equal(started.ack.data.state.phase, 'playing');
+    assert.equal(started.ack.data.state.game?.pieces.length, 32);
+
+    const resigned = service.resign(red.ack.data.reconnectToken, 'red-a');
+    assert.equal(resigned.ok, true);
+    if (!resigned.ack.ok) return;
+    assert.equal(resigned.ack.data.state.phase, 'finished');
+    assert.equal(resigned.ack.data.state.game?.winner, 'black');
+
+    const rematch = service.rematch(black.ack.data.reconnectToken, 'black');
+    assert.equal(rematch.ok, true);
+    if (!rematch.ack.ok) return;
+    assert.equal(rematch.ack.data.state.phase, 'lobby');
+    assert.equal(rematch.ack.data.state.round, 2);
+    assert.equal(rematch.ack.data.state.game, null);
+    assert.deepEqual(rematch.ack.data.state.players.map(player => [player.nickname, player.side, player.ready]), [
+      ['座位红', 'red', false],
+      ['座位黑', 'black', false],
+    ]);
+  } finally { service.dispose(); }
+});
+
 test('leaving Chinese chess immediately releases the seat and invalidates its credential', () => {
   const service = new ChineseChessService(() => undefined);
   try {
