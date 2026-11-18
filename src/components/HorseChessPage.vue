@@ -21,7 +21,7 @@ import type {
   HorseSide,
   HorseState,
 } from '../horse-chess.ts';
-import { socketIoConfig } from '../network-config.ts';
+import { backendAssetUrl, socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
 import OtherGameTable from './OtherGameTable.vue';
 
@@ -100,7 +100,7 @@ const goalAt = (point: HorsePoint) => (['red', 'black'] as HorseSide[])
 const topSide = computed<HorseSide>(() => flipped.value ? 'red' : 'black');
 const bottomSide = computed<HorseSide>(() => otherHorseSide(topSide.value));
 const sidePlayer = (side: HorseSide) => roomState.value?.players.find(player => player.side === side) ?? null;
-const avatarFor = (side: HorseSide) => sidePlayer(side)?.avatar || (sidePlayer(side) ? guestAvatar : null);
+const avatarFor = (side: HorseSide) => backendAssetUrl(sidePlayer(side)?.avatar) || (sidePlayer(side) ? guestAvatar : null);
 const sideLabel = (side: HorseSide) => horseSideName(side);
 const pieceLabel = (piece: HorsePiece) => `${horseSideName(piece.side)}马，${piece.x + 1} 路第 ${piece.y + 1} 线`;
 const playerState = (side: HorseSide) => {

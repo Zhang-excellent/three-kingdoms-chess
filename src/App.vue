@@ -12,6 +12,7 @@ import { parseGameRecord, replayArchivedGame } from './game-replay.ts';
 import type { ReplayDocument } from './game-replay.ts';
 import { appRouteUrl, parseAppRoute } from './navigation.ts';
 import type { AppPage } from './navigation.ts';
+import { backendAssetUrl } from './network-config.ts';
 import HomePage from './components/HomePage.vue';
 import LobbyPage from './components/LobbyPage.vue';
 import InvitePage from './components/InvitePage.vue';
@@ -131,7 +132,7 @@ watch([ownFaction, mode], () => { flipOverride.value = false; });
 const roomPlayer = (faction: Faction) => online.room.value?.players.find(player => player.faction === faction);
 const roomPlayerAvatar = (faction: Faction) => {
   const player = roomPlayer(faction);
-  return player ? player.avatar || 'images/guest-avatar.svg' : null;
+  return player ? backendAssetUrl(player.avatar) || 'images/guest-avatar.svg' : null;
 };
 const playerDisplayName = (faction: Faction) => mode.value === 'online'
   ? roomPlayer(faction)?.nickname || PLAYERS[faction].name

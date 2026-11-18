@@ -21,7 +21,7 @@ import type {
   ChineseSide,
   ChineseState,
 } from '../chinese-chess.ts';
-import { socketIoConfig } from '../network-config.ts';
+import { backendAssetUrl, socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
 import OtherGameTable from './OtherGameTable.vue';
 
@@ -97,7 +97,7 @@ const targetAt = (point: ChinesePoint) => chinesePieceAt(game.value.pieces, poin
 const topSide = computed<ChineseSide>(() => flipped.value ? 'red' : 'black');
 const bottomSide = computed<ChineseSide>(() => otherChineseSide(topSide.value));
 const sidePlayer = (side: ChineseSide) => roomState.value?.players.find(player => player.side === side) ?? null;
-const avatarFor = (side: ChineseSide) => sidePlayer(side)?.avatar || (sidePlayer(side) ? guestAvatar : null);
+const avatarFor = (side: ChineseSide) => backendAssetUrl(sidePlayer(side)?.avatar) || (sidePlayer(side) ? guestAvatar : null);
 const sideLabel = (side: ChineseSide) => chineseSideName(side);
 const pieceLabel = (piece: ChinesePiece) =>
   `${chineseSideName(piece.side)}${chinesePieceName(piece)}，${piece.x + 1} 路第 ${piece.y + 1} 线`;

@@ -48,6 +48,7 @@ writeFileSync(output, result.content
   .replaceAll("'./game-record.ts'", "'../src/game-record.ts'")
   .replaceAll("'./game-replay.ts'", "'../src/game-replay.ts'")
   .replaceAll("'./navigation.ts'", "'../src/navigation.ts'")
+  .replaceAll("'./network-config.ts'", "'../src/network-config.ts'")
   .replaceAll("'./useAuth.ts'", "'../src/useAuth.ts'")
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;

@@ -4,6 +4,7 @@ import { passwordError, usernameError } from '../auth.ts';
 import type { AuthUser } from '../auth.ts';
 import type { RecentGameSummary } from '../game-history.ts';
 import { PLAYERS } from '../game.ts';
+import { backendAssetUrl } from '../network-config.ts';
 
 const props = defineProps<{
   user: AuthUser | null;
@@ -36,6 +37,7 @@ const showCurrentPassword = ref(false), showNextPassword = ref(false);
 const settingsOpen = ref(false);
 const avatarInput = ref<HTMLInputElement | null>(null);
 const avatarError = ref('');
+const avatarUrl = computed(() => backendAssetUrl(props.user?.avatarUrl));
 const title = computed(() => mode.value === 'register' ? '注册账号' : '登录');
 const registrationUsernameError = computed(() => registerUsername.value ? usernameError(registerUsername.value) ?? '' : '');
 const registrationPasswordError = computed(() => registerPassword.value ? passwordError(registerPassword.value) ?? '' : '');
@@ -132,7 +134,7 @@ defineExpose({ open, close });
       <button type="button" class="dialog-close profile-close" aria-label="关闭个人中心" @click="close">×</button>
       <header class="profile-hero">
         <span class="profile-avatar" aria-hidden="true">
-          <img v-if="user.avatarUrl" :src="user.avatarUrl" alt="">
+          <img v-if="avatarUrl" :src="avatarUrl" alt="">
           <template v-else>{{ Array.from(user.username)[0] }}</template>
         </span>
         <div class="profile-identity">

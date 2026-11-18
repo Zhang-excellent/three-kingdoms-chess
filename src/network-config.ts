@@ -16,6 +16,12 @@ export function apiUrl(path: string, native = isNativeApp()): string {
   return `${base}/${normalizedPath}`;
 }
 
+export function backendAssetUrl(path: string | null | undefined, native = isNativeApp()): string | null {
+  if (!path) return null;
+  if (!native || !path.startsWith(`${APP_BASE_PATH}/`)) return path;
+  return `${WEB_BACKEND_ORIGIN}${path}`;
+}
+
 export function apiRequestCredentials(native = isNativeApp()): RequestCredentials {
   return native ? 'include' : 'same-origin';
 }

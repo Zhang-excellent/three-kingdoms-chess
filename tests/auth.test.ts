@@ -329,10 +329,27 @@ test('authenticated accounts can upload, serve, and remove a bounded square avat
     const user = uploaded.body.user as { avatarUrl: string | null };
     assert.match(user.avatarUrl ?? '', /^\/three-chess\/api\/avatar\//);
 
-    const image = await fetch(`${origin}${user.avatarUrl}`);
+    const image = await fetch(`${origin}${user.avatarUrl}`, {
+      headers: { Origin: 'https://localhost' },
+    });
     assert.equal(image.status, 200);
     assert.equal(image.headers.get('content-type'), 'image/png');
-    assert.ok((await image.arrayBuffer()).byteLength > 20);
+    assert.equal(image.headers.get('access-control-allow-origin'), 'https://localhost');
+    assert.match(image.headers.get('cache-control') ?? '', /public, max-age=31536000, immutable/);
+    const imageBytes = Buffer.from(await image.arrayBuffer());
+    assert.ok(imageBytes.length > 20);
+    assert.deepEqual([...imageBytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+
+    const restored = await api(origin, 'me', 'GET', undefined, registered.cookie,
+      { Origin: 'https://localhost' });
+    assert.equal(restored.status, 200);
+    assert.equal((restored.body.user as { avatarUrl: string | null }).avatarUrl, user.avatarUrl);
+
+    const relogin = await api(origin, 'login', 'POST', {
+      username: '头像玩家', password: '1234', remember: true,
+    }, null, { Origin: 'https://localhost' });
+    assert.equal(relogin.status, 200);
+    assert.equal((relogin.body.user as { avatarUrl: string | null }).avatarUrl, user.avatarUrl);
 
     const invalid = await api(origin, 'avatar', 'POST', { avatarData: 'not-an-image' }, registered.cookie);
     assert.equal(invalid.status, 400);

@@ -4,6 +4,7 @@ import { PLAYERS } from '../game.ts';
 import type { Faction } from '../game.ts';
 import { PUBLIC_ROOM_CODE } from '../online.ts';
 import type { PublicRoomSummary, RoomPhase } from '../online.ts';
+import { backendAssetUrl } from '../network-config.ts';
 
 const props = defineProps<{
   mode: 'public' | 'friends';
@@ -49,7 +50,7 @@ const playerAt = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS)
   room?.players.find(player => player.faction === faction) ?? null;
 const avatarAt = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) => {
   const player = playerAt(room, faction);
-  return player ? player.avatar || guestAvatar : null;
+  return player ? backendAssetUrl(player.avatar) || guestAvatar : null;
 };
 const playerLabel = (room: PublicRoomSummary | null, faction: keyof typeof PLAYERS) => {
   const player = playerAt(room, faction);

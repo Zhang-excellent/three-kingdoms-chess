@@ -33,7 +33,7 @@ npm run dev
 
 ## Android APK
 
-Android 使用 Capacitor 8，默认 WebView 来源为 `https://localhost`。`src/network-config.ts` 统一判断运行环境：网页继续使用 `/three-chess/api/...` 和 `/three-chess/socket.io` 相对路径；原生 Android 使用 `https://47.95.251.153`、`credentials: include` 与 `withCredentials: true`。账号仍使用服务端 Session Cookie，没有改成 JWT。
+Android 使用 Capacitor 8，默认 WebView 来源为 `https://localhost`。`src/network-config.ts` 统一判断运行环境：网页继续使用 `/three-chess/api/...` 和 `/three-chess/socket.io` 相对路径；原生 Android 使用 `https://47.95.251.153`、`credentials: include` 与 `withCredentials: true`。服务端返回的 `/three-chess/api/avatar/...` 头像地址也会在原生端转换为生产服务器完整网址，游客内置头像仍使用 App 本地资源。账号仍使用服务端 Session Cookie，没有改成 JWT。
 
 服务器只为白名单来源处理跨域：`https://localhost`、`https://47.95.251.153`，开发模式下另允许本机 Vite 地址。Android 来源的登录、注册、改密和新会话 Cookie 使用 `HttpOnly; Secure; SameSite=None; Path=/three-chess`，网页来源继续使用 `SameSite=Lax`。Socket.IO 同时校验 CORS 和握手来源。
 
@@ -288,6 +288,8 @@ npm run build
 | 马棋棋桌 | [截图](docs/验收截图/马棋-棋桌-桌面.png) | [截图](docs/验收截图/马棋-手机-观战.png) |
 | 马棋实时对局 | [截图](docs/验收截图/马棋-桌面-对局.png) | — |
 | 账号上传头像 | [截图](docs/验收截图/账号-上传头像.png) | — |
+
+2026-11-18 Android 头像 URL 修复（仅本地，未部署服务器）：定位到头像接口返回的 `/three-chess/api/avatar/...` 被 Android WebView 按本地来源解析成 `https://localhost/three-chess/api/avatar/...`，因此个人中心显示破图；认证、最近对局和头像二进制接口本身均正常。新增统一服务器资源 URL 转换，Android 将头像地址改写为 `https://47.95.251.153/three-chess/api/avatar/...`，网页继续使用原相对路径，游客本地头像不变。个人中心、三国席位、公开大厅及三种其他棋类头像全部复用该转换；头像版本参数继续提供上传后的缓存更新，重新登录也会从数据库恢复。集成测试实际验证头像接口 `200`、`Content-Type: image/png`、CORS 来源和 PNG 内容，并验证重新登录后的 `avatarUrl`。`npm run check`、181 项测试、`npm run build`、Capacitor 同步和 Gradle 调试 APK 构建均通过；当前没有连接 Android 真机，仍需安装新 APK 人工确认头像显示。
 
 2026-11-18 Android APK 后端适配（仅本地，未部署）：新增统一网络配置，网页继续使用相对 API/Socket.IO 路径，Capacitor Android 改用 `https://47.95.251.153` 完整地址、认证 `credentials: include` 和 Socket.IO `withCredentials: true`。服务器 API 增加来源白名单和 OPTIONS 预检，Socket.IO 同时校验 CORS 与握手来源；Android 会话 Cookie 使用 `HttpOnly; Secure; SameSite=None; Path=/three-chess`，网页继续使用 `SameSite=Lax`。Android `MainActivity` 启用 WebView 第三方 Cookie，Capacitor 明确固定 `https://localhost` 来源。`npm test` 共 181 项通过，`npm run check`、`npm run build`、Capacitor 同步及 Gradle `assembleDebug` 均通过；真实 Chromium 三联机流程和 390px 手机布局通过。调试 APK 已生成，但当前没有连接 Android 设备或 AVD，实体 APK 登录/Cookie/Socket.IO 联机仍需人工验收。本次未修改 Nginx，也未连接或部署服务器。
 

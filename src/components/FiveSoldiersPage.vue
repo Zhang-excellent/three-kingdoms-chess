@@ -21,7 +21,7 @@ import type {
   FiveSide,
   FiveState,
 } from '../five-soldiers.ts';
-import { socketIoConfig } from '../network-config.ts';
+import { backendAssetUrl, socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
 import OtherGameTable from './OtherGameTable.vue';
 
@@ -94,7 +94,7 @@ const targetAt = (point: FivePoint) => fivePieceAt(game.value.pieces, point);
 const topSide = computed<FiveSide>(() => flipped.value ? 'red' : 'black');
 const bottomSide = computed<FiveSide>(() => otherFiveSide(topSide.value));
 const sidePlayer = (side: FiveSide) => roomState.value?.players.find(player => player.side === side) ?? null;
-const avatarFor = (side: FiveSide) => sidePlayer(side)?.avatar || (sidePlayer(side) ? guestAvatar : null);
+const avatarFor = (side: FiveSide) => backendAssetUrl(sidePlayer(side)?.avatar) || (sidePlayer(side) ? guestAvatar : null);
 const sideLabel = (side: FiveSide) => fiveSideName(side);
 const pieceLabel = (piece: FivePiece) => `${fiveSideName(piece.side)}${fivePieceName(piece)}，${piece.x + 1} 路第 ${piece.y + 1} 线`;
 const playerState = (side: FiveSide) => {

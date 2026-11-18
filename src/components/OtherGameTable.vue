@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { backendAssetUrl } from '../network-config.ts';
 
 type Side = 'red' | 'black';
 interface TablePlayer {
@@ -23,7 +24,7 @@ const guestAvatar = 'images/guest-avatar.svg';
 const playerFor = (side: Side) => props.players.find(player => player.side === side);
 const avatarFor = (side: Side) => {
   const player = playerFor(side);
-  return player ? player.avatar || guestAvatar : null;
+  return player ? backendAssetUrl(player.avatar) || guestAvatar : null;
 };
 const statusText = computed(() => {
   if (props.phase === 'playing') return '对局中 · 点击桌子观战';
