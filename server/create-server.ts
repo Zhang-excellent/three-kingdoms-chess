@@ -17,6 +17,9 @@ import type { ChineseAck, ChineseMoveIntent, ChineseReceipt, ChineseState } from
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 const AUTH_COOKIE = 'three_chess_session';
+const WEB_ORIGIN = 'https://47.95.251.153';
+const ANDROID_ORIGIN = 'https://localhost';
+const LOCAL_DEVELOPMENT_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
 
 export interface OnlineServerOptions {
   authService?: AuthService;
@@ -25,15 +28,16 @@ export interface OnlineServerOptions {
   now?: () => number;
 }
 
-function authCookie(token: string, remember: boolean, secure: boolean): string {
-  const parts = [`${AUTH_COOKIE}=${token}`, 'Path=/three-chess', 'HttpOnly', 'SameSite=Lax'];
+function authCookie(token: string, remember: boolean, secure: boolean, crossSite: boolean): string {
+  const parts = [`${AUTH_COOKIE}=${token}`, 'Path=/three-chess', 'HttpOnly',
+    `SameSite=${crossSite ? 'None' : 'Lax'}`];
   if (remember) parts.push(`Max-Age=${REMEMBER_SESSION_SECONDS}`);
-  if (secure) parts.push('Secure');
+  if (secure || crossSite) parts.push('Secure');
   return parts.join('; ');
 }
 
-function clearAuthCookie(secure: boolean): string {
-  return `${authCookie('', false, secure)}; Max-Age=0`;
+function clearAuthCookie(secure: boolean, crossSite: boolean): string {
+  return `${authCookie('', false, secure, crossSite)}; Max-Age=0`;
 }
 
 function cookieToken(header: string | string[] | undefined): string | null {
@@ -52,7 +56,28 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const app = express();
   const httpServer = createServer(app);
-  const io = new Server(httpServer, { path: '/three-chess/socket.io', cors: { origin: true, credentials: true } });
+  const allowedOrigins = new Set([
+    WEB_ORIGIN,
+    ANDROID_ORIGIN,
+    ...(process.env.NODE_ENV === 'production' ? [] : LOCAL_DEVELOPMENT_ORIGINS),
+  ]);
+  const originValue = (value: string | string[] | undefined): string | null =>
+    typeof value === 'string' && value ? value : null;
+  const allowedOrigin = (value: string | null): boolean => value === null || allowedOrigins.has(value);
+  const io = new Server(httpServer, {
+    path: '/three-chess/socket.io',
+    cors: {
+      origin: (origin, callback) => {
+        if (allowedOrigin(origin ?? null)) callback(null, true);
+        else callback(new Error('Socket.IO origin is not allowed.'));
+      },
+      credentials: true,
+    },
+    allowRequest: (request, callback) => {
+      const origin = originValue(request.headers.origin);
+      callback(allowedOrigin(origin) ? null : 'Socket.IO origin is not allowed.', allowedOrigin(origin));
+    },
+  });
   const dataRoot = process.env.THREE_CHESS_DATA_DIR
     ? resolve(process.env.THREE_CHESS_DATA_DIR)
     : resolve(root, '.data');
@@ -121,6 +146,20 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
 
   app.disable('x-powered-by');
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+  app.use('/three-chess/api', (request, response, next) => {
+    const origin = originValue(request.headers.origin);
+    if (origin === null) return next();
+    response.vary('Origin');
+    if (!allowedOrigins.has(origin))
+      return response.status(403).json({ ok: false, code: 'ORIGIN_NOT_ALLOWED', error: '请求来源不受支持。' });
+    response.setHeader('Access-Control-Allow-Origin', origin);
+    response.setHeader('Access-Control-Allow-Credentials', 'true');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    response.setHeader('Access-Control-Max-Age', '600');
+    if (request.method === 'OPTIONS') return response.status(204).end();
+    next();
+  });
   app.use('/three-chess/api/auth', express.json({ limit: '700kb', type: 'application/json' }));
   app.get('/three-chess/api/avatar/:userId', (request, response) => {
     const avatar = authService.avatarData(request.params.userId);
@@ -134,37 +173,40 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   });
   const requestUser = (request: express.Request): AuthUser | null =>
     authService.authenticate(cookieToken(request.headers.cookie));
+  const crossSiteRequest = (request: express.Request): boolean =>
+    originValue(request.headers.origin) === ANDROID_ORIGIN;
   const sendAuthFailure = (response: express.Response, result: AuthFailure) => {
     if (result.retryAfterSeconds) response.setHeader('Retry-After', String(result.retryAfterSeconds));
     response.status(result.status).json({ ok: false, code: result.code, error: result.error });
   };
-  const sendAuthSuccess = (response: express.Response, result: AuthResult) => {
+  const sendAuthSuccess = (request: express.Request, response: express.Response, result: AuthResult) => {
     if (!result.ok) return sendAuthFailure(response, result);
     if (result.sessionToken) response.setHeader('Set-Cookie',
-      authCookie(result.sessionToken, result.remember === true, cookieSecure));
+      authCookie(result.sessionToken, result.remember === true, cookieSecure, crossSiteRequest(request)));
     response.json({ ok: true, user: result.user });
   };
   app.get('/three-chess/api/auth/me', (request, response) => {
     const user = requestUser(request);
-    if (!user && cookieToken(request.headers.cookie)) response.setHeader('Set-Cookie', clearAuthCookie(cookieSecure));
+    if (!user && cookieToken(request.headers.cookie))
+      response.setHeader('Set-Cookie', clearAuthCookie(cookieSecure, crossSiteRequest(request)));
     response.json({ ok: true, user });
   });
   app.post('/three-chess/api/auth/register', async (request, response, next) => {
     try {
       const result = await authService.register(request.body?.username, request.body?.password,
         request.body?.remember === true, request.ip ?? 'unknown');
-      sendAuthSuccess(response, result);
+      sendAuthSuccess(request, response, result);
     } catch (error) { next(error); }
   });
   app.post('/three-chess/api/auth/login', async (request, response, next) => {
     try {
       const result = await authService.login(request.body?.username, request.body?.password, request.body?.remember === true, request.ip ?? 'unknown');
-      sendAuthSuccess(response, result);
+      sendAuthSuccess(request, response, result);
     } catch (error) { next(error); }
   });
   app.post('/three-chess/api/auth/logout', (request, response) => {
     authService.logout(cookieToken(request.headers.cookie));
-    response.setHeader('Set-Cookie', clearAuthCookie(cookieSecure));
+    response.setHeader('Set-Cookie', clearAuthCookie(cookieSecure, crossSiteRequest(request)));
     response.json({ ok: true });
   });
   app.post('/three-chess/api/auth/password', async (request, response, next) => {
@@ -173,14 +215,14 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     try {
       const result = await authService.changePassword(user, request.body?.currentPassword, request.body?.newPassword,
         request.body?.remember === true);
-      sendAuthSuccess(response, result);
+      sendAuthSuccess(request, response, result);
     } catch (error) { next(error); }
   });
   app.post('/three-chess/api/auth/avatar', (request, response, next) => {
     const user = requestUser(request);
     if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
     try {
-      sendAuthSuccess(response, authService.setAvatar(user, request.body?.avatarData ?? null));
+      sendAuthSuccess(request, response, authService.setAvatar(user, request.body?.avatarData ?? null));
     } catch (error) { next(error); }
   });
   app.use('/three-chess/api/auth', (_request, response) => response.status(404).json({ ok: false, code: 'NOT_FOUND', error: '接口不存在。' }));

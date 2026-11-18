@@ -31,6 +31,35 @@ npm run dev
 
 点击当前阵营的棋子，查看可走位置，再点击目标交叉点。圆点代表可走位置，红圈代表可吃子。走子后，下一位主公的头像亮起，棋盘保留上一手的起点、落点和方向。
 
+## Android APK
+
+Android 使用 Capacitor 8，默认 WebView 来源为 `https://localhost`。`src/network-config.ts` 统一判断运行环境：网页继续使用 `/three-chess/api/...` 和 `/three-chess/socket.io` 相对路径；原生 Android 使用 `https://47.95.251.153`、`credentials: include` 与 `withCredentials: true`。账号仍使用服务端 Session Cookie，没有改成 JWT。
+
+服务器只为白名单来源处理跨域：`https://localhost`、`https://47.95.251.153`，开发模式下另允许本机 Vite 地址。Android 来源的登录、注册、改密和新会话 Cookie 使用 `HttpOnly; Secure; SameSite=None; Path=/three-chess`，网页来源继续使用 `SameSite=Lax`。Socket.IO 同时校验 CORS 和握手来源。
+
+重新生成 Android 工程资源并编译调试 APK：
+
+```powershell
+cd "C:\Users\lenovo\Documents\ChatGPT\三国象棋"
+npm ci
+npm run check
+npm test
+npm run build
+npx cap sync android
+cd android
+.\gradlew.bat assembleDebug
+```
+
+如系统默认 `JAVA_HOME` 是 Java 8，需先切换到 JDK 17～24；本机已安装的 JDK 21 通常位于 `%USERPROFILE%\.jdks\jbr-21.0.11`。手动编译时可在 `android` 目录执行：
+
+```powershell
+$env:JAVA_HOME="$env:USERPROFILE\.jdks\jbr-21.0.11"
+$env:Path="$env:JAVA_HOME\bin;$env:Path"
+.\gradlew.bat --no-daemon assembleDebug
+```
+
+调试 APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。也可直接运行 `npm run android:apk:debug` 完成网页构建、Capacitor 同步、自动选择 JDK 17～24 和调试 APK 编译。发布签名 APK 需先按自己的 Android 签名配置生成 Keystore，再执行 `.\gradlew.bat assembleRelease`；项目不会提交私钥或签名密码。
+
 ## 已实现
 
 - 9 路、10 横线棋盘，河界为秦岭与淮河，29 枚初始棋子：魏 16、蜀 6、吴 7；曹操视角上方左吴右蜀，河界左侧淮河、右侧秦岭，中路中卒归吴方。
@@ -60,7 +89,7 @@ npm run dev
 - 新版导出棋谱附带版本化 JSON，记录坐标约定、初始/最终子力、完整走法、真实出局、认输、和棋与终局事件，并单独保存和棋结束前的待行棋方；导入优先使用结构化数据，同时兼容旧版纯文字棋谱。
 - 首页右上角提供“登录 / 注册”，未登录也可继续浏览大厅和以游客身份对弈。注册用户可在个人中心上传方形头像，浏览器会居中裁切并压缩为不超过 300KB 的 PNG、JPEG 或 WebP；头像会保存在服务端账号数据库，并用于公开大厅、三国象棋席位及三种其他棋类对局。游客统一显示内置企鹅头像。个人中心还包含账号昵称与最近对局，账号设置按需展开，当前不提供找回密码入口。
 - 用户名即昵称，支持中文、英文字母、数字和下划线，规范化为去首尾空格、Unicode NFKC 和英文小写后唯一；密码明确允许 4～64 个字符。注册处提示用户记住密码。
-- 账号会话使用服务端持久会话表与 HttpOnly Cookie。勾选“7 天免登录”时有效 7 天；不勾选时服务端最长有效 12 小时，浏览器关闭后 Cookie 也会结束。退出或改密会撤销旧会话。
+- 账号会话使用服务端持久会话表与 HttpOnly Cookie。勾选“7 天免登录”时有效 7 天；不勾选时服务端最长有效 12 小时，浏览器关闭后 Cookie 也会结束。退出或改密会撤销旧会话。Android Capacitor 通过受限 CORS、`SameSite=None; Secure` Cookie 和 WebView 第三方 Cookie 支持复用同一 Session 服务。
 - 登录账号进入房间时，昵称由服务端根据 Cookie 会话确定，客户端提交的昵称或用户 ID 不能覆盖账号身份。游客席位显示“游客”标识，旧游客席位不会因昵称与账号相同而自动归入账号。
 - 从本版本开始，正常开局并结束的联机对局由服务端保存为独立对局记录。个人中心按结束时间倒序展示最近 5 盘，可查看日期、阵营、对手、胜负和步数，并复用棋盘复盘控件查看完整过程。
 - 悔棋、重新开局、独立的背景音乐与木质落子音效设置、带规则版本、胜负及轮次位置的本机自动保存，以及键盘 Enter/空格操作。旧名次、联盟、四拍或旧初始布局存档保留原数据并提示另开新局。
@@ -140,7 +169,7 @@ npm run dev
 sudo install -d -o www-data -g www-data -m 0700 /opt/three-kingdoms-chess/data
 ```
 
-数据库连接时按 `user_version` 自动迁移到版本 `4`，保留已有 `auth_users` 和 `auth_sessions`。当前表包括 `auth_users`、`auth_sessions`、`game_records`、`game_participants` 及索引；`auth_users.avatar_data` 保存经过服务端格式与大小校验的头像数据。旧恢复码字段继续保留以避免重建账号表，但当前版本不再提供恢复码生成、查询或找回密码接口。密码使用 Node.js 成熟 `scrypt` 加盐哈希；Cookie 令牌只在数据库中保存摘要，范围限制为 `/three-chess`、`HttpOnly`、`SameSite=Lax`，生产环境附加 `Secure`。密码、Cookie 和服务端会话令牌不写入 `localStorage`。
+数据库连接时按 `user_version` 自动迁移到版本 `4`，保留已有 `auth_users` 和 `auth_sessions`。当前表包括 `auth_users`、`auth_sessions`、`game_records`、`game_participants` 及索引；`auth_users.avatar_data` 保存经过服务端格式与大小校验的头像数据。旧恢复码字段继续保留以避免重建账号表，但当前版本不再提供恢复码生成、查询或找回密码接口。密码使用 Node.js 成熟 `scrypt` 加盐哈希；Cookie 令牌只在数据库中保存摘要，范围限制为 `/three-chess`、`HttpOnly`。网页 Cookie 使用 `SameSite=Lax`，白名单 Android 来源使用 `SameSite=None; Secure`；生产环境网页 Cookie 也附加 `Secure`。密码、Cookie 和服务端会话令牌不写入 `localStorage`。
 
 登录、注册和改密按服务端固定窗口限流；注册默认允许同一公网 IP 在一小时内发起 20 次请求，以兼顾校园、宿舍和共用设备，同时仍限制短时间批量注册。限流窗口和上限可通过环境变量调整，不使用浏览器指纹或“一 IP 一账号”。当前功能包含账号、固定昵称、会话和最近 5 盘展示，不含积分、得分率、排行榜、收藏或后台管理。
 
@@ -183,6 +212,7 @@ npm run build
 | `src/horse-chess.ts` | 马棋九马布局、纯走棋规则、状态与联机协议 |
 | `src/chinese-chess.ts` | 经典中国象棋布局、合法走法、将军、将死与联机协议 |
 | `src/App.vue` | 棋盘与玩家界面、事件处理、上一步痕迹、棋谱和本机保存 |
+| `src/network-config.ts` | 网页相对路径与 Android 完整后端地址、认证和 Socket.IO 连接配置 |
 | `src/components/HomePage.vue` | 游戏首页、阵营介绍和主要入口 |
 | `src/components/OtherGamesPage.vue` | 其他玩法入口页 |
 | `src/components/OtherGameTable.vue` | 三种其他棋类共用的红黑席位、中央棋桌和旁观入口 |
@@ -199,6 +229,7 @@ npm run build
 | `src/game-history.ts` | 历史对局、参与者和最近对局摘要的共享类型 |
 | `src/auth.ts` | 前后端共享的用户名、密码和会话期限规则 |
 | `src/useAuth.ts`、`src/components/AuthDialog.vue` | Cookie 会话、个人中心、最近对局和按需账号设置 |
+| `capacitor.config.ts`、`android/` | Capacitor 8 Android 工程、WebView 来源与第三方 Cookie 设置 |
 | `src/board-view.ts` | 标准坐标和翻转显示坐标之间的双向映射 |
 | `src/useOnlineRoom.ts` | 房间客户端、连接状态、凭证恢复和走棋意图 |
 | `src/online.ts` | 前后端共享的房间协议类型 |
@@ -257,6 +288,8 @@ npm run build
 | 马棋棋桌 | [截图](docs/验收截图/马棋-棋桌-桌面.png) | [截图](docs/验收截图/马棋-手机-观战.png) |
 | 马棋实时对局 | [截图](docs/验收截图/马棋-桌面-对局.png) | — |
 | 账号上传头像 | [截图](docs/验收截图/账号-上传头像.png) | — |
+
+2026-11-18 Android APK 后端适配（仅本地，未部署）：新增统一网络配置，网页继续使用相对 API/Socket.IO 路径，Capacitor Android 改用 `https://47.95.251.153` 完整地址、认证 `credentials: include` 和 Socket.IO `withCredentials: true`。服务器 API 增加来源白名单和 OPTIONS 预检，Socket.IO 同时校验 CORS 与握手来源；Android 会话 Cookie 使用 `HttpOnly; Secure; SameSite=None; Path=/three-chess`，网页继续使用 `SameSite=Lax`。Android `MainActivity` 启用 WebView 第三方 Cookie，Capacitor 明确固定 `https://localhost` 来源。`npm test` 共 181 项通过，`npm run check`、`npm run build`、Capacitor 同步及 Gradle `assembleDebug` 均通过；真实 Chromium 三联机流程和 390px 手机布局通过。调试 APK 已生成，但当前没有连接 Android 设备或 AVD，实体 APK 登录/Cookie/Socket.IO 联机仍需人工验收。本次未修改 Nginx，也未连接或部署服务器。
 
 2026-11-17 三国象棋单棋盘房间（仅本地，未部署）：取消独立“三人准备”等待页，创建或加入房间后立即显示完整 29 子棋盘。魏、蜀、吴左侧席位卡支持头像、昵称、空位选方、在线和准备状态；棋盘中央等待层显示房间号、人数、准备数、开始/取消开始及邀请链接，三人全部开始后在同一页面进入正式对局。左侧圆形箭头菜单统一提供提和、认输和离开；三人房间的账号头像和游客企鹅头像沿用公开大厅与头像服务。再来一局会回到同一棋盘等待层，并保留上一局结果、导出棋谱与可展开棋谱；观战等待时不显示开始和邀请操作。`npm test` 共 177 项通过，`npm run check` 与 `npm run build` 通过；真实 Chromium 自动验收覆盖创建后直接进棋盘、单人/三人等待、三名玩家开始、同页对局、左侧菜单、游客头像和 390×844 手机布局，页面 `scrollWidth` 为 390；实体手机与公网三设备仍待人工验收。
 

@@ -21,6 +21,7 @@ import type {
   HorseSide,
   HorseState,
 } from '../horse-chess.ts';
+import { socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
 import OtherGameTable from './OtherGameTable.vue';
 
@@ -197,7 +198,9 @@ function openSocket() {
     return;
   }
   connection.value = 'connecting';
-  socket = io({ path: '/three-chess/socket.io', autoConnect: false, reconnection: true, forceNew: true });
+  const config = socketIoConfig();
+  const options = { ...config.options, autoConnect: false, reconnection: true, forceNew: true };
+  socket = config.origin ? io(config.origin, options) : io(options);
   socket.on('connect', () => {
     connection.value = 'online';
     void recover();

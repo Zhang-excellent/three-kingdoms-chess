@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import type { AuthUser } from './auth.ts';
 import type { ArchivedGameRecord, RecentGameSummary } from './game-history.ts';
+import { apiRequestCredentials, apiUrl } from './network-config.ts';
 
 interface ApiFailure {
   ok: false;
@@ -13,9 +14,9 @@ type UserResult = ApiResult<{ user: AuthUser }>;
 
 async function request<T>(path: string, body?: Record<string, unknown>): Promise<ApiResult<T>> {
   try {
-    const response = await fetch(`/three-chess/api/${path}`, {
+    const response = await fetch(apiUrl(path), {
       method: body ? 'POST' : 'GET',
-      credentials: 'same-origin',
+      credentials: apiRequestCredentials(),
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });

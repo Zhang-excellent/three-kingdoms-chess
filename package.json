@@ -16,9 +16,13 @@
     "start": "tsx server/index.ts",
     "check": "vue-tsc --noEmit",
     "test": "node scripts/test.mjs",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "android:sync": "npm run build && cap sync android",
+    "android:apk:debug": "npm run android:sync && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-debug.ps1"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
     "express": "^5.3.0",
     "socket.io": "^4.8.4",
     "socket.io-client": "^4.8.4",
@@ -26,6 +30,7 @@
     "vue": "3.5.43"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
     "@happy-dom/global-registrator": "21.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",

@@ -39,15 +39,17 @@ interface ApiResult {
   cookie: string | null;
   setCookie: string | null;
   body: Record<string, unknown>;
+  headers: Headers;
 }
 
 async function api(origin: string, path: string, method: 'GET' | 'POST', body?: Record<string, unknown>,
-  cookie?: string | null): Promise<ApiResult> {
+  cookie?: string | null, extraHeaders: Record<string, string> = {}): Promise<ApiResult> {
   const response = await fetch(`${origin}/three-chess/api/auth/${path}`, {
     method,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(cookie ? { Cookie: cookie } : {}),
+      ...extraHeaders,
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -57,6 +59,7 @@ async function api(origin: string, path: string, method: 'GET' | 'POST', body?: 
     cookie: setCookie?.split(';')[0] ?? null,
     setCookie,
     body: await response.json() as Record<string, unknown>,
+    headers: response.headers,
   };
 }
 
@@ -198,6 +201,77 @@ test('sessions expire after seven days and survive a Node service restart', asyn
     assert.equal((await api(second.origin, 'me', 'GET', undefined, shortLogin.cookie)).body.user, null);
   } finally {
     await closeServer(second.server);
+  }
+});
+
+test('CORS whitelist and Android cross-site session cookies preserve web cookies', async () => {
+  const { server, origin } = await startServer({ cookieSecure: true });
+  try {
+    const androidPreflight = await fetch(`${origin}/three-chess/api/auth/login`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://localhost',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    });
+    assert.equal(androidPreflight.status, 204);
+    assert.equal(androidPreflight.headers.get('access-control-allow-origin'), 'https://localhost');
+    assert.equal(androidPreflight.headers.get('access-control-allow-credentials'), 'true');
+    assert.match(androidPreflight.headers.get('access-control-allow-methods') ?? '', /POST/);
+    assert.match(androidPreflight.headers.get('access-control-allow-headers') ?? '', /Content-Type/i);
+
+    const androidRegistered = await api(origin, 'register', 'POST', {
+      username: '安卓跨站会话', password: '1234', remember: true,
+    }, null, { Origin: 'https://localhost' });
+    assert.equal(androidRegistered.status, 200);
+    assert.equal(androidRegistered.headers.get('access-control-allow-origin'), 'https://localhost');
+    assert.match(androidRegistered.setCookie ?? '', /HttpOnly/);
+    assert.match(androidRegistered.setCookie ?? '', /SameSite=None/);
+    assert.match(androidRegistered.setCookie ?? '', /Secure/);
+    assert.match(androidRegistered.setCookie ?? '', /Path=\/three-chess/);
+    assert.match(androidRegistered.setCookie ?? '', /Max-Age=604800/);
+
+    const androidLogin = await api(origin, 'login', 'POST', {
+      username: '安卓跨站会话', password: '1234', remember: false,
+    }, null, { Origin: 'https://localhost' });
+    assert.equal(androidLogin.status, 200);
+    assert.match(androidLogin.setCookie ?? '', /SameSite=None/);
+    assert.match(androidLogin.setCookie ?? '', /Secure/);
+    assert.doesNotMatch(androidLogin.setCookie ?? '', /Max-Age=/);
+
+    const androidLogout = await api(origin, 'logout', 'POST', {}, androidRegistered.cookie,
+      { Origin: 'https://localhost' });
+    assert.match(androidLogout.setCookie ?? '', /SameSite=None/);
+    assert.match(androidLogout.setCookie ?? '', /Secure/);
+    assert.match(androidLogout.setCookie ?? '', /Max-Age=0/);
+
+    const clearedInvalid = await api(origin, 'me', 'GET', undefined, 'three_chess_session=invalid',
+      { Origin: 'https://localhost' });
+    assert.match(clearedInvalid.setCookie ?? '', /SameSite=None/);
+    assert.match(clearedInvalid.setCookie ?? '', /Secure/);
+    assert.match(clearedInvalid.setCookie ?? '', /Max-Age=0/);
+
+    const webRegistered = await api(origin, 'register', 'POST', {
+      username: '网页同站会话', password: '1234', remember: true,
+    }, null, { Origin: 'https://47.95.251.153' });
+    assert.equal(webRegistered.status, 200);
+    assert.equal(webRegistered.headers.get('access-control-allow-origin'), 'https://47.95.251.153');
+    assert.match(webRegistered.setCookie ?? '', /SameSite=Lax/);
+    assert.match(webRegistered.setCookie ?? '', /Secure/);
+    assert.doesNotMatch(webRegistered.setCookie ?? '', /SameSite=None/);
+
+    const denied = await fetch(`${origin}/three-chess/api/auth/login`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://example.invalid',
+        'Access-Control-Request-Method': 'POST',
+      },
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get('access-control-allow-origin'), null);
+  } finally {
+    await closeServer(server);
   }
 });
 

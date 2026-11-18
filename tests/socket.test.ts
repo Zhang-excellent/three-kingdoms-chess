@@ -19,8 +19,13 @@ after(async () => {
   await new Promise<void>(resolve => server.io.close(() => resolve()));
 });
 
-async function client(): Promise<Socket> {
-  const socket = connect(origin, { path: '/three-chess/socket.io', forceNew: true, reconnection: false });
+async function client(requestOrigin?: string): Promise<Socket> {
+  const socket = connect(origin, {
+    path: '/three-chess/socket.io',
+    forceNew: true,
+    reconnection: false,
+    extraHeaders: requestOrigin ? { Origin: requestOrigin } : undefined,
+  });
   sockets.push(socket);
   await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
   return socket;
@@ -41,6 +46,26 @@ test('missing or retired audio paths return 404 instead of the application HTML'
   assert.equal(response.status, 404);
   assert.match(response.headers.get('content-type') ?? '', /^text\/plain/);
   assert.equal(await response.text(), 'Audio not found');
+});
+
+test('Socket.IO accepts whitelisted web and Capacitor origins and rejects other browser origins', async () => {
+  const web = await client('https://47.95.251.153');
+  const android = await client('https://localhost');
+  assert.equal(web.connected, true);
+  assert.equal(android.connected, true);
+  web.disconnect();
+  android.disconnect();
+
+  const denied = connect(origin, {
+    path: '/three-chess/socket.io',
+    forceNew: true,
+    reconnection: false,
+    extraHeaders: { Origin: 'https://example.invalid' },
+  });
+  sockets.push(denied);
+  await new Promise<Error>(resolve => denied.once('connect_error', resolve));
+  assert.equal(denied.connected, false);
+  denied.disconnect();
 });
 
 test('public lobby subscription stays concise, ordered, and safe against malformed requests', async () => {

@@ -4,6 +4,7 @@ import { ONLINE_SESSION_KEY, PENDING_LEAVES_KEY, createMoveRequestId } from './o
 import type { ClientAck, DrawVote, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, RoomView, SessionReceipt } from './online.ts';
 import { roomInviteUrl } from './navigation.ts';
 import type { Faction, Point } from './game.ts';
+import { socketIoConfig } from './network-config.ts';
 
 interface SavedSession { roomCode: string; reconnectToken: string; playerId?: string; nickname: string }
 interface PendingLeave { roomCode: string; reconnectToken: string }
@@ -148,7 +149,9 @@ export function useOnlineRoom() {
   function openSocket() {
     if (socket) { if (!socket.connected) socket.connect(); return; }
     connection.value = 'connecting';
-    socket = io({ path: '/three-chess/socket.io', autoConnect: false, reconnection: true });
+    const config = socketIoConfig();
+    const options = { ...config.options, autoConnect: false, reconnection: true };
+    socket = config.origin ? io(config.origin, options) : io(options);
     socket.on('connect', () => {
       connection.value = 'online';
       const generation = epoch;
