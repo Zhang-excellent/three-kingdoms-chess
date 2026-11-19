@@ -10,6 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:server": "tsx watch server/index.ts",
+    "accept:home": "node scripts/home-browser-acceptance.mjs",
     "accept:three-kingdoms": "node scripts/three-kingdoms-browser-acceptance.mjs",
     "accept:chinese": "node scripts/chinese-browser-acceptance.mjs",
     "accept:other-games": "node scripts/other-games-browser-acceptance.mjs",

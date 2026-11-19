@@ -313,7 +313,6 @@ async function navigatePage(next: AppPage, code: string | null = null, method: '
 function openHomePage() { void navigatePage('home'); }
 function openLobbyPage() { void navigatePage('lobby'); }
 function openFriendsPage() { void navigatePage('friends'); }
-function openSpectateEntry() { void navigatePage('spectate', null, 'replace'); }
 function openLocalPage() { void navigatePage('local'); }
 function openOtherPage() { void navigatePage('other'); }
 function openFivePage() { void navigatePage('five'); }
@@ -750,8 +749,7 @@ async function requestRematch() {
       <div class="header-actions">
         <button class="plain-button" :class="{ active: page === 'home' }" @click="openHomePage">首页</button>
         <button class="plain-button" :class="{ active: page === 'lobby' }" @click="openLobbyPage">对战大厅</button>
-        <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友组局</button>
-        <button class="plain-button" :class="{ active: page === 'spectate' }" @click="openSpectateEntry">观战</button>
+        <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友对战</button>
         <button class="plain-button" :class="{ active: page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' }" @click="openOtherPage">其他玩法</button>
         <button v-if="hasSession && page !== 'room'" class="plain-button room-return-button" @click="openCurrentRoom">{{ resumeRoomLabel }}</button>
         <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
@@ -763,7 +761,7 @@ async function requestRematch() {
     <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>
 
     <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
-      @lobby="openLobbyPage" @friends="openFriendsPage" @local="openLocalPage" @resume="openCurrentRoom" />
+      @lobby="openLobbyPage" @friends="openFriendsPage" @other="openOtherPage" @local="openLocalPage" @resume="openCurrentRoom" />
 
     <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" @horse="openHorsePage" @chinese="openChinesePage" />
 
@@ -983,7 +981,7 @@ async function requestRematch() {
       </aside>
       </main>
     </template>
-    <footer class="site-footer"><span>{{ page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' ? '其他玩法 · 当前开放五兵联盟、马棋与中国象棋。' : '三人同局，魏蜀吴对弈 · 当前为试玩规则。' }}</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
+    <footer v-if="page !== 'home'" class="site-footer"><span>{{ page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' ? '其他玩法 · 当前开放五兵联盟、马棋与中国象棋。' : '三人同局，魏蜀吴对弈 · 当前为试玩规则。' }}</span><span v-if="page === 'local'">{{ saveAvailable ? '棋局自动保存在本机' : '本机保存不可用，请保持页面打开' }}</span></footer>
     <dialog ref="rulesDialog" class="rules-dialog"><div class="dialog-heading"><h2>本轮试玩规则</h2><button class="dialog-close" aria-label="关闭规则" @click="rulesDialog?.close()">×</button></div><p>本地模式可在同一页面轮流控制三国；联机模式中三人各控制自己的阵营。魏 → 蜀 → 吴循环，每方每回合只走一步。曹操视角上方左吴右蜀，魏方默认标准视角；刘备、孙权默认使用相同的 180° 视角，翻转只改变个人看到的画面与点击换算。输入房间号可只读观战。</p><ul><li>三方独立竞争。初始共 29 枚：魏 16、蜀 6、吴 7；上方中路中卒归吴方。任意不同阵营可以按棋子走法互相吃子；同国棋子不能互吃。</li><li>主公被吃、困毙或认输，该国失败并清空全部棋子；剩余两国严格交替。</li><li>最后存活的一方获胜，其余两方失败。首位出局后对局继续；曹操先出局时蜀吴继续争胜。</li><li>联机对弈中，只有轮到自己行棋时才能提和；所有存活阵营同意后本局和棋。已有一方出局时，剩余两方均同意即可。</li><li>锋：向前一或两格；向后、向左、向右一格，不能跳子。</li><li>刘备、孙权：上方底线第 2～8 路，每次横走一格。曹操仍在下方九宫。</li><li>任意棋子都可以作炮架。取消对面笑；其余棋子的基本走法沿用中国象棋。</li></ul><div class="trial-rule"><strong>这一轮的临时约定</strong><p>以吃主公判出局，不强制应将，也不禁止送将。重复局面的自动判和次数尚待确认；本版仅采用全部存活阵营同意的手动和棋。</p></div><button class="primary-button" @click="rulesDialog?.close()">知道了，继续行棋</button></dialog>
     <dialog ref="fiveRulesDialog" class="rules-dialog five-rules-dialog">
       <div class="dialog-heading"><h2>五兵联盟规则</h2><button class="dialog-close" aria-label="关闭规则" @click="fiveRulesDialog?.close()">×</button></div>

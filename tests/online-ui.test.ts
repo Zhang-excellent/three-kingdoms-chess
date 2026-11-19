@@ -41,7 +41,7 @@ test('browser component sends a legal move without crypto.randomUUID', async () 
   const oldRandomUUID = Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID');
   const oldClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
   try {
-    await wrapper.findAll('button').find(button => button.text() === '好友组局')!.trigger('click');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '好友对战')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button => button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
     await wrapper.get('input[autocomplete="nickname"]').setValue('界面魏');
     await wrapper.get('input[aria-label="创建房间号"]').setValue('001234');
@@ -192,7 +192,7 @@ test('navigation away from an active room confirms exit and releases the server 
     await wrapper!.findAll('.header-actions button').find(button => button.text() === '对战大厅')!.trigger('click');
     await waitUntil(() => wrapper!.find('.lobby-page').exists(), 'Lobby did not open after leaving the room');
     assert.equal(wrapper!.find('.lobby-current-room').exists(), false);
-    await wrapper!.findAll('.header-actions button').find(button => button.text() === '好友组局')!.trigger('click');
+    await wrapper!.findAll('.header-actions button').find(button => button.text() === '好友对战')!.trigger('click');
     await waitUntil(() => wrapper!.findAll('button').some(button =>
       button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Could not join a new room after active exit');
     await wrapper!.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('退房后新房');
@@ -264,7 +264,7 @@ test('leaving a waiting room releases the seat and allows creating another room'
     await waitUntil(() => server.rooms.getRoom(code) === undefined, 'Waiting-room exit did not remove the last seat');
     assert.equal(localStorage.getItem('three-kingdoms-chess:online-session-v1'), null);
 
-    await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
+    await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '好友对战')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button => button.text() === '创建房间' && button.attributes('disabled') === undefined),
       'Could not create another room after leaving');
     await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('新房主');
@@ -296,7 +296,7 @@ test('leaving while disconnected queues the exit and flushes it before a new roo
     await waitUntil(() => server.rooms.getRoom('401006') === undefined, 'Queued exit was not flushed after reconnect', 6_000);
     assert.equal(localStorage.getItem(PENDING_LEAVES_KEY), null);
 
-    await wrapper.findAll('.header-actions button').find(button => button.text() === '好友组局')!.trigger('click');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '好友对战')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button =>
       button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Could not create after queued exit');
     await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('新房间玩家');
@@ -312,7 +312,7 @@ test('browser back from a waiting room releases the seat and forward cannot revi
   history.replaceState(null, '', `${origin}/three-chess/`);
   const wrapper = mount(App, { attachTo: document.body });
   try {
-    await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
+    await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '好友对战')!.trigger('click');
     await waitUntil(() => wrapper.findAll('button').some(button =>
       button.text() === '创建房间' && button.attributes('disabled') === undefined), 'Online connection did not open');
     await wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').setValue('返回测试房主');
@@ -388,7 +388,7 @@ test('leaving a finished room to local play releases identity and keeps the resu
 
     await wrapper.findAll('.header-actions button').find(button => button.text() === '首页')!.trigger('click');
     await waitUntil(() => wrapper!.find('.home-page').exists(), 'Finished-room navigation did not open home');
-    await wrapper.findAll('.home-action-card').find(button => button.text() === '本地试玩')!.trigger('click');
+    await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '本地试玩')!.trigger('click');
     await waitUntil(() => wrapper!.find('.local-workbench').exists(), 'Home did not open local play');
     await waitUntil(() => server.rooms.getRoom(a.roomCode)?.players.length === 2, 'Finished player identity was not released');
     assert.equal(server.rooms.getRoom(a.roomCode)?.game?.winner, 'wei');
@@ -555,7 +555,11 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     const c = success(await send<SessionReceipt>(players[2], 'room:join', { roomCode: a.roomCode, nickname: '观战测试吴' }));
     const receipts = [a, b, c];
     wrapper = mount(App, { attachTo: document.body });
-    await wrapper.findAll('button').find(button => button.text() === '观战')!.trigger('click');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '好友对战')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.lobby-page').exists(), 'Friend page did not open for spectating');
+    await waitUntil(() => wrapper!.find('.friend-secondary-action').attributes('disabled') === undefined,
+      'Friend spectating button did not connect');
+    await wrapper.get('.friend-secondary-action').trigger('click');
     await waitUntil(() => wrapper!.find('.watch-entry').exists(), 'Watch entry did not open');
     await wrapper.get('input[aria-label="观战房间号"]').setValue(a.roomCode);
     await waitUntil(() => wrapper!.findAll('button').some(button => button.text() === '进入观战' && button.attributes('disabled') === undefined), 'Watch socket did not connect');
@@ -592,7 +596,10 @@ test('spectator uses visible entry, sees lobby and live game, remains read-only,
     assert.equal(wrapper.find('.board-panel').exists(), false);
     await waitUntil(() => wrapper!.find('.lobby-page').exists(), 'Exiting spectating did not finish navigation');
     assert.equal(server.rooms.getRoom(a.roomCode)?.players.length, 3);
-    await wrapper.findAll('button').find(button => button.text() === '观战')!.trigger('click');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '好友对战')!.trigger('click');
+    await waitUntil(() => wrapper!.find('.friend-secondary-action').attributes('disabled') === undefined,
+      'Friend watch entry did not reconnect');
+    await wrapper.get('.friend-secondary-action').trigger('click');
     await waitUntil(() => wrapper!.find('input[aria-label="观战房间号"]').exists(), 'Watch entry did not reopen');
     await wrapper.get('input[aria-label="观战房间号"]').setValue('FFFFFF');
     await wrapper.findAll('button').find(button => button.text() === '进入观战')!.trigger('click');

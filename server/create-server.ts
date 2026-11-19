@@ -63,7 +63,11 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   ]);
   const originValue = (value: string | string[] | undefined): string | null =>
     typeof value === 'string' && value ? value : null;
-  const allowedOrigin = (value: string | null): boolean => value === null || allowedOrigins.has(value);
+  const isLocalDevelopmentOrigin = (value: string | null): boolean =>
+    process.env.NODE_ENV !== 'production' && !!value
+    && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(value);
+  const allowedOrigin = (value: string | null): boolean =>
+    value === null || allowedOrigins.has(value) || isLocalDevelopmentOrigin(value);
   const io = new Server(httpServer, {
     path: '/three-chess/socket.io',
     cors: {
@@ -150,7 +154,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     const origin = originValue(request.headers.origin);
     if (origin === null) return next();
     response.vary('Origin');
-    if (!allowedOrigins.has(origin))
+    if (!allowedOrigin(origin))
       return response.status(403).json({ ok: false, code: 'ORIGIN_NOT_ALLOWED', error: '请求来源不受支持。' });
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Access-Control-Allow-Credentials', 'true');

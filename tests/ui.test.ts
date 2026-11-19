@@ -23,7 +23,7 @@ function remount(t: TestContext, wrapper: ReturnType<typeof mount>) {
 const piece = (faction: string, name: string, x: number, y: number) => `g.piece[aria-label="${faction}方${name}，第${x}路第${y}线"]`;
 const target = (x: number, y: number) => `g.legal-point[aria-label="走到第${x}路第${y}线"]`;
 
-test('new visitors start on the home page and can open local play, rules, friends and lobby', async t => {
+test('new visitors start on the home page and can open all four entries, rules and friend spectating', async t => {
   localStorage.clear();
   const mountHome = () => {
     history.replaceState(null, '', 'http://localhost:5173/');
@@ -34,35 +34,49 @@ test('new visitors start on the home page and can open local play, rules, friend
   assert.ok(wrapper.find('.home-page').exists());
   assert.match(wrapper.get('.home-page').text(), /魏、蜀、吴三方轮流行棋/);
   assert.doesNotMatch(wrapper.get('.home-hero-copy').text(), /三人同局|独立争胜/);
-  assert.deepEqual(wrapper.findAll('.home-action-card strong').map(item => item.text()), ['公开大厅', '好友对战', '本地试玩']);
-  assert.deepEqual(wrapper.findAll('.home-action-card').map(item => item.text()), ['公开大厅', '好友对战', '本地试玩']);
+  assert.deepEqual(wrapper.findAll('.home-action-card strong').map(item => item.text()),
+    ['公开大厅', '好友对战', '其他玩法', '本地试玩']);
+  assert.equal(wrapper.findAll('.home-action-icon').length, 0);
+  assert.equal(wrapper.findAll('.home-action-arrow').length, 0);
   assert.doesNotMatch(wrapper.get('.home-actions').text(), /找棋友|查看正在等待|创建或加入|查看 10 张|开始本地/);
+  assert.equal(wrapper.get('.home-tagline').text(), '一局棋，三方博弈');
+  assert.equal(wrapper.find('.home-about').exists(), false);
+  assert.equal(wrapper.find('.site-footer').exists(), false);
   assert.equal(wrapper.find('.home-secondary-row').exists(), false);
   assert.equal(wrapper.find('.home-factions').exists(), false);
   assert.equal(wrapper.find('.home-primary-actions').exists(), false);
   const navigationLabels = wrapper.get('.header-actions').findAll('button').map(button => button.text());
   assert.equal(navigationLabels.filter(label => label === '玩法说明').length, 1);
   assert.equal(navigationLabels.filter(label => label === '设置').length, 1);
+  assert.equal(navigationLabels.filter(label => label === '好友对战').length, 1);
+  assert.equal(navigationLabels.includes('好友组局'), false);
+  assert.equal(navigationLabels.includes('观战'), false);
   assert.equal(wrapper.find('.board-panel').exists(), false);
 
   await wrapper.findAll('button').find(button => button.text() === '玩法说明')!.trigger('click');
   assert.equal((wrapper.get('.rules-dialog').element as HTMLDialogElement).open, true);
   await wrapper.get('.rules-dialog .dialog-close').trigger('click');
 
-  await wrapper.findAll('.home-action-card').find(button => button.text() === '好友对战')!.trigger('click');
+  await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '好友对战')!.trigger('click');
   assert.ok(wrapper.find('.lobby-page').exists());
   assert.equal(wrapper.get('.lobby-page-heading h1').text(), '好友对弈');
+  assert.equal(wrapper.findAll('.lobby-page button').some(button => button.text() === '观战'), true);
   assert.doesNotMatch(wrapper.get('.lobby-page-heading').text(), /游客体验|无需登录|创建 6 位数字房间/);
   assert.deepEqual(wrapper.findAll('.lobby-entry-card h2').map(item => item.text()), ['创建房间', '加入房间']);
   assert.equal(wrapper.find('.lobby-entry-card .lobby-card-kicker').exists(), false);
   assert.equal(wrapper.get('.lobby-entry-card input[autocomplete="nickname"]').attributes('placeholder'), undefined);
 
   wrapper.unmount(); wrapper = mountHome();
-  await wrapper.findAll('.home-action-card').find(button => button.text() === '公开大厅')!.trigger('click');
+  await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '公开大厅')!.trigger('click');
   assert.match(wrapper.get('.lobby-page-heading h1').text(), /公开对战大厅/);
 
   wrapper.unmount(); wrapper = mountHome();
-  await wrapper.findAll('.home-action-card').find(button => button.text() === '本地试玩')!.trigger('click');
+  await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '其他玩法')!.trigger('click');
+  assert.ok(wrapper.find('.other-games-page').exists());
+  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋']);
+
+  wrapper.unmount(); wrapper = mountHome();
+  await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '本地试玩')!.trigger('click');
   assert.ok(wrapper.find('.board-panel').exists());
 });
 

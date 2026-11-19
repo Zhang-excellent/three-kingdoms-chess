@@ -221,6 +221,13 @@ test('CORS whitelist and Android cross-site session cookies preserve web cookies
     assert.match(androidPreflight.headers.get('access-control-allow-methods') ?? '', /POST/);
     assert.match(androidPreflight.headers.get('access-control-allow-headers') ?? '', /Content-Type/i);
 
+    const localPreflight = await fetch(`${origin}/three-chess/api/auth/login`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://127.0.0.1:3100', 'Access-Control-Request-Method': 'POST' },
+    });
+    assert.equal(localPreflight.status, 204);
+    assert.equal(localPreflight.headers.get('access-control-allow-origin'), 'http://127.0.0.1:3100');
+
     const androidRegistered = await api(origin, 'register', 'POST', {
       username: '安卓跨站会话', password: '1234', remember: true,
     }, null, { Origin: 'https://localhost' });

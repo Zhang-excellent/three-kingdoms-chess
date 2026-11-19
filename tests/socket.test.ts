@@ -51,10 +51,13 @@ test('missing or retired audio paths return 404 instead of the application HTML'
 test('Socket.IO accepts whitelisted web and Capacitor origins and rejects other browser origins', async () => {
   const web = await client('https://47.95.251.153');
   const android = await client('https://localhost');
+  const localAcceptance = await client('http://127.0.0.1:3100');
   assert.equal(web.connected, true);
   assert.equal(android.connected, true);
+  assert.equal(localAcceptance.connected, true);
   web.disconnect();
   android.disconnect();
+  localAcceptance.disconnect();
 
   const denied = connect(origin, {
     path: '/three-chess/socket.io',
