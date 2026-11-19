@@ -144,6 +144,26 @@ async function capture(devtools, page, fileName) {
   return target;
 }
 
+async function captureFullPage(devtools, page, fileName) {
+  const metrics = await devtools.send('Page.getLayoutMetrics', {}, page.sessionId);
+  const content = metrics.cssContentSize ?? metrics.contentSize;
+  const result = await devtools.send('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: true,
+    clip: {
+      x: 0,
+      y: 0,
+      width: page.width,
+      height: Math.max(page.height, Math.ceil(content.height)),
+      scale: 1,
+    },
+  }, page.sessionId);
+  const target = join(screenshotDir, fileName);
+  await writeFile(target, Buffer.from(result.data, 'base64'));
+  return target;
+}
+
 async function registerAcceptanceAccount() {
   const username = `首页验收${Date.now().toString().slice(-8)}`;
   const response = await fetch(`${appOrigin}/three-chess/api/auth/register`, {
@@ -219,7 +239,44 @@ try {
   await waitFor(devtools, page, `!!document.querySelector('.home-page')`, '登录后首页');
   await waitFor(devtools, page, `[...document.querySelectorAll('.header-actions button')]
     .some(item => item.textContent.trim() === ${JSON.stringify(account.username)})`, '登录昵称入口');
-  const desktopScreenshot = await capture(devtools, page, '2026-11-19-home-desktop.png');
+  const desktopLayout = await evaluate(devtools, page, `(() => {
+    const hero = document.querySelector('.home-hero').getBoundingClientRect();
+    const cards = document.querySelector('.home-actions').getBoundingClientRect();
+    const tagline = document.querySelector('.home-tagline').getBoundingClientRect();
+    const contentHeight = document.documentElement.scrollHeight;
+    return {
+      heroHeight: Math.round(hero.height),
+      heroTop: Math.round(hero.top),
+      cardsTop: Math.round(cards.top),
+      cardsBottom: Math.round(cards.bottom),
+      taglineTop: Math.round(tagline.top),
+      taglineBottom: Math.round(tagline.bottom),
+      contentHeight,
+      trailingSpace: Math.round(contentHeight - tagline.bottom),
+    };
+  })()`);
+  if (desktopLayout.heroHeight < 420) throw new Error(`桌面主视觉高度未恢复：${desktopLayout.heroHeight}`);
+  if (desktopLayout.trailingSpace > 80) throw new Error(`桌面口号下方留白过大：${desktopLayout.trailingSpace}`);
+  const desktopScreenshot = await captureFullPage(devtools, page, '2026-11-19-home-desktop.png');
+
+  await devtools.send('Emulation.setDeviceMetricsOverride', {
+    width: 1366, height: 1000, deviceScaleFactor: 1, mobile: false, screenWidth: 1366, screenHeight: 1000,
+  }, page.sessionId);
+  page.width = 1366; page.height = 1000;
+  await devtools.send('Page.reload', {}, page.sessionId);
+  await waitFor(devtools, page, `innerHeight === 1000 && !!document.querySelector('.home-tagline')`, '高屏首页');
+  const tallLayout = await evaluate(devtools, page, `(() => {
+    const tagline = document.querySelector('.home-tagline').getBoundingClientRect();
+    const contentHeight = document.documentElement.scrollHeight;
+    return {
+      taglineBottom: Math.round(tagline.bottom),
+      contentHeight,
+      trailingSpace: Math.round(contentHeight - tagline.bottom),
+      trailingRatio: Number(((contentHeight - tagline.bottom) / innerHeight).toFixed(3)),
+    };
+  })()`);
+  if (tallLayout.trailingRatio >= 0.25) throw new Error(`高屏页尾留白过大：${JSON.stringify(tallLayout)}`);
+  const tallScreenshot = await captureFullPage(devtools, page, '2026-11-19-home-tall.png');
 
   await devtools.send('Emulation.setDeviceMetricsOverride', {
     width: 390, height: 844, deviceScaleFactor: 1, mobile: true, screenWidth: 390, screenHeight: 844,
@@ -247,8 +304,10 @@ try {
     appOrigin,
     account: account.username,
     initial,
+    desktopLayout,
+    tallLayout,
     mobile,
-    screenshots: { desktopScreenshot, mobileScreenshot },
+    screenshots: { desktopScreenshot, tallScreenshot, mobileScreenshot },
   }, null, 2));
 } finally {
   devtools.close();

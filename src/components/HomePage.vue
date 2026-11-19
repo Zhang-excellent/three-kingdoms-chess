@@ -61,13 +61,13 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
 </template>
 
 <style scoped>
-.home-page{padding:20px 0 28px}
-.home-hero{min-height:352px;padding:32px 46px;gap:34px}
-.home-hero h1{margin:10px 0 15px}
-.home-lead{line-height:1.85}
-.home-hero-board{width:min(100%,300px)}
-.home-return-room{margin-top:18px}
-.home-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:22px}
+.home-page{padding:34px 0 28px}
+.home-hero{min-height:430px;padding:46px 52px;gap:44px}
+.home-hero h1{margin:13px 0 20px}
+.home-lead{line-height:2}
+.home-hero-board{width:min(100%,340px)}
+.home-return-room{margin-top:24px}
+.home-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:28px}
 .home-action-card{
   --home-accent:#a64b3c;
   display:grid;
@@ -104,7 +104,10 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
 .home-action-card:active{box-shadow:0 4px 12px #5943230d;transform:translateY(0)}
 .home-action-card:focus-visible{outline:2px solid color-mix(in srgb,var(--home-accent) 62%,#8b7655);outline-offset:2px}
 .home-tagline{
-  margin:22px 0 0;
+  width:min(560px,100%);
+  margin:30px auto 0;
+  padding-top:18px;
+  border-top:1px solid #e2d7c8;
   color:#766957;
   font:18px/1.6 "Songti SC","SimSun",serif;
   letter-spacing:4px;
@@ -112,23 +115,23 @@ const resumeLabel = computed(() => props.roomPhase === 'lobby' ? '返回房间' 
 }
 
 @media(max-width:900px){
-  .home-page{padding-top:16px}
-  .home-hero{padding:28px 30px;gap:24px}
-  .home-hero-board{width:min(100%,250px)}
+  .home-page{padding:24px 0}
+  .home-hero{min-height:0;padding:40px 32px;gap:28px}
+  .home-hero-board{width:min(100%,280px)}
   .home-actions{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 }
 
 @media(max-width:720px){
-  .home-page{padding:10px 0 20px}
-  .home-hero{padding:18px 16px;gap:11px}
-  .home-hero h1{margin:5px 0 7px}
-  .home-lead{line-height:1.7}
-  .home-hero-board{width:170px}
-  .home-return-room{margin-top:10px;padding:9px 11px}
-  .home-actions{gap:9px;margin-top:14px}
-  .home-action-card{min-height:118px;padding:16px 10px;border-radius:11px}
+  .home-page{padding:16px 0 24px}
+  .home-hero{padding:24px 18px;gap:16px}
+  .home-hero h1{margin:10px 0 14px}
+  .home-lead{line-height:1.9}
+  .home-hero-board{width:210px}
+  .home-return-room{margin-top:12px;padding:10px 11px}
+  .home-actions{gap:9px;margin-top:20px}
+  .home-action-card{min-height:128px;padding:16px 10px;border-radius:11px}
   .home-action-card strong{font-size:21px;letter-spacing:1.5px}
-  .home-tagline{margin-top:14px;font-size:16px;letter-spacing:3px}
+  .home-tagline{width:calc(100% - 20px);margin-top:24px;padding-top:16px;font-size:16px;letter-spacing:3px}
 }
 
 @media(max-width:360px){
