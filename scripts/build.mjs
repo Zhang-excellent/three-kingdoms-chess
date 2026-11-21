@@ -55,4 +55,18 @@ if (existsSync(audio)) {
     copyFileSync(resolve(audio, name), destination);
   }
 }
+const images = resolve(root, 'public/images');
+if (existsSync(images)) {
+  const previewImages = resolve(root, 'preview/images');
+  const copyImages = (source, destination) => {
+    mkdirSync(destination, { recursive: true });
+    for (const entry of readdirSync(source, { withFileTypes: true })) {
+      const from = resolve(source, entry.name);
+      const to = resolve(destination, entry.name);
+      if (entry.isDirectory()) copyImages(from, to);
+      else if (entry.isFile()) copyFileSync(from, to);
+    }
+  };
+  copyImages(images, previewImages);
+}
 console.log('已生成 preview/试玩.html，可直接用浏览器打开。');

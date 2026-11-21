@@ -73,7 +73,7 @@ test('new visitors start on the home page and can open all four entries, rules a
   wrapper.unmount(); wrapper = mountHome();
   await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '其他玩法')!.trigger('click');
   assert.ok(wrapper.find('.other-games-page').exists());
-  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋']);
+  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋', '斗兽棋']);
 
   wrapper.unmount(); wrapper = mountHome();
   await wrapper.findAll('.home-action-card').find(button => button.get('strong').text() === '本地试玩')!.trigger('click');

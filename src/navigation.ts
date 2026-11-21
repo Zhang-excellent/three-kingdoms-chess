@@ -1,4 +1,4 @@
-export type AppPage = 'home' | 'lobby' | 'friends' | 'local' | 'room' | 'spectate' | 'other' | 'five' | 'horse' | 'chinese';
+export type AppPage = 'home' | 'lobby' | 'friends' | 'local' | 'room' | 'spectate' | 'other' | 'five' | 'horse' | 'chinese' | 'beast';
 
 export interface AppRoute {
   page: AppPage;
@@ -16,6 +16,7 @@ export function parseAppRoute(value: string | URL): AppRoute {
   if (mode === 'five-soldiers') return { page: 'five', roomCode: null };
   if (mode === 'horse-chess') return { page: 'horse', roomCode: null };
   if (mode === 'chinese-chess') return { page: 'chinese', roomCode: null };
+  if (mode === 'beast-chess') return { page: 'beast', roomCode: null };
   if (roomCode) return { page: 'room', roomCode };
   if (mode === 'online') return { page: 'friends', roomCode: null };
   return { page: 'home', roomCode: null };
@@ -32,6 +33,7 @@ export function appRouteUrl(value: string | URL, page: AppPage, roomCode?: strin
   if (page === 'five') url.searchParams.set('mode', 'five-soldiers');
   if (page === 'horse') url.searchParams.set('mode', 'horse-chess');
   if (page === 'chinese') url.searchParams.set('mode', 'chinese-chess');
+  if (page === 'beast') url.searchParams.set('mode', 'beast-chess');
   if (page === 'room') {
     url.searchParams.set('mode', 'online');
     if (roomCode) url.searchParams.set('room', roomCode);

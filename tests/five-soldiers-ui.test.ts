@@ -31,11 +31,11 @@ const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 
   throw new Error(`${message}\n${document.body.textContent ?? ''}`);
 };
 
-test('other games page contains three independent game selectors', async t => {
+test('other games page contains four independent game selectors', async t => {
   const wrapper = mount(OtherGamesPage, { attachTo: document.body });
   t.after(() => wrapper.unmount());
-  assert.equal(wrapper.findAll('button.variant-entry').length, 3);
-  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋']);
+  assert.equal(wrapper.findAll('button.variant-entry').length, 4);
+  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋', '斗兽棋']);
 });
 
 async function enterGuestSeat(

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(root, 'tests/.compiled-app.mts');
 const componentOutputs = [];
-for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'AuthDialog', 'OtherGamesPage', 'OtherGameTable', 'FiveSoldiersPage', 'HorseChessPage', 'ChineseChessPage']) {
+for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'AuthDialog', 'OtherGamesPage', 'OtherGameTable', 'FiveSoldiersPage', 'HorseChessPage', 'ChineseChessPage', 'BeastChessPage', 'BeastChessBoard', 'BeastChessPiece']) {
   const sourcePath = resolve(root, 'src/components', `${name}.vue`);
   const componentSource = readFileSync(sourcePath, 'utf8');
   const component = parse(componentSource, { filename: `${name}.vue` });
@@ -19,11 +19,14 @@ for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'AuthDialog', 'OtherG
     .replaceAll("'../five-soldiers.ts'", "'../src/five-soldiers.ts'")
     .replaceAll("'../horse-chess.ts'", "'../src/horse-chess.ts'")
     .replaceAll("'../chinese-chess.ts'", "'../src/chinese-chess.ts'")
+    .replaceAll("'../beast-chess.ts'", "'../src/beast-chess.ts'")
     .replaceAll("'../game-history.ts'", "'../src/game-history.ts'")
     .replaceAll("'../game.ts'", "'../src/game.ts'")
     .replaceAll("'../navigation.ts'", "'../src/navigation.ts'")
     .replaceAll("'../network-config.ts'", "'../src/network-config.ts'")
     .replaceAll("'./OtherGameTable.vue'", "'./.compiled-OtherGameTable.mts'")
+    .replaceAll("'./BeastChessBoard.vue'", "'./.compiled-BeastChessBoard.mts'")
+    .replaceAll("'./BeastChessPiece.vue'", "'./.compiled-BeastChessPiece.mts'")
     .replaceAll("'../online.ts'", "'../src/online.ts'"));
   componentOutputs.push(componentOutput);
 }
@@ -40,6 +43,7 @@ writeFileSync(output, result.content
   .replaceAll("'./components/FiveSoldiersPage.vue'", "'./.compiled-FiveSoldiersPage.mts'")
   .replaceAll("'./components/HorseChessPage.vue'", "'./.compiled-HorseChessPage.mts'")
   .replaceAll("'./components/ChineseChessPage.vue'", "'./.compiled-ChineseChessPage.mts'")
+  .replaceAll("'./components/BeastChessPage.vue'", "'./.compiled-BeastChessPage.mts'")
   .replaceAll("'./game.ts'", "'../src/game.ts'")
   .replaceAll("'./game-history.ts'", "'../src/game-history.ts'")
   .replaceAll("'./board-view.ts'", "'../src/board-view.ts'")
@@ -53,7 +57,7 @@ writeFileSync(output, result.content
   .replaceAll("'./useOnlineRoom.ts'", "'../src/useOnlineRoom.ts'"));
 let status = 1;
 try {
-  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/board-view.test.ts', 'tests/chinese-chess.test.ts', 'tests/chinese-chess-service.test.ts', 'tests/chinese-chess-socket.test.ts', 'tests/chinese-chess-ui.test.ts', 'tests/five-soldiers.test.ts', 'tests/five-soldiers-service.test.ts', 'tests/five-soldiers-socket.test.ts', 'tests/five-soldiers-ui.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/horse-chess.test.ts', 'tests/horse-chess-service.test.ts', 'tests/horse-chess-socket.test.ts', 'tests/horse-chess-ui.test.ts', 'tests/navigation.test.ts', 'tests/network-config.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/three-kingdoms-sim.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
+  const run = spawnSync(process.execPath, ['--test', 'tests/audio.test.ts', 'tests/auth.test.ts', 'tests/beast-chess.test.ts', 'tests/beast-chess-ui.test.ts', 'tests/board-view.test.ts', 'tests/chinese-chess.test.ts', 'tests/chinese-chess-service.test.ts', 'tests/chinese-chess-socket.test.ts', 'tests/chinese-chess-ui.test.ts', 'tests/five-soldiers.test.ts', 'tests/five-soldiers-service.test.ts', 'tests/five-soldiers-socket.test.ts', 'tests/five-soldiers-ui.test.ts', 'tests/game.test.ts', 'tests/game-history.test.ts', 'tests/game-record.test.ts', 'tests/game-replay.test.ts', 'tests/horse-chess.test.ts', 'tests/horse-chess-service.test.ts', 'tests/horse-chess-socket.test.ts', 'tests/horse-chess-ui.test.ts', 'tests/navigation.test.ts', 'tests/network-config.test.ts', 'tests/online-client.test.ts', 'tests/online-ui.test.ts', 'tests/replay-ui.test.ts', 'tests/three-kingdoms-sim.test.ts', 'tests/ui.test.ts', 'tests/room-service.test.ts', 'tests/socket.test.ts'], {
     cwd: root, stdio: 'inherit', env: { ...process.env, NODE_ENV: 'test' },
   });
   status = run.status ?? 1;
