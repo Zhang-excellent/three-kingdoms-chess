@@ -13,7 +13,7 @@ import { MUSIC_PLAYLISTS, MUSIC_TRACKS, availablePlaylists, resolveMusicSelectio
 import { newGame, playMove } from '../src/game.ts';
 import { createBeastGame, newBeastGame, playBeastMove } from '../src/beast-chess.ts';
 
-test('sound settings default off, persist independent levels and reject malformed values', () => {
+test('sound settings default to effects on, persist independent levels and reject malformed values', () => {
   GlobalRegistrator.register({ url: 'http://localhost:5173' });
   try {
     localStorage.clear();
@@ -216,6 +216,39 @@ test('recorded move and capture sounds play separately at the chosen level while
     assert.equal(players[1].plays, 2);
     sound.playEffect('move', { ...settings, effectsVolume: 0 });
     assert.equal(players[1].plays, 2);
+    sound.dispose();
+  } finally {
+    Object.defineProperty(globalThis, 'Audio', { configurable: true, value: originalAudio });
+    GlobalRegistrator.unregister();
+  }
+});
+
+test('effect elements can be primed once during a user gesture without making an audible preview', async () => {
+  GlobalRegistrator.register({ url: 'https://example.test/three-chess/' });
+  const originalAudio = globalThis.Audio;
+  const players: FakeAudio[] = [];
+  class FakeAudio {
+    src: string;
+    loop = false;
+    volume = 1;
+    paused = true;
+    currentTime = 0;
+    plays = 0;
+    constructor(src = '') { this.src = src; players.push(this); }
+    async play() { this.paused = false; this.plays++; }
+    pause() { this.paused = true; }
+  }
+  Object.defineProperty(globalThis, 'Audio', { configurable: true, value: FakeAudio });
+  try {
+    const sound = new GameAudio();
+    const settings = { ...DEFAULT_AUDIO_SETTINGS, effectsEnabled: true, effectsVolume: 0.65 };
+    sound.primeEffects(settings);
+    assert.equal(players.length, 2);
+    assert.deepEqual(players.map(player => player.src), [sound.moveUrl, sound.captureUrl]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(players.every(player => player.paused && player.volume === 0.65), true);
+    sound.primeEffects(settings);
+    assert.equal(players.length, 2);
     sound.dispose();
   } finally {
     Object.defineProperty(globalThis, 'Audio', { configurable: true, value: originalAudio });

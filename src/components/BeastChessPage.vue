@@ -120,10 +120,23 @@ const resultText = computed(() => {
   if (game.value.finishReason === 'halfmove') return '连续 100 个半回合没有吃子。';
   return '本局已经结束。';
 });
-const upperPlayer = computed(() => seatPlayer('black'));
-const lowerPlayer = computed(() => seatPlayer('red'));
-const upperCaptured = computed(() => capturedBeastPieces(game.value).upper);
-const lowerCaptured = computed(() => capturedBeastPieces(game.value).lower);
+const topSeat = computed<BeastSeatSide>(() => mySeat.value === 'black' ? 'red' : 'black');
+const bottomSeat = computed<BeastSeatSide>(() => mySeat.value === 'black' ? 'black' : 'red');
+const topPlayer = computed(() => seatPlayer(topSeat.value));
+const bottomPlayer = computed(() => seatPlayer(bottomSeat.value));
+const allCaptured = computed(() => capturedBeastPieces(game.value));
+const topCaptured = computed(() => topSeat.value === 'red' ? allCaptured.value.lower : allCaptured.value.upper);
+const bottomCaptured = computed(() => bottomSeat.value === 'red' ? allCaptured.value.lower : allCaptured.value.upper);
+const topCaptureLabel = computed(() => mySeat.value ? '对手被吃' : `${seatLabel(topSeat.value)}被吃`);
+const bottomCaptureLabel = computed(() => mySeat.value ? '本方被吃' : `${seatLabel(bottomSeat.value)}被吃`);
+const beastAudioSettings = computed(() => {
+  const settings = props.audioSettings ?? loadAudioSettings();
+  return {
+    ...settings,
+    effectsEnabled: true,
+    effectsVolume: settings.effectsVolume > 0 ? settings.effectsVolume : 0.7,
+  };
+});
 
 function seatPlayer(side: BeastSeatSide): BeastPlayerView | null {
   return roomState.value?.players.find(player => player.side === side) ?? null;
@@ -262,6 +275,7 @@ function openSocket() {
 
 function openSeat(side: BeastSeatSide) {
   if (busy.value || !canSeat(side)) return;
+  gameAudio.primeEffects(beastAudioSettings.value);
   if (props.accountName) {
     void joinSeat(side, '');
     return;
@@ -274,6 +288,7 @@ function openSeat(side: BeastSeatSide) {
 
 function confirmGuestSeat() {
   if (!pendingSide.value) return;
+  gameAudio.primeEffects(beastAudioSettings.value);
   if (!guestName.value.trim()) {
     error.value = '请输入昵称。';
     return;
@@ -305,6 +320,7 @@ async function joinSeat(side: BeastSeatSide, nickname: string) {
 
 async function setReady() {
   if (!session.value || busy.value || !myPlayer.value) return;
+  gameAudio.primeEffects(beastAudioSettings.value);
   busy.value = true;
   try {
     const ack = await emitAck<{ state: BeastState }>('beast:ready', {
@@ -347,6 +363,7 @@ async function move(pieceId: string, to: BeastPoint) {
 
 function clickCell(point: BeastPoint) {
   if (roomState.value?.phase !== 'playing' || !isMyTurn.value) return;
+  gameAudio.primeEffects(beastAudioSettings.value);
   const piece = beastPieceAt(game.value.pieces, point);
   if (piece?.side === myGameSide.value) {
     selectedId.value = selectedId.value === piece.id ? null : piece.id;
@@ -488,7 +505,7 @@ watch(() => roomState.value?.game, current => {
     `beast:${roomState.value?.round ?? 0}`,
     connection.value === 'online',
   );
-  if (kind) gameAudio.playEffect(kind, props.audioSettings ?? loadAudioSettings());
+  if (kind) gameAudio.playEffect(kind, beastAudioSettings.value);
 });
 watch([() => props.accountName, () => props.accountAvatar], ([name], [previousName, previousAvatar]) => {
   if (name || props.accountAvatar !== previousAvatar) {
@@ -535,13 +552,13 @@ defineExpose({ leaveForNavigation, openSeat });
       @seat="openSeat" @watch="openSpectator" />
 
     <template v-else>
-      <article class="beast-table-seat upper" :class="{ ready: upperPlayer?.ready, active: roomState?.phase === 'playing' && game.turn === 'upper' }">
-        <span class="beast-seat-avatar" :class="{ placeholder: !upperPlayer }">
-          <img v-if="avatarFor('black')" :src="avatarFor('black')!" alt="">
+      <article class="beast-table-seat upper" :class="[topSeat, { ready: topPlayer?.ready, active: roomState?.phase === 'playing' && game.turn === beastSeatToGameSide(topSeat) }]">
+        <span class="beast-seat-avatar" :class="{ placeholder: !topPlayer }">
+          <img v-if="avatarFor(topSeat)" :src="avatarFor(topSeat)!" alt="">
           <template v-else>?</template>
         </span>
-        <span class="beast-seat-copy"><strong>{{ upperPlayer?.nickname || '等待棋友' }}</strong><small>上方席位{{ upperPlayer?.identity === 'guest' ? ' · 游客' : '' }}</small></span>
-        <em>{{ playerState('black') }}</em>
+        <span class="beast-seat-copy"><strong>{{ topPlayer?.nickname || '等待棋友' }}</strong><small>{{ seatLabel(topSeat) }}席位{{ topPlayer?.identity === 'guest' ? ' · 游客' : '' }}</small></span>
+        <em>{{ playerState(topSeat) }}</em>
       </article>
 
       <section class="beast-game-layout">
@@ -584,18 +601,18 @@ defineExpose({ leaveForNavigation, openSeat });
             </div>
           </div>
 
-          <article class="beast-table-seat lower self-seat" :class="{ ready: lowerPlayer?.ready, active: roomState?.phase === 'playing' && game.turn === 'lower', self: mySeat === 'red' }">
-            <span class="beast-seat-avatar" :class="{ placeholder: !lowerPlayer }">
-              <img v-if="avatarFor('red')" :src="avatarFor('red')!" alt="">
+          <article class="beast-table-seat lower self-seat" :class="[bottomSeat, { ready: bottomPlayer?.ready, active: roomState?.phase === 'playing' && game.turn === beastSeatToGameSide(bottomSeat), self: mySeat === bottomSeat }]">
+            <span class="beast-seat-avatar" :class="{ placeholder: !bottomPlayer }">
+              <img v-if="avatarFor(bottomSeat)" :src="avatarFor(bottomSeat)!" alt="">
               <template v-else>?</template>
             </span>
-            <span class="beast-seat-copy"><strong>{{ lowerPlayer?.nickname || '等待棋友' }}</strong><small>下方席位 · 先行{{ lowerPlayer?.identity === 'guest' ? ' · 游客' : '' }}</small></span>
-            <em>{{ playerState('red') }}</em>
+            <span class="beast-seat-copy"><strong>{{ bottomPlayer?.nickname || '等待棋友' }}</strong><small>{{ seatLabel(bottomSeat) }}席位{{ bottomSeat === 'red' ? ' · 先行' : '' }}{{ bottomPlayer?.identity === 'guest' ? ' · 游客' : '' }}</small></span>
+            <em>{{ playerState(bottomSeat) }}</em>
           </article>
 
           <div class="beast-bottom-actions">
-            <span>上方被吃：{{ capturedText(upperCaptured) }}</span>
-            <span>下方被吃：{{ capturedText(lowerCaptured) }}</span>
+            <span>{{ topCaptureLabel }}：{{ capturedText(topCaptured) }}</span>
+            <span>{{ bottomCaptureLabel }}：{{ capturedText(bottomCaptured) }}</span>
             <button v-if="session && roomState?.phase === 'finished'" class="primary-button" type="button"
               :disabled="busy || connection !== 'online'" @click="rematch">再来一局</button>
           </div>
@@ -670,8 +687,8 @@ defineExpose({ leaveForNavigation, openSeat });
 .beast-waiting-card{position:absolute;left:50%;top:50%;z-index:12;display:grid;justify-items:center;gap:7px;width:min(310px,calc(100% - 42px));padding:18px 20px;border:1px solid #c8b390;border-radius:14px;background:#fffaf0ed;box-shadow:0 22px 55px #36231542;transform:translate(-50%,-50%);text-align:center;backdrop-filter:blur(4px)}
 .beast-waiting-card>span{color:#a27b43;font-size:9px;font-weight:700;letter-spacing:.14em}.beast-waiting-card h2{margin:0;font:700 20px/1.25 "Songti SC","SimSun",serif;color:#483b2e}.beast-waiting-card p{margin:0;color:#7d6c57;font-size:10px}.beast-waiting-card>div{display:grid;grid-template-columns:1fr 1fr;gap:7px;width:100%;margin-top:4px}.beast-waiting-card button{min-height:40px}
 .beast-draw-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;width:min(560px,100%);padding:9px 11px;border:1px solid #c6a36f;border-radius:9px;background:#f7eedf;color:#745b39;font-size:10px}.beast-draw-bar>div{display:flex;gap:6px}
-.beast-table-seat{--seat-color:#7d4b32;display:flex;align-items:center;gap:10px;width:min(560px,100%);min-height:52px;margin:0 auto;padding:5px 10px;border:1px solid #d6c7b3;border-radius:11px;background:linear-gradient(145deg,#fffdf8,#f8f2e8);color:#4d4236;transition:border-color .16s ease,box-shadow .16s ease}
-.beast-table-seat.upper{--seat-color:#5c402e;margin-bottom:6px}.beast-table-seat.lower{--seat-color:#a64b3c;margin-top:0}.beast-table-seat.active{border-color:var(--seat-color);box-shadow:inset 3px 0 var(--seat-color),0 7px 18px #59432310}.beast-table-seat.ready>em{background:#e4efe4;color:#39704b}
+.beast-table-seat{display:flex;align-items:center;gap:10px;width:min(560px,100%);min-height:52px;margin:0 auto;padding:5px 10px;border:1px solid #d6c7b3;border-radius:11px;background:linear-gradient(145deg,#fffdf8,#f8f2e8);color:#4d4236;transition:border-color .16s ease,box-shadow .16s ease}
+.beast-table-seat.red{--seat-color:#a64b3c}.beast-table-seat.black{--seat-color:#5c402e}.beast-table-seat.upper{margin-bottom:6px}.beast-table-seat.lower{margin-top:0}.beast-table-seat.active{border-color:var(--seat-color);box-shadow:inset 3px 0 var(--seat-color),0 7px 18px #59432310}.beast-table-seat.ready>em{background:#e4efe4;color:#39704b}
 .beast-seat-avatar{display:grid;place-items:center;width:36px;height:36px;flex:none;overflow:hidden;border:1px solid var(--seat-color);border-radius:9px;background:var(--seat-color);color:#fff8e8;font:700 19px/1 "STKaiti","KaiTi",serif}.beast-seat-avatar.placeholder{border-color:#c8bbab;background:#e7e1d7;color:#9c9080}.beast-seat-avatar img{width:100%;height:100%;object-fit:cover}
 .beast-seat-copy{display:grid;gap:2px;min-width:0;flex:1}.beast-seat-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 18px/1.25 "Songti SC","SimSun",serif}.beast-seat-copy small{color:#8c7d6a;font-size:9px}.beast-table-seat>em{padding:3px 8px;border-radius:999px;background:#eee6da;color:#786a58;font-size:9px;font-style:normal;white-space:nowrap}
 .beast-bottom-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;width:min(560px,100%);min-height:36px;color:#8a7964;font-size:9px}.beast-bottom-actions .primary-button{min-height:36px;padding:6px 16px;font-size:11px}

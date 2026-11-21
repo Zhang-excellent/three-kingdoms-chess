@@ -14,7 +14,7 @@ export interface AudioSettings {
 export const AUDIO_SETTINGS_KEY = 'three-kingdoms-chess:audio-v1';
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   musicEnabled: false, musicVolume: 0.35, musicPlaylistId: 'default', musicTrackId: 'liushang-qushui',
-  effectsEnabled: false, effectsVolume: 0.7,
+  effectsEnabled: true, effectsVolume: 0.7,
 };
 
 const volume = (value: unknown, fallback: number) =>
@@ -80,6 +80,7 @@ export class GameAudio {
   private loadedTrackId: string | null = null;
   private playPending: Promise<void> | null = null;
   private previewTimer: ReturnType<typeof setTimeout> | null = null;
+  private effectsPrimed = false;
   private readonly audioBase = new URL(`${import.meta.env?.BASE_URL ?? './'}audio/`, window.location.href);
   musicUrl(trackId = DEFAULT_AUDIO_SETTINGS.musicTrackId): string {
     const track = musicTrack(trackId);
@@ -168,5 +169,27 @@ export class GameAudio {
       if (effect.readyState > 0) effect.currentTime = 0;
       void effect.play().catch(() => {});
     } catch { /* Audio failures never block a move. */ }
+  }
+
+  primeEffects(settings: AudioSettings): void {
+    if (this.effectsPrimed || settings.effectsVolume <= 0) return;
+    this.effectsPrimed = true;
+    for (const sound of [this.moveSound ??= new Audio(this.moveUrl), this.captureSound ??= new Audio(this.captureUrl)]) {
+      try {
+        sound.volume = 0;
+        const attempt = sound.play();
+        if (attempt && typeof attempt.then === 'function') {
+          void attempt.then(() => {
+            sound.pause();
+            sound.currentTime = 0;
+            sound.volume = settings.effectsVolume;
+          }).catch(() => {
+            this.effectsPrimed = false;
+          });
+        }
+      } catch {
+        this.effectsPrimed = false;
+      }
+    }
   }
 }

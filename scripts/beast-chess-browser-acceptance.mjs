@@ -271,6 +271,9 @@ try {
   if (await evaluate(devtools, upper, `document.querySelector('.beast-cell')?.dataset.coordinate !== 'G1'
     || !document.querySelector('.beast-board-grid')?.getAttribute('aria-label').includes('上方玩家视角')`))
     throw new Error('上方玩家视角没有自动翻转。');
+  if (await evaluate(devtools, upper, `document.querySelector('.beast-table-seat.upper strong')?.textContent.trim() !== '斗兽下方'
+    || document.querySelector('.beast-table-seat.lower strong')?.textContent.trim() !== '斗兽上方'`))
+    throw new Error('上方玩家视角的上下玩家卡片没有同步翻转。');
   await clickButton(devtools, upper, '准备');
   await waitFor(devtools, lower, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '双方开局');
   await waitFor(devtools, upper, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '上方同步开局');
@@ -302,6 +305,8 @@ try {
   if (desktop.scrollWidth > desktop.clientWidth + 1)
     throw new Error(`桌面斗兽棋横向溢出：${JSON.stringify(desktop)}`);
 
+  await evaluate(devtools, lower, `window.__beastAudioPlays = []`);
+  await evaluate(devtools, upper, `window.__beastAudioPlays = []`);
   await clickSelector(devtools, lower, '.beast-cell[data-coordinate="A1"]', 'A1 虎');
   await waitFor(devtools, lower, `document.querySelectorAll('.beast-cell.target').length === 2`, 'A1 合法落点');
   await clickSelector(devtools, lower, '.beast-cell[data-coordinate="B1"]', 'B1');

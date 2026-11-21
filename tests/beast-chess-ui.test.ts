@@ -76,6 +76,8 @@ test('Beast Chess joins one table by seat, starts after both ready, moves in syn
   await enterGuestSeat(upper, '.game-table-seat.black', '斗兽上方');
   assert.match(upper.get('.beast-side-chip').text(), /上方/);
   assert.match(lower.get('.beast-table-seat.upper').text(), /斗兽上方/);
+  assert.match(upper.get('.beast-table-seat.upper').text(), /斗兽下方/);
+  assert.match(upper.get('.beast-table-seat.lower').text(), /斗兽上方/);
   assert.equal(upper.findAll('.beast-cell')[0].attributes('data-coordinate'), 'G1');
   assert.equal(lower.findAll('.beast-cell')[0].attributes('data-coordinate'), 'A9');
   assert.match(upper.get('.beast-board-grid').attributes('aria-label') ?? '', /上方玩家视角/);
