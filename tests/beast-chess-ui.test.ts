@@ -76,6 +76,11 @@ test('Beast Chess joins one table by seat, starts after both ready, moves in syn
   await enterGuestSeat(upper, '.game-table-seat.black', '斗兽上方');
   assert.match(upper.get('.beast-side-chip').text(), /上方/);
   assert.match(lower.get('.beast-table-seat.upper').text(), /斗兽上方/);
+  assert.equal(upper.findAll('.beast-cell')[0].attributes('data-coordinate'), 'G1');
+  assert.equal(lower.findAll('.beast-cell')[0].attributes('data-coordinate'), 'A9');
+  assert.match(upper.get('.beast-board-grid').attributes('aria-label') ?? '', /上方玩家视角/);
+  assert.equal(upper.findAll('.beast-piece img').every(image =>
+    (image.attributes('src') ?? '').includes('?v=animal-colors-v2')), true);
 
   const readyUpper = upper.findAll('button').find(button => button.text() === '准备');
   assert.ok(readyUpper);
@@ -90,6 +95,8 @@ test('Beast Chess joins one table by seat, starts after both ready, moves in syn
   await lower.get('.beast-cell[data-coordinate="B1"]').trigger('click');
   await waitUntil(() => upper.get('.beast-history').text().includes('A1 → B1'), 'beast move did not synchronize');
   assert.match(upper.get('.beast-turn-badge').text(), /轮到 斗兽上方 行棋/);
+  assert.equal(lower.get('.beast-cell[data-coordinate="B1"]').attributes('disabled'), undefined);
+  assert.equal(lower.get('.beast-cell[data-coordinate="B1"]').attributes('aria-disabled'), 'true');
 
   localStorage.removeItem(BEAST_CHESS_SESSION_KEY);
   const visitor = mount(BeastChessPage, { attachTo: document.body, props: { accountName: null } });

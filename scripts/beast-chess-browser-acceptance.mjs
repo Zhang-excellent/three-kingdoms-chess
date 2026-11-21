@@ -106,6 +106,14 @@ async function createPage(devtools, size) {
     devtools.send('Page.enable', {}, sessionId),
     devtools.send('Runtime.enable', {}, sessionId),
   ]);
+  await devtools.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `window.__beastAudioPlays = [];
+      const originalAudioPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        window.__beastAudioPlays.push(this.src || '');
+        return originalAudioPlay.call(this);
+      };`,
+  }, sessionId);
   const page = { browserContextId, targetId, sessionId, size: { ...size } };
   await setViewport(devtools, page, size);
   await devtools.send('Page.navigate', { url: appUrl }, sessionId);
@@ -236,6 +244,13 @@ try {
   const lower = await createPage(devtools, { width: 1366, height: 768 });
   await waitFor(devtools, lower, `document.querySelector('.beast-page[data-connection="online"]') !== null`, '斗兽棋棋桌连接');
   await waitFor(devtools, lower, `document.querySelectorAll('.game-table-seat').length === 2`, '斗兽棋空桌');
+  await evaluate(devtools, lower, `(() => {
+    const key = 'three-kingdoms-chess:audio-v1';
+    const value = JSON.parse(localStorage.getItem(key) || '{}');
+    localStorage.setItem(key, JSON.stringify({ ...value, effectsEnabled: true, effectsVolume: 0.85 }));
+  })()`);
+  await devtools.send('Page.reload', {}, lower.sessionId);
+  await waitFor(devtools, lower, `document.querySelector('.beast-page[data-connection="online"]') !== null`, '音效启用后重新连接');
   const emptyTable = await screenshot(devtools, lower, '斗兽棋-联机棋桌-空桌.png');
   await enterGuest(devtools, lower, '.game-table-seat.red', '斗兽下方');
   assertActionRow(await evaluate(devtools, lower, `[...document.querySelectorAll('.beast-action-row button')].map(button => button.textContent.trim())`));
@@ -244,8 +259,18 @@ try {
 
   const upper = await createPage(devtools, { width: 1366, height: 768 });
   await waitFor(devtools, upper, `document.querySelector('.beast-page[data-connection="online"]') !== null`, '上方连接');
+  await evaluate(devtools, upper, `(() => {
+    const key = 'three-kingdoms-chess:audio-v1';
+    const value = JSON.parse(localStorage.getItem(key) || '{}');
+    localStorage.setItem(key, JSON.stringify({ ...value, effectsEnabled: true, effectsVolume: 0.85 }));
+  })()`);
+  await devtools.send('Page.reload', {}, upper.sessionId);
+  await waitFor(devtools, upper, `document.querySelector('.beast-page[data-connection="online"]') !== null`, '上方音效启用后重新连接');
   await waitFor(devtools, upper, `document.querySelector('.game-table-seat.red')?.textContent.includes('斗兽下方')`, '上方看到下方席位');
   await enterGuest(devtools, upper, '.game-table-seat.black', '斗兽上方');
+  if (await evaluate(devtools, upper, `document.querySelector('.beast-cell')?.dataset.coordinate !== 'G1'
+    || !document.querySelector('.beast-board-grid')?.getAttribute('aria-label').includes('上方玩家视角')`))
+    throw new Error('上方玩家视角没有自动翻转。');
   await clickButton(devtools, upper, '准备');
   await waitFor(devtools, lower, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '双方开局');
   await waitFor(devtools, upper, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '上方同步开局');
@@ -282,7 +307,13 @@ try {
   await clickSelector(devtools, lower, '.beast-cell[data-coordinate="B1"]', 'B1');
   await waitFor(devtools, upper, `document.querySelector('.beast-history')?.textContent.includes('A1 → B1')`, '实时走子同步');
   await waitFor(devtools, upper, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽上方 行棋')`, '轮到上方');
+  await waitFor(devtools, lower, `window.__beastAudioPlays?.filter(src => src.includes('/audio/move.mp3')).length === 1`, '下方落子音效');
+  await waitFor(devtools, upper, `window.__beastAudioPlays?.filter(src => src.includes('/audio/move.mp3')).length === 1`, '上方落子音效');
+  if (await evaluate(devtools, lower, `document.querySelector('.beast-cell[data-coordinate="B1"]')?.hasAttribute('disabled')
+    || document.querySelector('.beast-cell[data-coordinate="B1"]')?.getAttribute('aria-disabled') !== 'true'`))
+    throw new Error('非当前回合的棋盘仍使用 disabled 变暗。');
   const playingShot = await screenshot(devtools, lower, '斗兽棋-联机-对局.png');
+  const upperPerspectiveShot = await screenshot(devtools, upper, '斗兽棋-联机-上方视角.png');
 
   const visitor = await createPage(devtools, { width: 1366, height: 768 });
   await waitFor(devtools, visitor, `document.querySelector('.game-table-center')?.classList.contains('active')`, '访客看到进行中棋桌');
@@ -355,7 +386,7 @@ try {
     desktop,
     mobile,
     rematch,
-    screenshots: { emptyTable, playingShot, finishedShot, mobileShot },
+    screenshots: { emptyTable, playingShot, upperPerspectiveShot, finishedShot, mobileShot },
   }, null, 2));
 } finally {
   devtools.close();

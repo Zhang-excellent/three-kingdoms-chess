@@ -1,9 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
-import { AUDIO_SETTINGS_KEY, DEFAULT_AUDIO_SETTINGS, GameAudio, MoveSoundTracker, loadAudioSettings } from '../src/audio.ts';
+import {
+  AUDIO_SETTINGS_KEY,
+  BeastMoveSoundTracker,
+  DEFAULT_AUDIO_SETTINGS,
+  GameAudio,
+  MoveSoundTracker,
+  loadAudioSettings,
+} from '../src/audio.ts';
 import { MUSIC_PLAYLISTS, MUSIC_TRACKS, availablePlaylists, resolveMusicSelection, tracksInPlaylist } from '../src/music-catalog.ts';
 import { newGame, playMove } from '../src/game.ts';
+import { createBeastGame, newBeastGame, playBeastMove } from '../src/beast-chess.ts';
 
 test('sound settings default off, persist independent levels and reject malformed values', () => {
   GlobalRegistrator.register({ url: 'http://localhost:5173' });
@@ -52,6 +60,36 @@ test('sound tracker plays only one new authoritative move per live round', () =>
   assert.equal(tracker.observe(capture, 'room:2', true), 'capture');
   assert.equal(tracker.observe(capture, 'room:2', true), null);
   assert.equal(tracker.observe(initial, 'local', true), null); // entering local mode
+});
+
+test('beast chess sound tracker plays one move or capture and stays silent on reconnect snapshots', () => {
+  const initial = newBeastGame();
+  const tracker = new BeastMoveSoundTracker();
+  assert.equal(tracker.observe(initial, 'beast:1', true), null);
+  const moved = playBeastMove(initial, 'lower-tiger-0-0-0', { x: 1, y: 0 });
+  assert.equal(moved.ok, true);
+  if (!moved.ok) return;
+  assert.equal(tracker.observe(moved.game, 'beast:1', true), 'move');
+  assert.equal(tracker.observe(moved.game, 'beast:1', true), null);
+  assert.equal(tracker.observe(moved.game, 'beast:1', false), null);
+  assert.equal(tracker.observe(moved.game, 'beast:1', true), null);
+
+  const captureStart = createBeastGame([
+    { id: 'lower-lion', side: 'lower', kind: 'lion', x: 2, y: 2 },
+    { id: 'upper-dog', side: 'upper', kind: 'dog', x: 3, y: 2 },
+    { id: 'safe-upper-cat', side: 'upper', kind: 'cat', x: 6, y: 8 },
+  ]);
+  const captureTracker = new BeastMoveSoundTracker();
+  assert.equal(captureTracker.observe(captureStart, 'beast:2', true), null);
+  const captured = playBeastMove(captureStart, 'lower-lion', { x: 3, y: 2 });
+  assert.equal(captured.ok, true);
+  if (!captured.ok) return;
+  assert.equal(captureTracker.observe(captured.game, 'beast:2', true), 'capture');
+
+  const reconnectTracker = new BeastMoveSoundTracker();
+  assert.equal(reconnectTracker.observe(initial, 'beast:3', true), null);
+  reconnectTracker.suspend();
+  assert.equal(reconnectTracker.observe(moved.game, 'beast:3', true), null);
 });
 
 test('music uses one looping player, independent volume and a path relative to the site', async () => {

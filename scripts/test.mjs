@@ -22,6 +22,7 @@ for (const name of ['HomePage', 'LobbyPage', 'InvitePage', 'AuthDialog', 'OtherG
     .replaceAll("'../beast-chess.ts'", "'../src/beast-chess.ts'")
     .replaceAll("'../game-history.ts'", "'../src/game-history.ts'")
     .replaceAll("'../game.ts'", "'../src/game.ts'")
+    .replaceAll("'../audio.ts'", "'../src/audio.ts'")
     .replaceAll("'../navigation.ts'", "'../src/navigation.ts'")
     .replaceAll("'../network-config.ts'", "'../src/network-config.ts'")
     .replaceAll("'./OtherGameTable.vue'", "'./.compiled-OtherGameTable.mts'")

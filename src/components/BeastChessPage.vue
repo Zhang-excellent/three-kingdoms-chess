@@ -31,8 +31,14 @@ import type {
 } from '../beast-chess.ts';
 import { backendAssetUrl, socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
+import { BeastMoveSoundTracker, GameAudio, loadAudioSettings } from '../audio.ts';
+import type { AudioSettings } from '../audio.ts';
 
-const props = defineProps<{ accountName: string | null; accountAvatar?: string | null }>();
+const props = defineProps<{
+  accountName: string | null;
+  accountAvatar?: string | null;
+  audioSettings?: AudioSettings;
+}>();
 const emit = defineEmits<{ other: [] }>();
 const guestAvatar = 'images/guest-avatar.svg';
 const initialGame = newBeastGame();
@@ -61,6 +67,8 @@ const inviteVisible = ref(false), inviteText = ref('');
 const resignDialog = ref<HTMLDialogElement | null>(null), leaveDialog = ref<HTMLDialogElement | null>(null);
 const seatDialog = ref<HTMLDialogElement | null>(null);
 const watching = ref(false);
+const gameAudio = new GameAudio();
+const moveSoundTracker = new BeastMoveSoundTracker();
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
@@ -72,6 +80,7 @@ const mySeat = computed(() => myPlayer.value?.side ?? null);
 const myGameSide = computed<BeastSide | null>(() => mySeat.value ? beastSeatToGameSide(mySeat.value) : null);
 const isMyTurn = computed(() => game.value.status === 'playing'
   && !!myGameSide.value && game.value.turn === myGameSide.value);
+const boardFlipped = computed(() => mySeat.value === 'black');
 const selected = computed<BeastPiece | null>(() => selectedId.value
   ? game.value.pieces.find(piece => piece.id === selectedId.value) ?? null
   : null);
@@ -235,8 +244,14 @@ function openSocket() {
   const options = { ...config.options, autoConnect: false, reconnection: true, forceNew: true };
   socket = config.origin ? io(config.origin, options) : io(options);
   socket.on('connect', () => { connection.value = 'online'; void recover(); });
-  socket.on('disconnect', () => { connection.value = 'offline'; });
-  socket.on('connect_error', () => { connection.value = 'offline'; });
+  socket.on('disconnect', () => {
+    connection.value = 'offline';
+    moveSoundTracker.suspend();
+  });
+  socket.on('connect_error', () => {
+    connection.value = 'offline';
+    moveSoundTracker.suspend();
+  });
   socket.on('beast:state', acceptState);
   socket.on('beast:session-replaced', () => {
     clearSession();
@@ -466,6 +481,15 @@ function selectInvite(event: FocusEvent) {
 watch([() => roomState.value?.phase, () => game.value.turn], () => {
   selectedId.value = null;
 });
+watch(() => roomState.value?.game, current => {
+  if (!current) return;
+  const kind = moveSoundTracker.observe(
+    current,
+    `beast:${roomState.value?.round ?? 0}`,
+    connection.value === 'online',
+  );
+  if (kind) gameAudio.playEffect(kind, props.audioSettings ?? loadAudioSettings());
+});
 watch([() => props.accountName, () => props.accountAvatar], ([name], [previousName, previousAvatar]) => {
   if (name || props.accountAvatar !== previousAvatar) {
     guestName.value = '';
@@ -481,6 +505,7 @@ onBeforeUnmount(() => {
   socket?.removeAllListeners();
   socket?.disconnect();
   socket = null;
+  gameAudio.dispose();
 });
 
 defineExpose({ leaveForNavigation, openSeat });
@@ -536,6 +561,7 @@ defineExpose({ leaveForNavigation, openSeat });
           <div class="beast-online-board">
             <BeastChessBoard :pieces="game.pieces" :selected-id="selectedId" :targets="targets"
               :last-move="game.lastMove" :disabled="roomState?.phase !== 'playing' || !isMyTurn"
+              :flipped="boardFlipped"
               @cell="clickCell" />
             <div v-if="session && roomState?.phase === 'lobby'" class="beast-waiting-card">
               <span>棋桌准备</span>
