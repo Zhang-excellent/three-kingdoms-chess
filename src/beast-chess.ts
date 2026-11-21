@@ -1,8 +1,10 @@
 export type BeastSide = 'lower' | 'upper';
+export type BeastSeatSide = 'red' | 'black';
 export type BeastKind = 'elephant' | 'lion' | 'tiger' | 'leopard' | 'wolf' | 'dog' | 'cat' | 'rat';
 export type BeastStatus = 'playing' | 'finished';
-export type BeastDrawReason = 'threefold' | 'halfmove';
-export type BeastFinishReason = 'den' | 'capture-all' | 'stalemate' | BeastDrawReason;
+export type BeastPhase = 'lobby' | 'playing' | 'finished';
+export type BeastDrawReason = 'threefold' | 'halfmove' | 'agreement';
+export type BeastFinishReason = 'den' | 'capture-all' | 'stalemate' | 'resignation' | 'draw' | BeastDrawReason;
 export type BeastTerrainKind = 'land' | 'river' | 'trap' | 'den';
 
 export interface BeastPoint {
@@ -54,10 +56,52 @@ export interface BeastGame extends BeastGameState {
   undoStates: BeastGameState[];
 }
 
+export interface BeastPlayerView {
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  identity: 'account' | 'guest';
+  side: BeastSeatSide;
+  ready: boolean;
+  online: boolean;
+  offlineUntil: number | null;
+}
+
+export interface BeastState {
+  gameId: typeof BEAST_CHESS_GAME_ID;
+  phase: BeastPhase;
+  version: number;
+  round: number;
+  players: BeastPlayerView[];
+  game: BeastGame | null;
+  drawOfferBy: BeastSeatSide | null;
+  selfId: string | null;
+}
+
+export interface BeastReceipt {
+  gameId: typeof BEAST_CHESS_GAME_ID;
+  playerId: string;
+  reconnectToken: string;
+  state: BeastState;
+}
+
+export interface BeastMoveIntent {
+  requestId: string;
+  version: number;
+  pieceId: string;
+  to: BeastPoint;
+}
+
+export type BeastAck<T = undefined> =
+  | { ok: true; data: T }
+  | { ok: false; code: string; error: string; state?: BeastState };
+
 export type BeastResult =
   | { ok: true; game: BeastGame; notice: string }
   | { ok: false; error: string };
 
+export const BEAST_CHESS_GAME_ID = 'beast-chess';
+export const BEAST_CHESS_SESSION_KEY = 'three-kingdoms-chess:beast-chess-session-v1';
 export const BEAST_CHESS_RULES_VERSION = 'beast-chess-v1';
 export const BEAST_BOARD_COLUMNS = 7;
 export const BEAST_BOARD_ROWS = 9;
@@ -89,6 +133,10 @@ export const BEAST_KIND_RANKS: Record<BeastKind, number> = {
 export const BEAST_SIDE_NAMES: Record<BeastSide, string> = {
   lower: '下方',
   upper: '上方',
+};
+export const BEAST_SEAT_SIDE_NAMES: Record<BeastSeatSide, string> = {
+  red: '下方',
+  black: '上方',
 };
 
 const INITIAL_PIECES: readonly Omit<BeastPiece, 'id'>[] = [
@@ -169,6 +217,18 @@ export function beastEffectiveRank(piece: BeastPiece, point: BeastPoint = piece)
 
 export function otherBeastSide(side: BeastSide): BeastSide {
   return side === 'lower' ? 'upper' : 'lower';
+}
+
+export function isBeastSeatSide(value: unknown): value is BeastSeatSide {
+  return value === 'red' || value === 'black';
+}
+
+export function beastSeatToGameSide(side: BeastSeatSide): BeastSide {
+  return side === 'red' ? 'lower' : 'upper';
+}
+
+export function beastGameSideToSeat(side: BeastSide): BeastSeatSide {
+  return side === 'lower' ? 'red' : 'black';
 }
 
 export function beastPieceCounts(pieces: readonly BeastPiece[]): Record<BeastSide, number> {
@@ -447,4 +507,18 @@ export function undoBeastMove(game: BeastGame): BeastGame | null {
 
 export function cloneBeastGame(game: BeastGame): BeastGame {
   return withUndo(cloneState(game), game.undoStates);
+}
+
+export function resignBeastGame(game: BeastGame, side: BeastSide): BeastGame {
+  if (game.status !== 'playing') return cloneBeastGame(game);
+  const next = cloneBeastGame(game);
+  finishGame(next, otherBeastSide(side), 'resignation', null);
+  return next;
+}
+
+export function drawBeastGame(game: BeastGame): BeastGame {
+  if (game.status !== 'playing') return cloneBeastGame(game);
+  const next = cloneBeastGame(game);
+  finishGame(next, null, 'draw', 'agreement');
+  return next;
 }

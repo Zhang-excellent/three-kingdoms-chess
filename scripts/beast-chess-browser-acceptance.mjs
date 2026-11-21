@@ -20,7 +20,7 @@ const chromePath = chromeCandidates.find(existsSync);
 if (!chromePath) throw new Error('找不到可用的 Chrome 或 Edge。');
 
 const delay = milliseconds => new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
-const profileDir = await mkdtemp(join(tmpdir(), 'three-chess-beast-acceptance-'));
+const profileDir = await mkdtemp(join(tmpdir(), 'three-chess-beast-online-acceptance-'));
 await mkdir(screenshotDir, { recursive: true });
 
 class DevTools {
@@ -30,6 +30,7 @@ class DevTools {
     this.pending = new Map();
     this.runtimeErrors = [];
   }
+
   async connect() {
     this.socket = new WebSocket(this.url);
     await new Promise((resolveOpen, rejectOpen) => {
@@ -38,10 +39,11 @@ class DevTools {
     });
     this.socket.on('message', data => {
       const message = JSON.parse(Buffer.from(data).toString('utf8'));
-      if (message.method === 'Runtime.exceptionThrown')
+      if (message.method === 'Runtime.exceptionThrown') {
         this.runtimeErrors.push(message.params.exceptionDetails?.exception?.description
           ?? message.params.exceptionDetails?.text
           ?? 'Runtime exception');
+      }
       if (!message.id) return;
       const pending = this.pending.get(message.id);
       if (!pending) return;
@@ -50,6 +52,7 @@ class DevTools {
       else pending.resolve(message.result);
     });
   }
+
   send(method, params = {}, sessionId) {
     const id = this.nextId++;
     return new Promise((resolveSend, rejectSend) => {
@@ -57,18 +60,30 @@ class DevTools {
       this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }
-  close() { this.socket?.close(); }
+
+  close() {
+    this.socket?.close();
+  }
 }
 
 async function launchChrome() {
   const child = spawn(chromePath, [
-    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-crash-reporter',
-    '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--remote-allow-origins=*',
-    '--remote-debugging-port=0', `--user-data-dir=${profileDir}`, 'about:blank',
+    '--headless=new',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-crash-reporter',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--remote-allow-origins=*',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${profileDir}`,
+    'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+
   const endpoint = await new Promise((resolveEndpoint, rejectEndpoint) => {
     let stderr = '';
-    const timer = setTimeout(() => rejectEndpoint(new Error('Chrome 启动超时')), 15_000);
+    const timer = setTimeout(() => rejectEndpoint(new Error(`Chrome 启动超时：${stderr}`)), 15_000);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', chunk => {
       stderr += chunk;
@@ -83,29 +98,36 @@ async function launchChrome() {
   return { child, devtools };
 }
 
-async function createPage(devtools, url, size) {
-  const { targetId } = await devtools.send('Target.createTarget', { url: 'about:blank' });
+async function createPage(devtools, size) {
+  const { browserContextId } = await devtools.send('Target.createBrowserContext', { disposeOnDetach: false });
+  const { targetId } = await devtools.send('Target.createTarget', { url: 'about:blank', browserContextId });
   const { sessionId } = await devtools.send('Target.attachToTarget', { targetId, flatten: true });
   await Promise.all([
     devtools.send('Page.enable', {}, sessionId),
     devtools.send('Runtime.enable', {}, sessionId),
   ]);
-  const page = { targetId, sessionId, size: { ...size } };
+  const page = { browserContextId, targetId, sessionId, size: { ...size } };
   await setViewport(devtools, page, size);
-  await devtools.send('Page.navigate', { url }, sessionId);
+  await devtools.send('Page.navigate', { url: appUrl }, sessionId);
   return page;
 }
 
 async function setViewport(devtools, page, size) {
   await devtools.send('Emulation.setDeviceMetricsOverride', {
-    width: size.width, height: size.height, deviceScaleFactor: 1, mobile: size.mobile ?? false,
+    width: size.width,
+    height: size.height,
+    deviceScaleFactor: 1,
+    mobile: size.mobile ?? false,
   }, page.sessionId);
   page.size = { ...size };
 }
 
 async function evaluate(devtools, page, expression) {
   const response = await devtools.send('Runtime.evaluate', {
-    expression, awaitPromise: true, returnByValue: true, userGesture: true,
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+    userGesture: true,
   }, page.sessionId);
   if (response.exceptionDetails)
     throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
@@ -117,13 +139,13 @@ async function waitFor(devtools, page, expression, label, timeoutMs = 12_000) {
   while (Date.now() < deadline) {
     try {
       if (await evaluate(devtools, page, expression)) return;
-    } catch { /* Navigation may still be in progress. */ }
+    } catch { /* Navigation or reconnect may still be in progress. */ }
     await delay(80);
   }
   throw new Error(`等待“${label}”超时。`);
 }
 
-async function elementRect(devtools, page, selector) {
+async function rect(devtools, page, selector) {
   return evaluate(devtools, page, `(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
     if (!element) return null;
@@ -133,9 +155,10 @@ async function elementRect(devtools, page, selector) {
   })()`);
 }
 
-async function buttonRect(devtools, page, text) {
+async function buttonRect(devtools, page, text, rootSelector = '') {
   return evaluate(devtools, page, `(() => {
-    const element = [...document.querySelectorAll('button')]
+    const root = ${rootSelector ? `document.querySelector(${JSON.stringify(rootSelector)})` : 'document'};
+    const element = root && [...root.querySelectorAll('button')]
       .find(button => button.textContent.trim() === ${JSON.stringify(text)});
     if (!element) return null;
     element.scrollIntoView({ block: 'center', inline: 'center' });
@@ -149,32 +172,59 @@ async function clickBox(devtools, page, box, label) {
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   await devtools.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+    type: 'mousePressed',
+    x,
+    y,
+    button: 'left',
+    buttons: 1,
+    clickCount: 1,
   }, page.sessionId);
   await devtools.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+    type: 'mouseReleased',
+    x,
+    y,
+    button: 'left',
+    buttons: 0,
+    clickCount: 1,
   }, page.sessionId);
-  await delay(80);
+  await delay(90);
 }
 
 async function clickSelector(devtools, page, selector, label = selector) {
-  await clickBox(devtools, page, await elementRect(devtools, page, selector), label);
+  await clickBox(devtools, page, await rect(devtools, page, selector), label);
 }
 
-async function clickButton(devtools, page, text) {
-  await clickBox(devtools, page, await buttonRect(devtools, page, text), text);
+async function clickButton(devtools, page, text, rootSelector = '') {
+  await clickBox(devtools, page, await buttonRect(devtools, page, text, rootSelector), text);
+}
+
+async function enterGuest(devtools, page, seatSelector, nickname) {
+  await waitFor(devtools, page,
+    `document.querySelector(${JSON.stringify(seatSelector)}) && !document.querySelector(${JSON.stringify(seatSelector)}).disabled`,
+    '空席位');
+  await clickSelector(devtools, page, seatSelector, '空席位');
+  await waitFor(devtools, page, `document.querySelector('.beast-seat-dialog')?.open === true`, '昵称弹窗');
+  await clickSelector(devtools, page, '.beast-seat-dialog input', '昵称输入框');
+  await devtools.send('Input.insertText', { text: nickname }, page.sessionId);
+  await clickButton(devtools, page, '入座', '.beast-seat-dialog');
+  await waitFor(devtools, page, `document.body.textContent.includes(${JSON.stringify(nickname)})
+    && document.querySelectorAll('.beast-piece').length === 16`, `${nickname} 入座`);
 }
 
 async function screenshot(devtools, page, fileName) {
   const metrics = await devtools.send('Page.getLayoutMetrics', {}, page.sessionId);
   const content = metrics.cssContentSize ?? metrics.contentSize;
-  const clip = {
-    x: 0, y: 0, width: page.size.width,
-    height: Math.min(1800, Math.max(page.size.height, Math.ceil(content.height))),
-    scale: 1,
-  };
   const result = await devtools.send('Page.captureScreenshot', {
-    format: 'png', fromSurface: true, captureBeyondViewport: true, clip,
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: true,
+    clip: {
+      x: 0,
+      y: 0,
+      width: page.size.width,
+      height: Math.min(1800, Math.max(page.size.height, Math.ceil(content.height))),
+      scale: 1,
+    },
   }, page.sessionId);
   const target = join(screenshotDir, fileName);
   await writeFile(target, Buffer.from(result.data, 'base64'));
@@ -183,138 +233,140 @@ async function screenshot(devtools, page, fileName) {
 
 const { child, devtools } = await launchChrome();
 try {
-  const page = await createPage(devtools, `${origin}/`, { width: 1366, height: 768 });
-  await waitFor(devtools, page, `!!document.querySelector('.home-page')`, '首页');
-  await evaluate(devtools, page, `(() => {
-    const card = [...document.querySelectorAll('.home-action-card')]
-      .find(item => item.querySelector('strong')?.textContent.trim() === '其他玩法');
-    card?.click();
-  })()`);
-  await waitFor(devtools, page, `!!document.querySelector('.other-games-page')`, '其他玩法页');
-  await waitFor(devtools, page, `document.querySelector('.beast-entry strong')?.textContent.trim() === '斗兽棋'`, '斗兽棋入口');
-  await clickSelector(devtools, page, '.beast-entry', '斗兽棋入口');
-  await waitFor(devtools, page, `!!document.querySelector('.beast-page')`, '斗兽棋页面');
-  await waitFor(devtools, page, `[...document.querySelectorAll('.beast-piece img')].length === 16
-    && [...document.querySelectorAll('.beast-piece img')].every(img => img.complete && img.naturalWidth > 0)`, '斗兽棋原图棋子加载');
-  await waitFor(devtools, page, `document.querySelector('.beast-board-image')?.complete
-    && document.querySelector('.beast-board-image')?.naturalWidth > 0`, '斗兽棋原图棋盘加载');
+  const lower = await createPage(devtools, { width: 1366, height: 768 });
+  await waitFor(devtools, lower, `document.querySelector('.beast-page[data-connection="online"]') !== null`, '斗兽棋棋桌连接');
+  await waitFor(devtools, lower, `document.querySelectorAll('.game-table-seat').length === 2`, '斗兽棋空桌');
+  const emptyTable = await screenshot(devtools, lower, '斗兽棋-联机棋桌-空桌.png');
+  await enterGuest(devtools, lower, '.game-table-seat.red', '斗兽下方');
+  assertActionRow(await evaluate(devtools, lower, `[...document.querySelectorAll('.beast-action-row button')].map(button => button.textContent.trim())`));
+  await clickButton(devtools, lower, '准备');
+  await waitFor(devtools, lower, `document.querySelector('.self-seat')?.classList.contains('ready')`, '下方准备');
 
-  const desktopInitial = await evaluate(devtools, page, `(() => {
-    const board = document.querySelector('.beast-board-frame').getBoundingClientRect();
-    const grid = document.querySelector('.beast-board-grid').getBoundingClientRect();
-    const cells = [...document.querySelectorAll('.beast-cell')].map(cell => cell.getBoundingClientRect());
+  const upper = await createPage(devtools, { width: 1366, height: 768 });
+  await waitFor(devtools, upper, `document.querySelector('.beast-page[data-connection="online"]') !== null`, '上方连接');
+  await waitFor(devtools, upper, `document.querySelector('.game-table-seat.red')?.textContent.includes('斗兽下方')`, '上方看到下方席位');
+  await enterGuest(devtools, upper, '.game-table-seat.black', '斗兽上方');
+  await clickButton(devtools, upper, '准备');
+  await waitFor(devtools, lower, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '双方开局');
+  await waitFor(devtools, upper, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '上方同步开局');
+
+  const desktop = await evaluate(devtools, lower, `(() => {
+    const board = document.querySelector('.beast-online-board').getBoundingClientRect();
+    const upper = document.querySelector('.beast-table-seat.upper').getBoundingClientRect();
+    const lower = document.querySelector('.beast-table-seat.lower').getBoundingClientRect();
+    const actions = document.querySelector('.beast-bottom-actions').getBoundingClientRect();
     return {
       innerWidth,
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
-      board: { width: Math.round(board.width), height: Math.round(board.height) },
-      grid: { left: Math.round(grid.left - board.left), top: Math.round(grid.top - board.top), width: Math.round(grid.width), height: Math.round(grid.height) },
-      cells: cells.length,
-      pieces: document.querySelectorAll('.beast-piece img').length,
-      title: document.querySelector('.beast-heading h1')?.textContent.trim(),
-      turn: document.querySelector('.beast-turn')?.textContent.trim(),
-      centerCell: (() => {
-        const cell = document.querySelector('.beast-cell[data-coordinate="D5"]').getBoundingClientRect();
-        return { x: Math.round(cell.x + cell.width / 2), y: Math.round(cell.y + cell.height / 2) };
-      })(),
+      boardWidth: Math.round(board.width),
+      boardHeight: Math.round(board.height),
+      upperNickname: document.querySelector('.beast-table-seat.upper strong')?.textContent.trim(),
+      lowerNickname: document.querySelector('.beast-table-seat.lower strong')?.textContent.trim(),
+      gameRegionHeight: Math.round(actions.bottom - upper.top),
+      actionButtons: [...document.querySelectorAll('.beast-action-row button')].map(button => button.textContent.trim()),
     };
   })()`);
-  if (desktopInitial.scrollWidth > desktopInitial.clientWidth + 1)
-    throw new Error(`桌面斗兽棋横向溢出：${JSON.stringify(desktopInitial)}`);
-  if (desktopInitial.cells !== 63 || desktopInitial.pieces !== 16) throw new Error('斗兽棋初始棋盘数量不正确。');
-  if (desktopInitial.title !== '斗兽棋' || !desktopInitial.turn.includes('下方')) throw new Error('斗兽棋标题或先手状态不正确。');
-  if (Math.abs(desktopInitial.board.width - desktopInitial.board.height) > 1) throw new Error('斗兽棋棋盘不是正方形。');
-  const desktopInitialShot = await screenshot(devtools, page, '斗兽棋-桌面-初始.png');
+  assertActionRow(desktop.actionButtons);
+  if (desktop.upperNickname !== '斗兽上方' || desktop.lowerNickname !== '斗兽下方')
+    throw new Error(`上下玩家信息不正确：${JSON.stringify(desktop)}`);
+  if (desktop.boardWidth > 570 || desktop.boardHeight > 570)
+    throw new Error(`桌面棋盘仍然过大：${JSON.stringify(desktop)}`);
+  if (desktop.gameRegionHeight > lower.size.height)
+    throw new Error(`棋盘与上下玩家信息无法容纳在同一屏：${JSON.stringify(desktop)}`);
+  if (desktop.scrollWidth > desktop.clientWidth + 1)
+    throw new Error(`桌面斗兽棋横向溢出：${JSON.stringify(desktop)}`);
 
-  await clickSelector(devtools, page, '.beast-cell[data-coordinate="A1"]', 'A1 虎');
-  await waitFor(devtools, page, `document.querySelector('.beast-cell[data-coordinate="A1"]').classList.contains('selected')
-    && document.querySelectorAll('.beast-cell.target').length === 2`, 'A1 合法落点');
-  await clickSelector(devtools, page, '.beast-cell[data-coordinate="B1"]', 'B1');
-  await waitFor(devtools, page, `document.querySelector('.beast-turn').textContent.includes('上方')`, '上方回合');
-  if (await evaluate(devtools, page, `!document.querySelector('.beast-cell[data-coordinate="B1"] .beast-piece')
-    || document.querySelector('.beast-cell[data-coordinate="A1"] .beast-piece')`))
-    throw new Error('斗兽棋走子后棋子位置不正确。');
-  await clickButton(devtools, page, '悔棋');
-  await waitFor(devtools, page, `document.querySelector('.beast-turn').textContent.includes('下方')
-    && document.querySelector('.beast-cell[data-coordinate="A1"] .beast-piece')`, '悔棋恢复');
+  await clickSelector(devtools, lower, '.beast-cell[data-coordinate="A1"]', 'A1 虎');
+  await waitFor(devtools, lower, `document.querySelectorAll('.beast-cell.target').length === 2`, 'A1 合法落点');
+  await clickSelector(devtools, lower, '.beast-cell[data-coordinate="B1"]', 'B1');
+  await waitFor(devtools, upper, `document.querySelector('.beast-history')?.textContent.includes('A1 → B1')`, '实时走子同步');
+  await waitFor(devtools, upper, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽上方 行棋')`, '轮到上方');
+  const playingShot = await screenshot(devtools, lower, '斗兽棋-联机-对局.png');
 
-  const turns = [
-    ['G3', 'G4', '上方'],
-    ['A9', 'B9', '下方'],
-    ['G4', 'G5', '上方'],
-    ['B9', 'C9', '下方'],
-    ['G5', 'G6', '上方'],
-    ['C9', 'C8', '下方'],
-    ['G6', 'G7', '上方'],
-  ];
-  for (const [from, to, nextTurn] of turns) {
-    await clickSelector(devtools, page, `.beast-cell[data-coordinate="${from}"]`, from);
-    await waitFor(devtools, page, `document.querySelector('.beast-cell[data-coordinate="${to}"]')?.classList.contains('target')`, `${from} → ${to} 合法落点`);
-    await clickSelector(devtools, page, `.beast-cell[data-coordinate="${to}"]`, to);
-    await waitFor(devtools, page, `document.querySelector('.beast-turn')?.textContent.includes('${nextTurn}')`, `${to} 后轮到${nextTurn}`);
-  }
-  const captureState = await evaluate(devtools, page, `(() => ({
-    upperCount: document.querySelector('.beast-side:nth-child(1) header strong')?.textContent.trim(),
-    upperLost: document.querySelector('.beast-side:nth-child(1) .beast-lost b')?.textContent.trim(),
-    lastMove: document.querySelector('.beast-last-move strong')?.textContent.trim(),
-    remainingPieces: document.querySelectorAll('.beast-piece').length,
+  const visitor = await createPage(devtools, { width: 1366, height: 768 });
+  await waitFor(devtools, visitor, `document.querySelector('.game-table-center')?.classList.contains('active')`, '访客看到进行中棋桌');
+  await clickSelector(devtools, visitor, '.game-table-center', '棋桌观战');
+  await waitFor(devtools, visitor, `document.querySelector('.beast-history')?.textContent.includes('A1 → B1')
+    && document.querySelectorAll('.beast-piece').length === 16`, '访客观战棋盘');
+  if (await evaluate(devtools, visitor, `document.querySelectorAll('.beast-action-row').length !== 0`))
+    throw new Error('观战者仍看到玩家对局操作。');
+
+  await clickButton(devtools, upper, '提和', '.beast-action-row');
+  await waitFor(devtools, lower, `document.querySelector('.beast-draw-bar')?.textContent.includes('上方提出和棋')`, '下方收到提和');
+  await clickButton(devtools, lower, '同意', '.beast-draw-bar');
+  await waitFor(devtools, lower, `document.querySelector('.result-banner')?.textContent.includes('双方同意和棋')`, '双方和棋');
+  const finishedShot = await screenshot(devtools, lower, '斗兽棋-联机-和棋.png');
+
+  await clickButton(devtools, lower, '再来一局');
+  await waitFor(devtools, lower, `document.querySelector('.beast-waiting-card')?.textContent.includes('双方已入座')`, '再来一局等待');
+  const rematch = await evaluate(devtools, lower, `(() => ({
+    upper: document.querySelector('.beast-table-seat.upper strong')?.textContent.trim(),
+    lower: document.querySelector('.beast-table-seat.lower strong')?.textContent.trim(),
+    roundText: document.querySelector('.beast-bottom-actions')?.textContent,
   }))()`);
-  if (captureState.upperCount !== '7' || !captureState.upperLost.includes('象')
-    || !captureState.lastMove.includes('吃象') || captureState.remainingPieces !== 15)
-    throw new Error(`浏览器吃子状态不正确：${JSON.stringify(captureState)}`);
-  const desktopPlayedShot = await screenshot(devtools, page, '斗兽棋-桌面-吃子.png');
+  if (rematch.upper !== '斗兽上方' || rematch.lower !== '斗兽下方')
+    throw new Error(`再来一局没有保留席位：${JSON.stringify(rematch)}`);
 
-  await clickButton(devtools, page, '悔棋');
-  await waitFor(devtools, page, `document.querySelectorAll('.beast-piece').length === 16
-    && document.querySelector('.beast-cell[data-coordinate="G7"] img[alt="上方象"]')`, '悔棋恢复被吃棋子');
-  await clickButton(devtools, page, '重新开始');
-  await waitFor(devtools, page, `document.querySelectorAll('.beast-piece').length === 16
-    && document.querySelector('.beast-turn')?.textContent.includes('下方')
-    && document.querySelector('.beast-board-heading')?.textContent.includes('第 0 手')`, '重新开始');
+  await clickButton(devtools, lower, '准备');
+  await clickButton(devtools, upper, '准备');
+  await waitFor(devtools, lower, `document.querySelector('.beast-turn-badge')?.textContent.includes('轮到 斗兽下方 行棋')`, '第二局开始');
 
-  await setViewport(devtools, page, { width: 390, height: 844, mobile: true });
-  await waitFor(devtools, page, `innerWidth === 390 && !!document.querySelector('.beast-page')`, '手机斗兽棋');
-  const mobile = await evaluate(devtools, page, `(() => {
-    const board = document.querySelector('.beast-board-frame').getBoundingClientRect();
+  await setViewport(devtools, lower, { width: 390, height: 844, mobile: true });
+  await waitFor(devtools, lower, `innerWidth === 390 && document.querySelectorAll('.beast-piece').length === 16`, '手机斗兽棋对局');
+  const mobile = await evaluate(devtools, lower, `(() => {
+    const board = document.querySelector('.beast-online-board').getBoundingClientRect();
+    const upper = document.querySelector('.beast-table-seat.upper').getBoundingClientRect();
+    const lower = document.querySelector('.beast-table-seat.lower').getBoundingClientRect();
     const cell = document.querySelector('.beast-cell[data-coordinate="A1"]').getBoundingClientRect();
-    const cells = [...document.querySelectorAll('.beast-cell')];
     return {
       innerWidth,
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
       board: { left: Math.round(board.left), right: Math.round(board.right), width: Math.round(board.width) },
       cell: { width: Math.round(cell.width), height: Math.round(cell.height) },
-      allInsideBoard: cells.every(item => {
-        const rect = item.getBoundingClientRect();
-        return rect.left >= board.left - 1 && rect.right <= board.right + 1;
-      }),
-      actionWidths: [...document.querySelectorAll('.beast-actions button')].map(item => Math.round(item.getBoundingClientRect().width)),
+      upperWidth: Math.round(upper.width),
+      lowerWidth: Math.round(lower.width),
+      playerActions: [...document.querySelectorAll('.beast-action-row button')].map(button => button.textContent.trim()),
     };
   })()`);
-  if (mobile.scrollWidth > mobile.clientWidth + 1) throw new Error(`手机斗兽棋横向溢出：${JSON.stringify(mobile)}`);
-  if (mobile.board.left < 0 || mobile.board.right > mobile.innerWidth + 1) throw new Error('手机棋盘超出视口。');
-  if (!mobile.allInsideBoard) throw new Error('手机棋格超出棋盘底图。');
-  if (mobile.cell.width < 40 || mobile.cell.height < 35) throw new Error(`手机棋格点击区域过小：${JSON.stringify(mobile.cell)}`);
-  await clickSelector(devtools, page, '.beast-cell[data-coordinate="A1"]', '手机 A1 虎');
-  await waitFor(devtools, page, `document.querySelectorAll('.beast-cell.target').length === 2`, '手机合法落点');
-  const mobileShot = await screenshot(devtools, page, '斗兽棋-手机-选中棋子.png');
+  assertActionRow(mobile.playerActions);
+  if (mobile.scrollWidth > mobile.clientWidth + 1)
+    throw new Error(`手机斗兽棋横向溢出：${JSON.stringify(mobile)}`);
+  if (mobile.board.left < 0 || mobile.board.right > mobile.innerWidth + 1)
+    throw new Error(`手机棋盘超出视口：${JSON.stringify(mobile)}`);
+  if (mobile.cell.width < 40 || mobile.cell.height < 35)
+    throw new Error(`手机棋格点击区域过小：${JSON.stringify(mobile.cell)}`);
+  if (mobile.upperWidth < 350 || mobile.lowerWidth < 350)
+    throw new Error(`手机上下玩家信息过窄：${JSON.stringify(mobile)}`);
+  const mobileShot = await screenshot(devtools, lower, '斗兽棋-手机-联机对局.png');
 
-  await clickButton(devtools, page, '返回其他玩法');
-  await waitFor(devtools, page, `new URL(location.href).searchParams.get('mode') === 'other'
-    && !!document.querySelector('.other-games-page')`, '返回其他玩法');
-  if (devtools.runtimeErrors.length) throw new Error(`浏览器运行时异常：${devtools.runtimeErrors.join('\n')}`);
+  await clickButton(devtools, upper, '认输', '.beast-action-row');
+  await waitFor(devtools, upper, `document.querySelector('.reset-dialog[open]') !== null`, '认输确认');
+  await clickButton(devtools, upper, '确认认输', 'dialog[open]');
+  await waitFor(devtools, lower, `document.querySelector('.result-banner')?.textContent.includes('下方因对手认输获胜')`, '下方看到认输胜利');
+  await clickButton(devtools, upper, '退出', '.beast-action-row');
+  await waitFor(devtools, upper, `document.querySelector('.game-table-seat.black')?.textContent.includes('空位')`, '退出释放席位');
 
+  if (devtools.runtimeErrors.length)
+    throw new Error(`浏览器运行时异常：${devtools.runtimeErrors.join('\n')}`);
   console.log(JSON.stringify({
     origin,
-    desktopInitial,
+    desktop,
     mobile,
-    screenshots: { desktopInitialShot, desktopPlayedShot, mobileShot },
+    rematch,
+    screenshots: { emptyTable, playingShot, finishedShot, mobileShot },
   }, null, 2));
 } finally {
   devtools.close();
   child.kill();
   await delay(200);
   const resolvedProfile = resolve(profileDir);
-  if (resolvedProfile.startsWith(resolve(tmpdir()) + '\\') && resolvedProfile.includes('three-chess-beast-acceptance-'))
+  if (resolvedProfile.startsWith(resolve(tmpdir()) + '\\') && resolvedProfile.includes('three-chess-beast-online-acceptance-'))
     await rm(resolvedProfile, { recursive: true, force: true }).catch(() => undefined);
+}
+
+function assertActionRow(buttons) {
+  if (JSON.stringify(buttons) !== JSON.stringify(['提和', '认输', '退出']))
+    throw new Error(`对局左上操作按钮不正确：${JSON.stringify(buttons)}`);
 }

@@ -7,6 +7,7 @@ import { RoomService, type InternalRoom } from './room-service.ts';
 import { FiveSoldiersService } from './five-soldiers-service.ts';
 import { HorseChessService } from './horse-chess-service.ts';
 import { ChineseChessService } from './chinese-chess-service.ts';
+import { BeastChessService } from './beast-chess-service.ts';
 import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
 import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
@@ -14,6 +15,7 @@ import type { ClientAck, MoveIntent, PublicLobbySnapshot, PublicRoomSummary, Roo
 import type { FiveAck, FiveMoveIntent, FiveReceipt, FiveState } from '../src/five-soldiers.ts';
 import type { HorseAck, HorseMoveIntent, HorseReceipt, HorseState } from '../src/horse-chess.ts';
 import type { ChineseAck, ChineseMoveIntent, ChineseReceipt, ChineseState } from '../src/chinese-chess.ts';
+import type { BeastAck, BeastMoveIntent, BeastReceipt, BeastState } from '../src/beast-chess.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 const AUTH_COOKIE = 'three_chess_session';
@@ -139,6 +141,9 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const chinese = new ChineseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('chinese:state', item.state);
   });
+  const beast = new BeastChessService(service => {
+    for (const item of service.views()) io.to(item.socketId).emit('beast:state', item.state);
+  });
   const internalError = <T>(done: (ack: ClientAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const fiveInternalError = <T>(done: (ack: FiveAck<T>) => void) =>
@@ -146,6 +151,8 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const horseInternalError = <T>(done: (ack: HorseAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const chineseInternalError = <T>(done: (ack: ChineseAck<T>) => void) =>
+    done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
+  const beastInternalError = <T>(done: (ack: BeastAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
 
   app.disable('x-powered-by');
@@ -274,6 +281,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       five.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       horse.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       chinese.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
+      beast.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       return user;
     };
     currentUser();
@@ -630,6 +638,120 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
       } catch { chineseInternalError(done); }
     });
+    socket.on('beast:inspect', (_payload: unknown, done: (ack: BeastAck<BeastState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(beast.inspect());
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:watch', (_payload: unknown, done: (ack: BeastAck<BeastState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(beast.watch(socket.id));
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:unwatch', (_payload: unknown, done: (ack: BeastAck) => void) => {
+      if (typeof done !== 'function') return;
+      beast.unwatch(socket.id);
+      done({ ok: true, data: undefined });
+    });
+    socket.on('beast:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: BeastAck<BeastReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        const user = currentUser();
+        const result = beast.join(user?.username ?? payload?.nickname, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:resume', (payload: { reconnectToken?: unknown }, done: (ack: BeastAck<BeastReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.resume(payload?.reconnectToken, socket.id);
+        if (result.ok && result.replacedSocketId) {
+          io.to(result.replacedSocketId).emit('beast:session-replaced');
+          io.sockets.sockets.get(result.replacedSocketId)?.disconnect(true);
+        }
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:choose-side', (payload: { reconnectToken?: unknown; side?: unknown }, done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.chooseSide(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:ready', (payload: { reconnectToken?: unknown; ready?: unknown }, done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.setReady(payload?.reconnectToken, payload?.ready, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:rematch', (payload: { reconnectToken?: unknown }, done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.rematch(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:move', (payload: { reconnectToken?: unknown; intent?: unknown },
+      done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.move(payload?.reconnectToken, payload?.intent as BeastMoveIntent | undefined, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:resign', (payload: { reconnectToken?: unknown }, done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.resign(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:draw-offer', (payload: { reconnectToken?: unknown }, done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.offerDraw(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:draw-respond', (payload: { reconnectToken?: unknown; accept?: unknown }, done: (ack: BeastAck<{ state: BeastState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.respondDraw(payload?.reconnectToken, payload?.accept, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
+    socket.on('beast:leave', (payload: { reconnectToken?: unknown }, done: (ack: BeastAck) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = beast.leave(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
+      } catch { beastInternalError(done); }
+    });
     socket.on('room:watch', (payload: { roomCode?: unknown }, done: (ack: ClientAck<{ state: RoomView }>) => void) => {
       if (typeof done !== 'function') return;
       currentUser();
@@ -768,8 +890,9 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       if (five.disconnect(socket.id)) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
       if (horse.disconnect(socket.id)) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
       if (chinese.disconnect(socket.id)) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      if (beast.disconnect(socket.id)) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
     });
   });
 
-  return { app, httpServer, io, rooms, five, horse, chinese, authService };
+  return { app, httpServer, io, rooms, five, horse, chinese, beast, authService };
 }

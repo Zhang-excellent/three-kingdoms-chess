@@ -65,6 +65,7 @@ const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null);
 const fivePage = ref<InstanceType<typeof FiveSoldiersPage> | null>(null);
 const horsePage = ref<InstanceType<typeof HorseChessPage> | null>(null);
 const chinesePage = ref<InstanceType<typeof ChineseChessPage> | null>(null);
+const beastPage = ref<InstanceType<typeof BeastChessPage> | null>(null);
 const auth = useAuth(), authNotice = ref('');
 const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
 const authRecentGames = auth.recentGames, authRecentLoading = auth.recentLoading, authRecentError = auth.recentError;
@@ -302,6 +303,7 @@ async function navigatePage(next: AppPage, code: string | null = null, method: '
   if (page.value === 'five' && next !== 'five') await fivePage.value?.leaveForNavigation();
   if (page.value === 'horse' && next !== 'horse') await horsePage.value?.leaveForNavigation();
   if (page.value === 'chinese' && next !== 'chinese') await chinesePage.value?.leaveForNavigation();
+  if (page.value === 'beast' && next !== 'beast') await beastPage.value?.leaveForNavigation();
   if (leavesRoom(next, code)) {
     pendingRoomNavigation.value = { next, code, method };
     if (needsPlayingExitConfirmation()) exitDialog.value?.showModal();
@@ -418,6 +420,7 @@ async function syncPageFromLocation() {
   if (page.value === 'five' && route.page !== 'five') await fivePage.value?.leaveForNavigation();
   if (page.value === 'horse' && route.page !== 'horse') await horsePage.value?.leaveForNavigation();
   if (page.value === 'chinese' && route.page !== 'chinese') await chinesePage.value?.leaveForNavigation();
+  if (page.value === 'beast' && route.page !== 'beast') await beastPage.value?.leaveForNavigation();
   if (leavesRoom(route.page, route.roomCode)) {
     const targetHref = location.href;
     const currentHref = page.value === 'room'
@@ -773,7 +776,7 @@ async function requestRematch() {
 
     <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
-    <BeastChessPage v-else-if="page === 'beast'" @other="openOtherPage" />
+    <BeastChessPage v-else-if="page === 'beast'" ref="beastPage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
     <LobbyPage v-else-if="showLobbyPage" :mode="lobbyPageMode" :rooms="lobbyRooms" :nickname="nickname" :account-name="authUser?.username ?? null"
       :create-code="createCode" :join-code="joinCode" :listed="lobbyListed" :busy="onlineBusy" :connection="connection"
@@ -1002,7 +1005,7 @@ async function requestRematch() {
     <dialog ref="otherRulesDialog" class="rules-dialog">
       <div class="dialog-heading"><h2>其他玩法规则</h2><button class="dialog-close" aria-label="关闭规则" @click="otherRulesDialog?.close()">×</button></div>
       <p>当前开放四种独立玩法：</p>
-      <ul><li>五兵联盟：红方五兵、士象全和主帅，对阵标准十六子；红方每回合连续两步，吃掉将帅获胜。</li><li>马棋：双方各九马，马走日且受马腿阻挡，先踏入对方中央帅位获胜。</li><li>中国象棋：经典三十二子规则，不能送将，将死、困毙、认输或双方同意和棋决定结果。</li><li>斗兽棋：本地双人轮流走兽，鼠可入河、狮虎可跳河，陷阱会改变战力，进入敌方兽穴或使对方无子可走即获胜。</li><li>前三种联机玩法先在棋桌选择红方或黑方入座，双方开始后行棋；斗兽棋进入即可同屏对弈。</li></ul>
+      <ul><li>五兵联盟：红方五兵、士象全和主帅，对阵标准十六子；红方每回合连续两步，吃掉将帅获胜。</li><li>马棋：双方各九马，马走日且受马腿阻挡，先踏入对方中央帅位获胜。</li><li>中国象棋：经典三十二子规则，不能送将，将死、困毙、认输或双方同意和棋决定结果。</li><li>斗兽棋：双方各八兽，下方先行；鼠可入河、狮虎可跳河，陷阱会改变战力，进入敌方兽穴或使对方无子可走即获胜。</li><li>四种玩法均先在棋桌选择席位并入座，准备后开局；对局中可提和、认输或退出，结束后可在原桌再来一局。</li></ul>
       <button class="primary-button" @click="otherRulesDialog?.close()">知道了</button>
     </dialog>
     <dialog ref="settingsDialog" class="settings-dialog">

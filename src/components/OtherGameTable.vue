@@ -17,11 +17,13 @@ const props = defineProps<{
   phase: 'lobby' | 'playing' | 'finished';
   players: TablePlayer[];
   busy: boolean;
+  sideNames?: Partial<Record<Side, string>>;
 }>();
 const emit = defineEmits<{ seat: [side: Side]; watch: [] }>();
 
 const guestAvatar = 'images/guest-avatar.svg';
 const playerFor = (side: Side) => props.players.find(player => player.side === side);
+const sideName = (side: Side) => props.sideNames?.[side] ?? (side === 'red' ? '红方' : '黑方');
 const avatarFor = (side: Side) => {
   const player = playerFor(side);
   return player ? backendAssetUrl(player.avatar) || guestAvatar : null;
@@ -31,7 +33,7 @@ const statusText = computed(() => {
   if (props.phase === 'finished') return '本局结束 · 查看棋盘';
   if (props.players.length === 2) return '双方已入座 · 等待准备';
   if (props.players.length === 1) return '等待另一位棋友';
-  return '空桌 · 请选择红方或黑方';
+  return `空桌 · 请选择${sideName('red')}或${sideName('black')}`;
 });
 const canWatch = computed(() => props.phase !== 'lobby');
 const occupiedCount = computed(() => props.players.length);
@@ -47,14 +49,14 @@ const occupiedCount = computed(() => props.players.length);
       <button v-for="side in (['red', 'black'] as const)" :key="side" type="button"
         class="game-table-seat" :class="[side, { occupied: !!playerFor(side) }]"
         :disabled="busy || phase !== 'lobby' || !!playerFor(side)"
-        :aria-label="`${side === 'red' ? '红方' : '黑方'}席位，${playerFor(side) ? playerFor(side)!.nickname : '空位'}`"
+        :aria-label="`${sideName(side)}席位，${playerFor(side) ? playerFor(side)!.nickname : '空位'}`"
         @click="emit('seat', side)">
         <span class="game-avatar-frame">
           <img v-if="avatarFor(side)" :src="avatarFor(side)!" alt="">
           <span v-else class="game-avatar-placeholder" aria-hidden="true"></span>
         </span>
         <strong>{{ playerFor(side)?.nickname || '空位' }}</strong>
-        <small>{{ side === 'red' ? '红方' : '黑方' }} · {{ playerFor(side) ? (playerFor(side)!.ready ? '已准备' : '已入座') : '点击入座' }}</small>
+        <small>{{ sideName(side) }} · {{ playerFor(side) ? (playerFor(side)!.ready ? '已准备' : '已入座') : '点击入座' }}</small>
       </button>
 
       <button class="game-table-center" :class="{ active: phase === 'playing', finished: phase === 'finished' }"
