@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +56,19 @@ REPLACEMENTS = {
     (6, 2): (5, 2),
 }
 
+# Stronger, kind-specific animal colors. Each palette keeps enough tonal range
+# to preserve the original illustration's eyes, stripes and fur details.
+KIND_COLORS = {
+    "elephant": ("#3d5666", "#cad5dc"),
+    "lion": ("#8b5200", "#ffd24a"),
+    "tiger": ("#7c2800", "#ff8b24"),
+    "leopard": ("#704200", "#e8aa32"),
+    "wolf": ("#586a79", "#d4dde4"),
+    "dog": ("#75442c", "#dda071"),
+    "cat": ("#607887", "#f3f8f8"),
+    "rat": ("#75614e", "#d3bfa4"),
+}
+
 
 def cell_box(x: int, y: int) -> tuple[int, int, int, int]:
     image_row = 8 - y
@@ -78,6 +91,52 @@ def extract_piece(source: Image.Image, side: str, x: int, y: int) -> Image.Image
     crop = source.crop((left + 7, top + 9, right - 7, bottom - 9)).convert("RGBA")
     crop.putalpha(rounded_mask(crop.size, 24))
     return crop
+
+
+def smoothstep(value: float, low: float, high: float) -> float:
+    if value <= low:
+        return 0.0
+    if value >= high:
+        return 1.0
+    progress = (value - low) / (high - low)
+    return progress * progress * (3 - 2 * progress)
+
+
+def colorize_animal(piece: Image.Image, side: str, kind: str) -> Image.Image:
+    """Tint the animal silhouette while preserving the supplied wooden base."""
+    rgb = piece.convert("RGB")
+    alpha = piece.getchannel("A")
+    grayscale = rgb.convert("L")
+    dark, light = KIND_COLORS[kind]
+    color_input = (grayscale.point(lambda value: min(255, 80 + value * 2))
+                   if side == "lower" else grayscale)
+    tinted = ImageOps.colorize(color_input, black=dark, white=light).convert("RGBA")
+    tinted.putalpha(alpha)
+
+    width, height = piece.size
+    inset_x = max(7, round(width * 0.05))
+    inset_y = max(7, round(height * 0.07))
+    mask = Image.new("L", (width, height), 0)
+    mask_pixels = mask.load()
+    rgb_pixels = rgb.load()
+    alpha_pixels = alpha.load()
+
+    for y in range(inset_y, height - inset_y):
+        for x in range(inset_x, width - inset_x):
+            if alpha_pixels[x, y] < 32:
+                continue
+            red, green, blue = rgb_pixels[x, y]
+            luminance = 0.299 * red + 0.587 * green + 0.114 * blue
+            if side == "lower":
+                # Dark-brown lower-side animals against a pale wooden base.
+                weight = 1 - smoothstep(luminance, 115, 170)
+            else:
+                # Cream-colored upper-side animals against a dark wooden base.
+                weight = smoothstep(luminance, 145, 205)
+            if weight:
+                mask_pixels[x, y] = round(weight * alpha_pixels[x, y])
+
+    return Image.composite(tinted, piece, mask)
 
 
 def clean_board(source: Image.Image) -> Image.Image:
@@ -106,7 +165,8 @@ def main() -> None:
     clean_board(source).save(OUTPUT / "board.png", optimize=True)
     for side, pieces in PIECES.items():
         for (x, y), kind in pieces.items():
-            extract_piece(source, side, x, y).save(piece_dir / f"{side}-{kind}.png", optimize=True)
+            colored_piece = colorize_animal(extract_piece(source, side, x, y), side, kind)
+            colored_piece.save(piece_dir / f"{side}-{kind}.png", optimize=True)
 
     print(f"Prepared beast-chess board and 16 pieces in {OUTPUT}")
 
