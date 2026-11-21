@@ -13,7 +13,7 @@ const props = defineProps<{
 
 const failed = ref(false);
 const imageSource = computed(() =>
-  `images/beast-chess/pieces/${props.piece.side}-${props.piece.kind}.png?v=animal-colors-v2`);
+  `images/beast-chess/pieces/${props.piece.side}-${props.piece.kind}.png?v=animal-colors-v3`);
 const label = computed(() => `${BEAST_SIDE_NAMES[props.piece.side]}${BEAST_KIND_NAMES[props.piece.kind]}`);
 </script>
 

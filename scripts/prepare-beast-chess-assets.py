@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,17 +56,22 @@ REPLACEMENTS = {
     (6, 2): (5, 2),
 }
 
-# Stronger, kind-specific animal colors. Each palette keeps enough tonal range
-# to preserve the original illustration's eyes, stripes and fur details.
+# One exact animal color per kind. The original holes and dark contour preserve
+# eyes, stripes and spots without allowing the side base to alter the fill.
 KIND_COLORS = {
-    "elephant": ("#3d5666", "#cad5dc"),
-    "lion": ("#8b5200", "#ffd24a"),
-    "tiger": ("#7c2800", "#ff8b24"),
-    "leopard": ("#704200", "#e8aa32"),
-    "wolf": ("#586a79", "#d4dde4"),
-    "dog": ("#75442c", "#dda071"),
-    "cat": ("#607887", "#f3f8f8"),
-    "rat": ("#75614e", "#d3bfa4"),
+    "elephant": "#a9becb",
+    "lion": "#f5c72f",
+    "tiger": "#f57f20",
+    "leopard": "#d89b29",
+    "wolf": "#b9c5cf",
+    "dog": "#d89163",
+    "cat": "#dce7ea",
+    "rat": "#f7f3e8",
+}
+
+BASE_COLORS = {
+    "lower": ("#6d351a", "#fff5df"),
+    "upper": ("#36150b", "#edc982"),
 }
 
 
@@ -107,10 +112,10 @@ def colorize_animal(piece: Image.Image, side: str, kind: str) -> Image.Image:
     rgb = piece.convert("RGB")
     alpha = piece.getchannel("A")
     grayscale = rgb.convert("L")
-    dark, light = KIND_COLORS[kind]
-    color_input = (grayscale.point(lambda value: min(255, 80 + value * 2))
-                   if side == "lower" else grayscale)
-    tinted = ImageOps.colorize(color_input, black=dark, white=light).convert("RGBA")
+    base_dark, base_light = BASE_COLORS[side]
+    base = ImageOps.colorize(grayscale, black=base_dark, white=base_light).convert("RGBA")
+    base.putalpha(alpha)
+    tinted = Image.new("RGBA", piece.size, KIND_COLORS[kind])
     tinted.putalpha(alpha)
 
     width, height = piece.size
@@ -136,7 +141,12 @@ def colorize_animal(piece: Image.Image, side: str, kind: str) -> Image.Image:
             if weight:
                 mask_pixels[x, y] = round(weight * alpha_pixels[x, y])
 
-    return Image.composite(tinted, piece, mask)
+    outline = ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(3)), mask)
+    outline = outline.filter(ImageFilter.GaussianBlur(0.45))
+    outline_layer = Image.new("RGBA", piece.size, "#4b2c1c")
+    outline_layer.putalpha(outline.point(lambda value: round(value * 0.78)))
+    base_with_outline = Image.alpha_composite(base, outline_layer)
+    return Image.composite(tinted, base_with_outline, mask)
 
 
 def clean_board(source: Image.Image) -> Image.Image:
