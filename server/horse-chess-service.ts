@@ -26,7 +26,9 @@ interface HorsePlayer {
   accountId: string | null;
   side: HorseSide;
   ready: boolean;
-  socketId: string;
+  online: boolean;
+  offlineUntil: number | null;
+  socketId: string | null;
 }
 
 interface StoredAck {
@@ -55,6 +57,8 @@ const cleanNickname = (value: unknown): string =>
 
 export class HorseChessService {
   private readonly onChanged: (service: HorseChessService) => void;
+  private readonly disconnectGraceMs: number;
+  private readonly now: () => number;
   private phase: HorsePhase = 'lobby';
   private version = 1;
   private round = 1;
@@ -66,9 +70,13 @@ export class HorseChessService {
   private readonly socketAvatars = new Map<string, string | null>();
   private readonly observers = new Set<string>();
   private readonly requests = new Map<string, Map<string, StoredAck>>();
+  private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(onChanged: (service: HorseChessService) => void) {
+  constructor(onChanged: (service: HorseChessService) => void,
+    disconnectGraceMs = 60_000, now: () => number = Date.now) {
     this.onChanged = onChanged;
+    this.disconnectGraceMs = disconnectGraceMs;
+    this.now = now;
   }
 
   setSocketAccount(socketId: string, accountId: string | null, avatar: string | null = null): void {
@@ -97,6 +105,8 @@ export class HorseChessService {
       accountId,
       side: sideValue,
       ready: false,
+      online: true,
+      offlineUntil: null,
       socketId,
     };
     this.players.push(player);
@@ -115,9 +125,12 @@ export class HorseChessService {
     if (!found.ok) return found;
     if (!this.accountMatches(found.player, socketId))
       return this.fail('AUTH_MISMATCH', '当前账号与席位不一致，请重新进入。');
-    const replacedSocketId = found.player.socketId !== socketId ? found.player.socketId : undefined;
+    const replacedSocketId = found.player.socketId && found.player.socketId !== socketId
+      ? found.player.socketId : undefined;
+    this.cancelExpiry(found.player.id);
     if (replacedSocketId) this.socketPlayers.delete(replacedSocketId);
-    found.player.socketId = socketId;
+    found.player.online = true;
+    found.player.offlineUntil = null;
     found.player.avatar = found.player.accountId ? this.socketAvatars.get(socketId) ?? null : null;
     this.observers.delete(socketId);
     this.bindSocket(found.player, socketId);
@@ -149,7 +162,7 @@ export class HorseChessService {
     if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '对局已经开始。', found.player);
     found.player.ready = readyValue === true;
     this.version++;
-    if (this.players.length === 2 && this.players.every(player => player.ready)) {
+    if (this.players.length === 2 && this.players.every(player => player.online && player.ready)) {
       this.game = newHorseGame();
       this.phase = 'playing';
       this.drawOfferBy = null;
@@ -252,10 +265,10 @@ export class HorseChessService {
   leave(tokenValue: unknown, socketId: string): ActionResult {
     const found = this.findPlayer(tokenValue);
     if (!found.ok) return found;
-    if (found.player.socketId !== socketId)
+    if (found.player.socketId && found.player.socketId !== socketId)
       return this.fail('NOT_ACTIVE_CONNECTION', '席位已在另一连接上使用。');
-    const departedSocketId = found.player.socketId;
-    this.removePlayer(found.player);
+    const departedSocketId = found.player.socketId ?? undefined;
+    this.removePlayer(found.player, 'exit');
     return { ok: true, changed: true, departedSocketId, ack: { ok: true, data: undefined } };
   }
 
@@ -277,7 +290,12 @@ export class HorseChessService {
     this.socketAccounts.delete(socketId);
     this.socketAvatars.delete(socketId);
     if (!player || player.socketId !== socketId) return false;
-    this.removePlayer(player);
+    player.socketId = null;
+    player.online = false;
+    player.ready = false;
+    player.offlineUntil = this.now() + this.disconnectGraceMs;
+    this.scheduleExpiry(player);
+    this.version++;
     return true;
   }
 
@@ -290,7 +308,10 @@ export class HorseChessService {
     ];
   }
 
-  dispose(): void {}
+  dispose(): void {
+    for (const timer of this.expiryTimers.values()) clearTimeout(timer);
+    this.expiryTimers.clear();
+  }
 
   private stateResult(player: HorsePlayer): ActionSuccess<{ state: HorseState }> {
     return { ok: true, changed: true, ack: { ok: true, data: { state: this.state(player) } } };
@@ -350,8 +371,8 @@ export class HorseChessService {
       identity: player.accountId ? 'account' : 'guest',
       side: player.side,
       ready: player.ready,
-      online: true,
-      offlineUntil: null,
+      online: player.online,
+      offlineUntil: player.offlineUntil,
     }));
     return {
       gameId: HORSE_CHESS_GAME_ID,
@@ -365,19 +386,25 @@ export class HorseChessService {
     };
   }
 
-  private removePlayer(player: HorsePlayer): void {
+  private removePlayer(player: HorsePlayer, cause: 'exit' | 'timeout'): void {
+    this.cancelExpiry(player.id);
+    if (player.socketId) {
+      this.socketPlayers.delete(player.socketId);
+      this.socketAccounts.delete(player.socketId);
+      this.socketAvatars.delete(player.socketId);
+    }
+    this.requests.delete(player.id);
     if (this.phase === 'playing' && this.game) {
       this.game = resignHorseGame(this.game, player.side);
       this.phase = 'finished';
       this.drawOfferBy = null;
     }
-    this.socketPlayers.delete(player.socketId);
-    this.socketAccounts.delete(player.socketId);
-    this.socketAvatars.delete(player.socketId);
-    this.requests.delete(player.id);
     this.players = this.players.filter(item => item.id !== player.id);
     this.version++;
     if (!this.players.length) this.resetRoom();
+    else if (cause === 'timeout' && this.players.every(item => !item.online)) {
+      // Remaining players keep their independent grace timers.
+    }
   }
 
   private resetToLobby(): void {
@@ -386,16 +413,42 @@ export class HorseChessService {
     this.game = null;
     this.drawOfferBy = null;
     this.requests.clear();
-    for (const player of this.players) player.ready = false;
+    for (const player of this.players) {
+      player.ready = false;
+      if (!player.online) {
+        player.offlineUntil = this.now() + this.disconnectGraceMs;
+        this.scheduleExpiry(player);
+      }
+    }
     this.version++;
   }
 
   private resetRoom(): void {
+    for (const timer of this.expiryTimers.values()) clearTimeout(timer);
+    this.expiryTimers.clear();
     this.phase = 'lobby';
     this.round++;
     this.game = null;
     this.drawOfferBy = null;
     this.requests.clear();
     this.version++;
+  }
+
+  private scheduleExpiry(player: HorsePlayer): void {
+    this.cancelExpiry(player.id);
+    const timer = setTimeout(() => {
+      this.expiryTimers.delete(player.id);
+      if (player.online || !this.players.includes(player)) return;
+      this.removePlayer(player, 'timeout');
+      this.onChanged(this);
+    }, this.disconnectGraceMs);
+    timer.unref?.();
+    this.expiryTimers.set(player.id, timer);
+  }
+
+  private cancelExpiry(playerId: string): void {
+    const timer = this.expiryTimers.get(playerId);
+    if (timer) clearTimeout(timer);
+    this.expiryTimers.delete(playerId);
   }
 }

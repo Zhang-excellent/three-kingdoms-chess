@@ -116,7 +116,14 @@ test('two independent sockets join, ready, play and receive the same authoritati
 
   accountSocket.disconnect();
   await new Promise(resolve => setTimeout(resolve, 50));
-  assert.deepEqual(observerStates.at(-1)?.players.map(player => player.side), ['black']);
-  assert.equal(observerStates.at(-1)?.phase, 'finished');
-  assert.equal(observerStates.at(-1)?.game?.winner, 'black');
+  assert.deepEqual(observerStates.at(-1)?.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
+  assert.equal(observerStates.at(-1)?.phase, 'playing');
+  assert.equal(observerStates.at(-1)?.game?.winner, null);
+
+  const resumedSocket = await client(`three_chess_session=${registered.sessionToken}`);
+  const resumed = success(await emit<FiveReceipt>(resumedSocket, 'five:resume', {
+    reconnectToken: red.reconnectToken,
+  }));
+  assert.equal(resumed.state.phase, 'playing');
+  assert.equal(resumed.state.game?.pieces.length, 26);
 });

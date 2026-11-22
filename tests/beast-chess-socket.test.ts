@@ -93,7 +93,14 @@ test('two clients join, ready, move and leave one authoritative beast chess room
 
   accountSocket.disconnect();
   await new Promise(resolve => setTimeout(resolve, 50));
-  assert.deepEqual(observerStates.at(-1)?.players.map(player => player.side), ['black']);
-  assert.equal(observerStates.at(-1)?.phase, 'finished');
-  assert.equal(observerStates.at(-1)?.game?.winner, 'upper');
+  assert.deepEqual(observerStates.at(-1)?.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
+  assert.equal(observerStates.at(-1)?.phase, 'playing');
+  assert.equal(observerStates.at(-1)?.game?.winner, null);
+
+  const resumedSocket = await client(`three_chess_session=${registered.sessionToken}`);
+  const resumed = success(await emit<BeastReceipt>(resumedSocket, 'beast:resume', {
+    reconnectToken: lower.reconnectToken,
+  }));
+  assert.equal(resumed.state.phase, 'playing');
+  assert.equal(resumed.state.game?.pieces.length, 16);
 });

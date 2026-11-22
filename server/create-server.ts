@@ -134,16 +134,16 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     record => authService.saveCompletedGame(record), now);
   const five = new FiveSoldiersService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('five:state', item.state);
-  }, 60_000, 180_000, now);
+  }, 60_000, 60_000, now);
   const horse = new HorseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('horse:state', item.state);
-  });
+  }, 60_000, now);
   const chinese = new ChineseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('chinese:state', item.state);
-  });
+  }, 60_000, now);
   const beast = new BeastChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('beast:state', item.state);
-  });
+  }, 60_000, now);
   const internalError = <T>(done: (ack: ClientAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const fiveInternalError = <T>(done: (ack: FiveAck<T>) => void) =>

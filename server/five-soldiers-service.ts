@@ -290,7 +290,12 @@ export class FiveSoldiersService {
     this.socketAccounts.delete(socketId);
     this.socketAvatars.delete(socketId);
     if (!player || player.socketId !== socketId) return false;
-    this.removePlayer(player, 'exit');
+    player.socketId = null;
+    player.online = false;
+    player.ready = false;
+    player.offlineUntil = this.now() + (this.phase === 'lobby' ? this.lobbyGraceMs : this.gameGraceMs);
+    this.scheduleExpiry(player);
+    this.version++;
     return true;
   }
 

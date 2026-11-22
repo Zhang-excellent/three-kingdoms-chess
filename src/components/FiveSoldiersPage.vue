@@ -100,8 +100,8 @@ const pieceLabel = (piece: FivePiece) => `${fiveSideName(piece.side)}${fivePiece
 const playerState = (side: FiveSide) => {
   const player = sidePlayer(side);
   if (!player) return roomState.value?.phase === 'lobby' ? '等待棋友' : '未入座';
+  if (!player.online) return '断线中';
   if (roomState.value?.phase === 'lobby') return player.ready ? '已准备' : '未准备';
-  if (!player.online) return '离线';
   if (roomState.value?.phase === 'finished') return !game.value.winner ? '和棋' : game.value.winner === side ? '胜利' : '失败';
   return game.value.turn === side ? '行棋中' : '对局中';
 };

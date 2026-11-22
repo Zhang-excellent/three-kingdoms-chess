@@ -127,9 +127,37 @@ test('beast chess players can agree to a draw and leaving releases the seat', ()
     service.rematch(upper.ack.data.reconnectToken, 'black');
     service.disconnect('red');
     const observed = service.views().find(item => item.socketId === 'observer')?.state;
-    assert.deepEqual(observed?.players.map(player => player.side), ['black']);
+    assert.deepEqual(observed?.players.map(player => player.side), ['red', 'black']);
     const resumed = service.resume(lower.ack.data.reconnectToken, 'red-new');
-    assert.equal(resumed.ok, false);
+    assert.equal(resumed.ok, true);
+  } finally {
+    service.dispose();
+  }
+});
+
+test('beast chess disconnect expires after the grace period and forfeits an active game', async () => {
+  const service = new BeastChessService(() => undefined, 30);
+  try {
+    const lower = service.join('超时下方', 'red', 'red');
+    const upper = service.join('超时上方', 'black', 'black');
+    if (!lower.ok || !lower.ack.ok || !upper.ok || !upper.ack.ok) assert.fail('join failed');
+    service.disconnect('red');
+    const waiting = service.inspect();
+    if (!waiting.ok) assert.fail('inspect failed');
+    assert.equal(waiting.data.phase, 'lobby');
+    assert.deepEqual(waiting.data.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
+    const lobbyResume = service.resume(lower.ack.data.reconnectToken, 'red-waiting-new');
+    assert.equal(lobbyResume.ok, true);
+
+    service.setReady(lower.ack.data.reconnectToken, true, 'red-waiting-new');
+    service.setReady(upper.ack.data.reconnectToken, true, 'black');
+    service.disconnect('red-waiting-new');
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const expired = service.inspect();
+    if (!expired.ok) assert.fail('inspect failed');
+    assert.deepEqual(expired.data.players.map(player => player.side), ['black']);
+    assert.equal(expired.data.phase, 'finished');
+    assert.equal(expired.data.game?.winner, 'upper');
   } finally {
     service.dispose();
   }

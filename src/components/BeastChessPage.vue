@@ -154,6 +154,7 @@ function seatLabel(side: BeastSeatSide): string {
 function playerState(side: BeastSeatSide): string {
   const player = seatPlayer(side);
   if (!player) return roomState.value?.phase === 'lobby' ? '等待棋友' : '未入座';
+  if (!player.online) return '断线中';
   if (roomState.value?.phase === 'lobby') return player.ready ? '已准备' : '未准备';
   if (roomState.value?.phase === 'finished') {
     const gameSide = beastSeatToGameSide(side);

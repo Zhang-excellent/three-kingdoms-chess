@@ -126,33 +126,41 @@ test('Five Soldiers seat claims are atomic, one ready player waits, and rematch 
   } finally { service.dispose(); }
 });
 
-test('five soldiers disconnect immediately releases the seat and ends an active game', () => {
-  const service = new FiveSoldiersService(() => undefined);
+test('five soldiers keeps a disconnected seat through the grace window and forfeits after expiry', async () => {
+  const service = new FiveSoldiersService(() => undefined, 30, 30);
   try {
     const red = service.join('重连红', 'red', 'red-old');
     const black = service.join('重连黑', 'black', 'black-socket');
     if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('join failed');
-    service.setReady(red.ack.data.reconnectToken, true, 'red-old');
+    service.disconnect('red-old');
+    const waiting = service.inspect();
+    if (!waiting.ok) assert.fail('inspect failed');
+    assert.equal(waiting.data.phase, 'lobby');
+    assert.deepEqual(waiting.data.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
+    const lobbyResume = service.resume(red.ack.data.reconnectToken, 'red-waiting-new');
+    assert.equal(lobbyResume.ok, true);
+
+    service.setReady(red.ack.data.reconnectToken, true, 'red-waiting-new');
     service.setReady(black.ack.data.reconnectToken, true, 'black-socket');
 
-    service.disconnect('red-old');
-    const resumed = service.resume(red.ack.data.reconnectToken, 'red-new');
-    assert.equal(resumed.ok, false);
-    if (resumed.ack.ok) return;
-    assert.equal(resumed.ack.code, 'SESSION_NOT_FOUND');
-    const current = service.inspect();
-    assert.equal(current.ok, true);
-    if (!current.ok) return;
-    assert.deepEqual(current.data.players.map(player => player.side), ['black']);
-    assert.equal(current.data.phase, 'finished');
-    assert.equal(current.data.game?.winner, 'black');
+    service.disconnect('red-waiting-new');
+    const disconnected = service.inspect();
+    if (!disconnected.ok) assert.fail('inspect failed');
+    assert.equal(disconnected.data.phase, 'playing');
+    assert.deepEqual(disconnected.data.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
 
-    const rematch = service.rematch(black.ack.data.reconnectToken, 'black-socket');
-    assert.equal(rematch.ok, true);
-    if (!rematch.ack.ok) return;
-    assert.equal(rematch.ack.data.state.phase, 'lobby');
-    assert.equal(rematch.ack.data.state.game, null);
-    assert.equal(rematch.ack.data.state.players.every(player => !player.ready), true);
+    const resumed = service.resume(red.ack.data.reconnectToken, 'red-new');
+    assert.equal(resumed.ok, true);
+    if (!resumed.ack.ok) return;
+    assert.equal(resumed.ack.data.state.phase, 'playing');
+
+    service.disconnect('red-new');
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const expired = service.inspect();
+    if (!expired.ok) assert.fail('inspect failed');
+    assert.deepEqual(expired.data.players.map(player => player.side), ['black']);
+    assert.equal(expired.data.phase, 'finished');
+    assert.equal(expired.data.game?.winner, 'black');
   } finally { service.dispose(); }
 });
 
@@ -188,7 +196,7 @@ test('an unseated room observer receives the updated seat list immediately', () 
     assert.equal(service.views().find(item => item.socketId === 'observer-socket')?.state.players.length, 1);
     service.disconnect('red-socket');
     const observerState = service.views().find(item => item.socketId === 'observer-socket')?.state;
-    assert.deepEqual(observerState?.players, []);
+    assert.deepEqual(observerState?.players.map(player => [player.side, player.online]), [['red', false]]);
     assert.equal(observerState?.phase, 'lobby');
   } finally { service.dispose(); }
 });

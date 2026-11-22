@@ -100,17 +100,41 @@ test('seat claims are atomic, a single ready player waits, and rematch keeps bot
   } finally { service.dispose(); }
 });
 
-test('leaving Chinese chess immediately releases the seat and invalidates its credential', () => {
-  const service = new ChineseChessService(() => undefined);
+test('Chinese chess disconnect keeps the game for reconnection and expires into a forfeit', async () => {
+  const service = new ChineseChessService(() => undefined, 30);
   try {
     service.watch('observer');
-    const red = service.join('离席红', 'red', 'red');
-    if (!red.ok || !red.ack.ok) assert.fail('join failed');
+    const red = service.join('重连红', 'red', 'red');
+    const black = service.join('重连黑', 'black', 'black');
+    if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('join failed');
     service.disconnect('red');
-    const state = service.views().find(item => item.socketId === 'observer')?.state;
-    assert.deepEqual(state?.players, []);
+    const waiting = service.views().find(item => item.socketId === 'observer')?.state;
+    assert.equal(waiting?.phase, 'lobby');
+    assert.deepEqual(waiting?.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
+    const lobbyResume = service.resume(red.ack.data.reconnectToken, 'red-waiting-new');
+    assert.equal(lobbyResume.ok, true);
+
+    service.setReady(red.ack.data.reconnectToken, true, 'red-waiting-new');
+    service.setReady(black.ack.data.reconnectToken, true, 'black');
+
+    service.disconnect('red-waiting-new');
+    const disconnected = service.views().find(item => item.socketId === 'observer')?.state;
+    assert.equal(disconnected?.phase, 'playing');
+    assert.deepEqual(disconnected?.players.map(player => [player.side, player.online]), [['red', false], ['black', true]]);
+
     const resumed = service.resume(red.ack.data.reconnectToken, 'red-new');
-    assert.equal(resumed.ok, false);
+    assert.equal(resumed.ok, true);
+    if (!resumed.ack.ok) return;
+    assert.equal(resumed.ack.data.state.phase, 'playing');
+    assert.equal(resumed.ack.data.state.game?.pieces.length, 32);
+
+    service.disconnect('red-new');
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const expired = service.inspect();
+    if (!expired.ok) assert.fail('inspect failed');
+    assert.deepEqual(expired.data.players.map(player => player.side), ['black']);
+    assert.equal(expired.data.phase, 'finished');
+    assert.equal(expired.data.game?.winner, 'black');
   } finally { service.dispose(); }
 });
 
