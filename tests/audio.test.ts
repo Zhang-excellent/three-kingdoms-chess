@@ -27,7 +27,12 @@ test('sound settings default to effects on, persist independent levels and rejec
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'classical', musicTrackId: 'removed-song' }));
     assert.equal(loadAudioSettings().musicTrackId, 'liushang-qushui');
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ musicPlaylistId: 'guitar', musicTrackId: 'lebang-zhanshi-guitar' }));
-    assert.deepEqual(loadAudioSettings(), { ...DEFAULT_AUDIO_SETTINGS, musicEnabled: false, musicVolume: 0.35 });
+    assert.deepEqual(loadAudioSettings(), {
+      ...DEFAULT_AUDIO_SETTINGS,
+      musicEnabled: false,
+      musicVolume: 0.35,
+      effectsEnabled: false,
+    });
   } finally { GlobalRegistrator.unregister(); }
 });
 

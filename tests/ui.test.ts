@@ -255,7 +255,7 @@ test('settings keep music and effect switches and volumes independently on this 
   let wrapper = setup(t, false);
   await wrapper.findAll('button').find(b => b.text() === '设置')!.trigger('click');
   assert.equal(wrapper.get('#music-toggle').text(), '关闭');
-  assert.equal(wrapper.get('#effects-toggle').text(), '关闭');
+  assert.equal(wrapper.get('#effects-toggle').text(), '开启');
   assert.equal(wrapper.get('#music-preview').text(), '试听');
   assert.equal(wrapper.get('#music-theme').text(), '流觞曲水');
   assert.equal(wrapper.find('#music-playlist').exists(), false);
@@ -264,14 +264,14 @@ test('settings keep music and effect switches and volumes independently on this 
   await wrapper.get('#effects-volume').setValue('0.42');
   await wrapper.get('#music-volume').setValue('0.18');
   let saved = JSON.parse(localStorage.getItem('three-kingdoms-chess:audio-v1')!);
-  assert.equal(saved.effectsEnabled, true);
+  assert.equal(saved.effectsEnabled, false);
   assert.equal(saved.musicEnabled, false);
   assert.equal(saved.effectsVolume, 0.42);
   assert.equal(saved.musicVolume, 0.18);
   assert.equal(saved.musicPlaylistId, 'default');
   assert.equal(saved.musicTrackId, 'liushang-qushui');
   wrapper = remount(t, wrapper);
-  assert.equal(wrapper.get('#effects-toggle').text(), '开启');
+  assert.equal(wrapper.get('#effects-toggle').text(), '关闭');
   assert.equal(wrapper.get('#music-toggle').text(), '关闭');
   assert.equal((wrapper.get('#effects-volume').element as HTMLInputElement).value, '0.42');
   assert.equal(wrapper.get('#music-theme').text(), '流觞曲水');

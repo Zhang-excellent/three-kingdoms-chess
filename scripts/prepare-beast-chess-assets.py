@@ -74,6 +74,8 @@ BASE_COLORS = {
     "upper": ("#36150b", "#edc982"),
 }
 
+ANIMAL_OUTLINE = "#4b2c1c"
+
 
 def cell_box(x: int, y: int) -> tuple[int, int, int, int]:
     image_row = 8 - y
@@ -107,17 +109,9 @@ def smoothstep(value: float, low: float, high: float) -> float:
     return progress * progress * (3 - 2 * progress)
 
 
-def colorize_animal(piece: Image.Image, side: str, kind: str) -> Image.Image:
-    """Tint the animal silhouette while preserving the supplied wooden base."""
+def animal_mask(piece: Image.Image, side: str) -> Image.Image:
     rgb = piece.convert("RGB")
     alpha = piece.getchannel("A")
-    grayscale = rgb.convert("L")
-    base_dark, base_light = BASE_COLORS[side]
-    base = ImageOps.colorize(grayscale, black=base_dark, white=base_light).convert("RGBA")
-    base.putalpha(alpha)
-    tinted = Image.new("RGBA", piece.size, KIND_COLORS[kind])
-    tinted.putalpha(alpha)
-
     width, height = piece.size
     inset_x = max(7, round(width * 0.05))
     inset_y = max(7, round(height * 0.07))
@@ -140,6 +134,110 @@ def colorize_animal(piece: Image.Image, side: str, kind: str) -> Image.Image:
                 weight = smoothstep(luminance, 145, 205)
             if weight:
                 mask_pixels[x, y] = round(weight * alpha_pixels[x, y])
+    return mask
+
+
+def colored_base(piece: Image.Image, side: str, mask: Image.Image) -> Image.Image:
+    """Remove the source animal and rebuild the piece's side-specific base."""
+    source = piece.copy()
+    replacement = source.filter(ImageFilter.MedianFilter(31))
+    source.paste(replacement, mask=mask.filter(ImageFilter.MaxFilter(5)))
+    alpha = source.getchannel("A")
+    grayscale = source.convert("L")
+    base_dark, base_light = BASE_COLORS[side]
+    base = ImageOps.colorize(grayscale, black=base_dark, white=base_light).convert("RGBA")
+    base.putalpha(alpha)
+    return base
+
+
+def draw_dog_icon(size: tuple[int, int], color: str) -> Image.Image:
+    scale = 4
+    canvas = Image.new("RGBA", (size[0] * scale, size[1] * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    width = 2 * scale
+
+    def point(x: float, y: float) -> tuple[int, int]:
+        return round(x * scale), round(y * scale)
+
+    def box(left: float, top: float, right: float, bottom: float) -> tuple[int, int, int, int]:
+        return round(left * scale), round(top * scale), round(right * scale), round(bottom * scale)
+
+    def line(points: list[tuple[float, float]], fill: str, stroke: int) -> None:
+        pixels = [point(x, y) for x, y in points]
+        draw.line(pixels, fill=ANIMAL_OUTLINE, width=(stroke + 4) * scale, joint="curve")
+        draw.line(pixels, fill=fill, width=stroke * scale, joint="curve")
+
+    # Upturned tail, rounded body, floppy ear and short muzzle distinguish a dog.
+    line([(108, 49), (121, 43), (128, 30), (125, 20)], color, 7)
+    draw.ellipse(box(35, 37, 115, 72), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.ellipse(box(29, 26, 48, 55), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.ellipse(box(14, 28, 55, 65), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.ellipse(box(7, 46, 31, 61), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.arc(box(25, 40, 51, 70), 72, 142, fill=ANIMAL_OUTLINE, width=width)
+    draw.arc(box(34, 52, 58, 69), 20, 125, fill=ANIMAL_OUTLINE, width=width)
+    for left, right in ((39, 49), (55, 65), (91, 101), (104, 114)):
+        draw.rounded_rectangle(box(left, 62, right, 88), radius=4 * scale, fill=color,
+                               outline=ANIMAL_OUTLINE, width=width)
+        draw.ellipse(box(left - 1, 84, right + 2, 91), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.ellipse(box(27, 42, 32, 47), fill=ANIMAL_OUTLINE)
+    draw.ellipse(box(8, 51, 14, 57), fill=ANIMAL_OUTLINE)
+    draw.arc(box(8, 53, 24, 66), 30, 145, fill=ANIMAL_OUTLINE, width=width)
+    return canvas.resize(size, Image.Resampling.LANCZOS)
+
+
+def draw_cat_icon(size: tuple[int, int], color: str) -> Image.Image:
+    scale = 4
+    canvas = Image.new("RGBA", (size[0] * scale, size[1] * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    width = 2 * scale
+
+    def point(x: float, y: float) -> tuple[int, int]:
+        return round(x * scale), round(y * scale)
+
+    def box(left: float, top: float, right: float, bottom: float) -> tuple[int, int, int, int]:
+        return round(left * scale), round(top * scale), round(right * scale), round(bottom * scale)
+
+    def line(points: list[tuple[float, float]], fill: str, stroke: int) -> None:
+        pixels = [point(x, y) for x, y in points]
+        draw.line(pixels, fill=ANIMAL_OUTLINE, width=(stroke + 3) * scale, joint="curve")
+        draw.line(pixels, fill=fill, width=stroke * scale, joint="curve")
+
+    # Upright sitting body, pointed ears, muzzle and curled tail read as a cat.
+    line([(92, 78), (115, 78), (127, 60), (123, 40), (115, 31)], color, 7)
+    draw.ellipse(box(47, 48, 99, 91), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.ellipse(box(49, 19, 97, 62), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.polygon([point(52, 29), point(55, 9), point(68, 24)], fill=color, outline=ANIMAL_OUTLINE)
+    draw.polygon([point(78, 23), point(90, 9), point(94, 30)], fill=color, outline=ANIMAL_OUTLINE)
+    draw.ellipse(box(49, 79, 69, 94), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.ellipse(box(76, 79, 96, 94), fill=color, outline=ANIMAL_OUTLINE, width=width)
+    draw.arc(box(59, 47, 87, 66), 12, 168, fill=ANIMAL_OUTLINE, width=width)
+    draw.polygon([point(69, 51), point(78, 51), point(73.5, 57)], fill=ANIMAL_OUTLINE)
+    draw.line([point(73.5, 57), point(68, 61)], fill=ANIMAL_OUTLINE, width=width)
+    draw.line([point(73.5, 57), point(79, 61)], fill=ANIMAL_OUTLINE, width=width)
+    for eye_x in (63, 84):
+        draw.ellipse(box(eye_x - 1.8, 39, eye_x + 1.8, 47), fill=ANIMAL_OUTLINE)
+    for side in (-1, 1):
+        for offset in (-5, 1, 7):
+            draw.line(
+                [point(73.5 + side * 12, 57 + offset * 0.35), point(73.5 + side * 34, 57 + offset)],
+                fill=ANIMAL_OUTLINE,
+                width=scale,
+            )
+    return canvas.resize(size, Image.Resampling.LANCZOS)
+
+
+def colorize_animal(piece: Image.Image, side: str, kind: str) -> Image.Image:
+    """Tint or replace the animal while preserving the supplied wooden base."""
+    mask = animal_mask(piece, side)
+    base = colored_base(piece, side, mask)
+
+    if kind in {"dog", "cat"}:
+        icon = (draw_dog_icon(piece.size, KIND_COLORS[kind]) if kind == "dog"
+                else draw_cat_icon(piece.size, KIND_COLORS[kind]))
+        return Image.alpha_composite(base, icon)
+
+    tinted = Image.new("RGBA", piece.size, KIND_COLORS[kind])
+    tinted.putalpha(piece.getchannel("A"))
 
     outline = ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(3)), mask)
     outline = outline.filter(ImageFilter.GaussianBlur(0.45))

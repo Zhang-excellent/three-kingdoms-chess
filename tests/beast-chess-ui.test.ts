@@ -82,7 +82,7 @@ test('Beast Chess joins one table by seat, starts after both ready, moves in syn
   assert.equal(lower.findAll('.beast-cell')[0].attributes('data-coordinate'), 'A9');
   assert.match(upper.get('.beast-board-grid').attributes('aria-label') ?? '', /上方玩家视角/);
   assert.equal(upper.findAll('.beast-piece img').every(image =>
-    (image.attributes('src') ?? '').includes('?v=animal-colors-v3')), true);
+    (image.attributes('src') ?? '').includes('?v=animal-colors-v4')), true);
 
   const readyUpper = upper.findAll('button').find(button => button.text() === '准备');
   assert.ok(readyUpper);
