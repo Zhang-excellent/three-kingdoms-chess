@@ -3,8 +3,10 @@ import { computed, ref, watch } from 'vue';
 import { passwordError, usernameError } from '../auth.ts';
 import type { AuthUser } from '../auth.ts';
 import type { RecentGameSummary } from '../game-history.ts';
+import type { ArchivedMistGameRecord, RecentMistGameSummary } from '../mist-game-history.ts';
 import { PLAYERS } from '../game.ts';
 import { backendAssetUrl } from '../network-config.ts';
+import MistReplayPanel from './MistReplayPanel.vue';
 
 const props = defineProps<{
   user: AuthUser | null;
@@ -15,6 +17,12 @@ const props = defineProps<{
   recentGames: RecentGameSummary[];
   recentLoading: boolean;
   recentError: string;
+  mistRecentGames: RecentMistGameSummary[];
+  mistRecentLoading: boolean;
+  mistRecentError: string;
+  mistReplayRecord: ArchivedMistGameRecord | null;
+  mistReplayLoading: boolean;
+  mistReplayError: string;
 }>();
 const emit = defineEmits<{
   login: [username: string, password: string, remember: boolean];
@@ -22,7 +30,10 @@ const emit = defineEmits<{
   changePassword: [currentPassword: string, newPassword: string];
   logout: [];
   replay: [gameId: string];
+  replayMist: [gameId: string];
   refreshRecent: [];
+  refreshMistRecent: [];
+  closeMistReplay: [];
   clearError: [];
   uploadAvatar: [avatarData: string | null];
 }>();
@@ -35,6 +46,7 @@ const currentPassword = ref(''), nextPassword = ref('');
 const showLoginPassword = ref(false), showRegisterPassword = ref(false);
 const showCurrentPassword = ref(false), showNextPassword = ref(false);
 const settingsOpen = ref(false);
+const historySection = ref<'home' | 'three' | 'mist'>('home');
 const avatarInput = ref<HTMLInputElement | null>(null);
 const avatarError = ref('');
 const avatarUrl = computed(() => backendAssetUrl(props.user?.avatarUrl));
@@ -49,15 +61,22 @@ watch(() => props.user?.id, () => {
   currentPassword.value = '';
   nextPassword.value = '';
   settingsOpen.value = false;
+  historySection.value = 'home';
 });
 
 function open() {
   emit('clearError');
   settingsOpen.value = false;
+  historySection.value = 'home';
+  emit('closeMistReplay');
   if (!dialog.value?.open) dialog.value?.showModal();
-  if (props.user) emit('refreshRecent');
+  if (props.user) {
+    emit('refreshRecent');
+    emit('refreshMistRecent');
+  }
 }
 function close() {
+  emit('closeMistReplay');
   dialog.value?.close();
 }
 function switchMode(next: 'login' | 'register') {
@@ -121,10 +140,21 @@ function formatDate(value: number): string {
   });
 }
 const factionLabel = (faction: RecentGameSummary['faction']) => `${PLAYERS[faction].nation} · ${PLAYERS[faction].name}`;
+const mistSideLabel = (side: RecentMistGameSummary['side']) => side === 'red' ? '红方' : '黑方';
 const resultLabel = (result: RecentGameSummary['result']) =>
   result === 'won' ? '胜利' : result === 'draw' ? '和棋' : '失败';
 const resultTone = (result: RecentGameSummary['result']) =>
   result === 'won' ? 'won' : result === 'draw' ? 'draw' : 'lost';
+function openHistory(section: 'three' | 'mist') {
+  historySection.value = section;
+  emit('clearError');
+  if (section === 'three') emit('refreshRecent');
+  else emit('refreshMistRecent');
+}
+function returnToAccountHome() {
+  historySection.value = 'home';
+  emit('closeMistReplay');
+}
 defineExpose({ open, close });
 </script>
 
@@ -148,11 +178,29 @@ defineExpose({ open, close });
         </div>
       </header>
 
-      <section class="recent-section" aria-labelledby="recent-games-title">
-        <div class="recent-heading"><h3 id="recent-games-title">最近对局</h3><button type="button" class="plain-button recent-refresh" :disabled="recentLoading" @click="emit('refreshRecent')">刷新</button></div>
-        <p v-if="recentLoading" class="recent-state">正在读取最近对局…</p>
+      <MistReplayPanel v-if="mistReplayRecord" :record="mistReplayRecord" @back="emit('closeMistReplay')" />
+
+      <section v-else-if="historySection === 'home'" class="recent-section" aria-labelledby="game-history-directories">
+        <div class="recent-heading"><h3 id="game-history-directories">棋谱目录</h3></div>
+        <div class="history-directories">
+          <button type="button" class="history-directory three-kingdoms" @click="openHistory('three')">
+            <span aria-hidden="true">三</span><strong>三国象棋</strong>
+          </button>
+          <button type="button" class="history-directory mist-chess" @click="openHistory('mist')">
+            <span aria-hidden="true">雾</span><strong>迷雾象棋</strong>
+          </button>
+        </div>
+      </section>
+
+      <section v-else-if="historySection === 'three'" class="recent-section" aria-labelledby="three-history-title">
+        <div class="recent-heading history-list-heading">
+          <button type="button" class="plain-button history-back" @click="returnToAccountHome">← 返回账号页</button>
+          <h3 id="three-history-title">三国象棋 · 最近 5 盘</h3>
+          <button type="button" class="plain-button recent-refresh" :disabled="recentLoading" @click="emit('refreshRecent')">刷新</button>
+        </div>
+        <p v-if="recentLoading" class="recent-state">正在读取三国象棋棋谱…</p>
         <p v-else-if="recentError" class="recent-state error" role="status">{{ recentError }}</p>
-        <p v-else-if="!recentGames.length" class="recent-state">完成一盘联机对局后，会在这里留下记录。</p>
+        <p v-else-if="!recentGames.length" class="recent-state">暂无棋谱</p>
         <ol v-else class="recent-list">
           <li v-for="game in recentGames.slice(0, 5)" :key="game.id">
             <div class="recent-main">
@@ -164,6 +212,33 @@ defineExpose({ open, close });
             <div class="recent-side">
               <b :class="`result-${resultTone(game.result)}`">{{ resultLabel(game.result) }}</b>
               <button type="button" class="tool-button replay-history" @click="emit('replay', game.id)">复盘</button>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section v-else class="recent-section" aria-labelledby="mist-history-title">
+        <div class="recent-heading history-list-heading">
+          <button type="button" class="plain-button history-back" @click="returnToAccountHome">← 返回账号页</button>
+          <h3 id="mist-history-title">迷雾象棋 · 最近 5 盘</h3>
+          <button type="button" class="plain-button recent-refresh" :disabled="mistRecentLoading" @click="emit('refreshMistRecent')">刷新</button>
+        </div>
+        <p v-if="mistReplayLoading" class="recent-state">正在读取迷雾象棋棋谱…</p>
+        <p v-else-if="mistReplayError" class="recent-state error" role="status">{{ mistReplayError }}</p>
+        <p v-else-if="mistRecentLoading" class="recent-state">正在读取迷雾象棋棋谱…</p>
+        <p v-else-if="mistRecentError" class="recent-state error" role="status">{{ mistRecentError }}</p>
+        <p v-else-if="!mistRecentGames.length" class="recent-state">暂无棋谱</p>
+        <ol v-else class="recent-list">
+          <li v-for="game in mistRecentGames.slice(0, 5)" :key="game.id">
+            <div class="recent-main">
+              <span class="recent-date">{{ formatDate(game.endedAt) }}</span>
+              <strong>{{ mistSideLabel(game.side) }}</strong>
+              <span class="recent-opponents">对手：{{ game.opponents.join('、') }}</span>
+              <span class="recent-steps">{{ game.moveCount }} 步</span>
+            </div>
+            <div class="recent-side">
+              <b :class="`result-${resultTone(game.result)}`">{{ resultLabel(game.result) }}</b>
+              <button type="button" class="tool-button replay-history" @click="emit('replayMist', game.id)">复盘</button>
             </div>
           </li>
         </ol>
@@ -228,6 +303,7 @@ defineExpose({ open, close });
 .remember-option{display:flex!important;grid-template-columns:auto 1fr;align-items:center;gap:8px!important;font-weight:500!important}.remember-option input{width:16px;height:16px;accent-color:#a64b3c}.auth-submit{min-height:44px}.auth-note,.auth-field-note{margin:-4px 0 0;font-size:10px;line-height:1.6;color:#8b7b67}.auth-field-note{margin-top:-7px}.auth-field-note.invalid{color:#a34438;font-weight:600}.password-reminder{margin:-2px 0 0;color:#8d5a42;font-size:11px}
 .profile-close{position:absolute;right:18px;top:18px;z-index:2}.profile-hero{display:flex;align-items:center;gap:18px;padding:30px 30px 22px}.profile-avatar{display:grid;place-items:center;width:76px;height:76px;flex:none;overflow:hidden;border-radius:8px;background:linear-gradient(145deg,#b65747,#963f33);color:#fff8e9;font:700 40px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff5df33,0 8px 20px #7d3c2c22;transform:rotate(-1.5deg)}.profile-avatar img{width:100%;height:100%;object-fit:cover}.profile-identity{display:grid;gap:8px;min-width:0}.profile-hero h2{margin:0;overflow:hidden;text-overflow:ellipsis;font:700 30px/1.2 "Songti SC","SimSun",serif;color:#392f25;letter-spacing:.03em}.avatar-actions{display:flex;flex-wrap:wrap;gap:6px}.avatar-actions .tool-button{min-height:32px;padding:5px 10px;border:1px solid #d8c7ae;background:#faf4e8;color:#795f3d;font-size:11px}.avatar-file-input{display:none}
 .recent-section{margin:0 24px;padding:18px 6px 4px;border-top:1px solid #dfd1bd}.recent-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.recent-heading h3{margin:0;font:700 20px/1.3 "Songti SC","SimSun",serif}.recent-refresh{padding:3px;color:#8d7652;font-size:11px}.recent-state{margin:0;padding:24px 12px;border:1px dashed #d8cab7;border-radius:10px;text-align:center;color:#8a7b67;font-size:12px}.recent-state.error{color:#9a493e;background:#fbefeb}.recent-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.recent-list li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 13px;border:1px solid #e0d3c0;border-radius:10px;background:#fffdf8}.recent-main{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:7px 11px;min-width:0}.recent-date{grid-column:1;color:#97836a;font-size:10px}.recent-main strong{grid-column:2;color:#5e4e3d;font-size:12px}.recent-opponents{grid-column:3;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#756754;font-size:11px}.recent-steps{grid-column:4;color:#958670;font-size:10px}.recent-side{display:flex;align-items:center;gap:8px}.recent-side b{min-width:38px;padding:3px 8px;border-radius:999px;text-align:center;font-size:10px}.result-won{background:#f4e3dc;color:#9b4337}.result-draw{background:#eee8da;color:#75613e}.result-lost{background:#e9ece8;color:#655f55}.replay-history{min-height:32px;padding:5px 10px;border-color:#d0b996;color:#884b36;background:#fbf2e4}
+.history-directories{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.history-directory{display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:13px;min-height:92px;padding:16px;border:1px solid #d8c7aa;border-radius:12px;background:linear-gradient(145deg,#fffdf8,#f5ecdd);color:#44372b;text-align:left;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease}.history-directory:hover{border-color:#b99760;transform:translateY(-2px);box-shadow:0 10px 24px #59432312}.history-directory>span{display:grid;place-items:center;width:46px;height:52px;border-radius:6px;background:#a64b3c;color:#fff6e7;font:700 28px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff3dc2e}.history-directory.mist-chess>span{background:#5b6074}.history-directory strong{font:700 21px/1.3 "Songti SC","SimSun",serif}.history-list-heading{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px}.history-list-heading h3{text-align:center}.history-back{padding:3px;color:#8b6842;font-size:11px}
 .profile-footer{margin:18px 24px 0;padding:16px 6px 22px;border-top:1px solid #dfd1bd}.profile-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.account-settings-toggle,.logout-button{min-height:38px;padding:8px 14px}.account-settings-toggle{border-color:#d4c3aa;background:#f8f1e5;color:#715c40}.logout-button{border-color:#ddc4ba;color:#914537}.settings-form{margin-top:14px;padding:16px;border:1px solid #dfd1bd;border-radius:11px;background:#fdf8ef}.settings-form h3{margin:0 0 2px;font:700 17px/1.3 "Songti SC","SimSun",serif}.account-action{justify-content:center;width:100%;min-height:40px;border-color:#d1bea2;background:#f6eddd}.auth-warning{margin:0 0 10px;padding:9px 11px;border-left:3px solid #b37a43;border-radius:0 7px 7px 0;background:#f8edda;color:#795a36;font-size:11px;line-height:1.65}.auth-success{margin:0 0 10px;color:#42705a;font-size:11px}.auth-error{margin:0 24px 18px;padding:10px 11px;border-left:3px solid #a34438;border-radius:0 7px 7px 0;background:#f9eae5;color:#8f4237;font-size:11px;line-height:1.6}
-@media(max-width:560px){.auth-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 16px)}.auth-dialog-head{padding:20px 18px 13px}.auth-tabs{margin:0 18px 16px}.auth-form{padding:0 18px 20px}.profile-hero{padding:27px 20px 19px;gap:14px}.profile-avatar{width:66px;height:66px;font-size:34px}.profile-hero h2{font-size:25px}.recent-section{margin:0 16px}.recent-list li{grid-template-columns:1fr;gap:9px;padding:11px}.recent-main{grid-template-columns:auto auto minmax(0,1fr)}.recent-steps{grid-column:1 / -1}.recent-side{justify-content:space-between}.profile-footer{margin:16px 16px 0;padding:14px 0 18px}.profile-actions{display:grid;grid-template-columns:1fr 1fr}.account-settings-toggle,.logout-button{justify-content:center;width:100%}.settings-form{padding:14px}.auth-warning,.auth-success,.auth-error{margin-left:18px;margin-right:18px}}
+@media(max-width:560px){.auth-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 16px)}.auth-dialog-head{padding:20px 18px 13px}.auth-tabs{margin:0 18px 16px}.auth-form{padding:0 18px 20px}.profile-hero{padding:27px 20px 19px;gap:14px}.profile-avatar{width:66px;height:66px;font-size:34px}.profile-hero h2{font-size:25px}.recent-section{margin:0 16px}.history-directories{grid-template-columns:1fr}.history-directory{min-height:76px}.history-list-heading{grid-template-columns:1fr auto}.history-list-heading h3{grid-column:1/-1;grid-row:2;text-align:left}.history-back{grid-column:1;grid-row:1}.recent-refresh{grid-column:2;grid-row:1}.recent-list li{grid-template-columns:1fr;gap:9px;padding:11px}.recent-main{grid-template-columns:auto auto minmax(0,1fr)}.recent-steps{grid-column:1 / -1}.recent-side{justify-content:space-between}.profile-footer{margin:16px 16px 0;padding:14px 0 18px}.profile-actions{display:grid;grid-template-columns:1fr 1fr}.account-settings-toggle,.logout-button{justify-content:center;width:100%}.settings-form{padding:14px}.auth-warning,.auth-success,.auth-error{margin-left:18px;margin-right:18px}}
 </style>

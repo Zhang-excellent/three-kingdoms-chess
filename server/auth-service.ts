@@ -12,6 +12,11 @@ import {
 } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
 import type { ArchivedGameRecord, GameEndReason, RecentGameSummary } from '../src/game-history.ts';
+import type {
+  ArchivedMistGameRecord,
+  MistArchivedEndReason,
+  RecentMistGameSummary,
+} from '../src/mist-game-history.ts';
 import { FixedWindowRateLimiter } from './rate-limit.ts';
 
 const SCRYPT_N = 16_384;
@@ -42,6 +47,7 @@ interface SessionUserRow extends UserRow {
 
 interface GameRow {
   id: string;
+  game_type: string;
   room_code: string;
   room_round: number;
   started_at: number;
@@ -53,7 +59,7 @@ interface GameRow {
   events_json: string;
   final_state_json: string;
   final_pieces_json: string;
-  end_reason: GameEndReason;
+  end_reason: string;
   move_count: number;
 }
 
@@ -168,7 +174,7 @@ export class AuthService {
   private migrate(): void {
     const versionRow = this.db.prepare('PRAGMA user_version').get() as unknown as { user_version: number };
     const version = Number(versionRow?.user_version ?? 0);
-    if (version > 4) throw new Error(`账号数据库版本 ${version} 高于当前服务支持版本 4。`);
+    if (version > 5) throw new Error(`账号数据库版本 ${version} 高于当前服务支持版本 5。`);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.exec(`
@@ -192,6 +198,7 @@ export class AuthService {
       CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
       CREATE TABLE IF NOT EXISTS game_records (
         id TEXT PRIMARY KEY,
+        game_type TEXT NOT NULL DEFAULT 'three-kingdoms',
         room_code TEXT NOT NULL,
         room_round INTEGER NOT NULL,
         started_at INTEGER NOT NULL,
@@ -225,7 +232,12 @@ export class AuthService {
       const columns = this.db.prepare('PRAGMA table_info(auth_users)').all() as unknown as Array<{ name: string }>;
       if (!columns.some(column => column.name === 'avatar_data'))
         this.db.exec('ALTER TABLE auth_users ADD COLUMN avatar_data TEXT');
-      this.db.exec('PRAGMA user_version = 4');
+      const gameColumns = this.db.prepare('PRAGMA table_info(game_records)').all() as unknown as Array<{ name: string }>;
+      if (!gameColumns.some(column => column.name === 'game_type'))
+        this.db.exec("ALTER TABLE game_records ADD COLUMN game_type TEXT NOT NULL DEFAULT 'three-kingdoms'");
+      this.db.exec("UPDATE game_records SET game_type = 'three-kingdoms' WHERE game_type IS NULL OR game_type = ''");
+      this.db.exec('CREATE INDEX IF NOT EXISTS game_records_type_ended ON game_records(game_type, ended_at DESC)');
+      this.db.exec('PRAGMA user_version = 5');
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -349,15 +361,15 @@ export class AuthService {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare(`INSERT OR IGNORE INTO game_records
-        (id, room_code, room_round, started_at, ended_at, rules_version, initial_json, participants_json,
+        (id, game_type, room_code, room_round, started_at, ended_at, rules_version, initial_json, participants_json,
          moves_json, events_json, final_state_json, final_pieces_json, end_reason, move_count, winner)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(record.id, record.roomCode, record.round, record.startedAt, record.endedAt, record.rulesVersion,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(record.id, 'three-kingdoms', record.roomCode, record.round, record.startedAt, record.endedAt, record.rulesVersion,
           JSON.stringify(record.initialPieces), JSON.stringify(record.participants), JSON.stringify(record.moves),
           JSON.stringify(record.events), JSON.stringify(record.finalState), JSON.stringify(record.finalPieces),
           record.endReason, record.moveCount,
           record.finalState.winner);
-      const stored = this.db.prepare('SELECT id FROM game_records WHERE room_code = ? AND room_round = ?')
+      const stored = this.db.prepare("SELECT id FROM game_records WHERE game_type = 'three-kingdoms' AND room_code = ? AND room_round = ?")
         .get(record.roomCode, record.round) as unknown as { id: string } | undefined;
       if (!stored) throw new Error('历史对局唯一记录写入失败。');
       const insertParticipant = this.db.prepare(`INSERT OR IGNORE INTO game_participants
@@ -376,7 +388,7 @@ export class AuthService {
   recentGames(userId: string, limit = 5): RecentGameSummary[] {
     const rows = this.db.prepare(`SELECT g.*, p.faction AS self_faction, p.result AS self_result
       FROM game_records g JOIN game_participants p ON p.game_id = g.id
-      WHERE p.user_id = ?
+      WHERE g.game_type = 'three-kingdoms' AND p.user_id = ?
       ORDER BY g.ended_at DESC, g.id DESC
       LIMIT ?`).all(userId, Math.max(1, Math.min(5, limit))) as unknown as Array<GameRow & {
         self_faction: string;
@@ -393,7 +405,7 @@ export class AuthService {
         opponents: participants.filter(participant => participant.faction !== row.self_faction)
           .map(participant => participant.nickname),
         moveCount: Number(row.move_count),
-        endReason: row.end_reason,
+        endReason: row.end_reason as GameEndReason,
       };
     });
   }
@@ -401,7 +413,7 @@ export class AuthService {
   gameForUser(userId: string, gameId: string): ArchivedGameRecord | null {
     const row = this.db.prepare(`SELECT g.* FROM game_records g
       JOIN game_participants p ON p.game_id = g.id
-      WHERE g.id = ? AND p.user_id = ?`).get(gameId, userId) as unknown as GameRow | undefined;
+      WHERE g.game_type = 'three-kingdoms' AND g.id = ? AND p.user_id = ?`).get(gameId, userId) as unknown as GameRow | undefined;
     if (!row) return null;
     return {
       id: row.id,
@@ -416,8 +428,88 @@ export class AuthService {
       events: JSON.parse(row.events_json),
       finalPieces: JSON.parse(row.final_pieces_json),
       finalState: JSON.parse(row.final_state_json),
-      endReason: row.end_reason,
+      endReason: row.end_reason as GameEndReason,
       moveCount: Number(row.move_count),
+    };
+  }
+
+  saveCompletedMistGame(record: ArchivedMistGameRecord): void {
+    if (record.gameType !== 'mist-chess' || record.finalGame.status !== 'finished'
+      || record.endedAt < record.startedAt)
+      throw new Error('只能保存已经结束且时间有效的迷雾象棋对局。');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(`INSERT OR IGNORE INTO game_records
+        (id, game_type, room_code, room_round, started_at, ended_at, rules_version, initial_json, participants_json,
+         moves_json, events_json, final_state_json, final_pieces_json, end_reason, move_count, winner)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(record.id, record.gameType, record.roomCode, record.round, record.startedAt, record.endedAt,
+          record.rulesVersion, JSON.stringify(record.initialGame), JSON.stringify(record.participants),
+          JSON.stringify(record.moves), JSON.stringify(record.events), JSON.stringify(record.finalGame),
+          JSON.stringify(record.finalGame.pieces), record.endReason, record.moveCount, record.winner);
+      const stored = this.db.prepare("SELECT id FROM game_records WHERE game_type = 'mist-chess' AND room_code = ? AND room_round = ?")
+        .get(record.roomCode, record.round) as unknown as { id: string } | undefined;
+      if (!stored) throw new Error('迷雾象棋历史对局唯一记录写入失败。');
+      const insertParticipant = this.db.prepare(`INSERT OR IGNORE INTO game_participants
+        (game_id, user_id, player_id, nickname, faction, result, eliminated) VALUES (?, ?, ?, ?, ?, ?, 0)`);
+      for (const participant of record.participants) {
+        insertParticipant.run(stored.id, participant.userId, participant.playerId, participant.nickname,
+          participant.side, participant.result);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  recentMistGames(userId: string, limit = 5): RecentMistGameSummary[] {
+    const rows = this.db.prepare(`SELECT g.*, p.faction AS self_side, p.result AS self_result
+      FROM game_records g JOIN game_participants p ON p.game_id = g.id
+      WHERE g.game_type = 'mist-chess' AND p.user_id = ?
+      ORDER BY g.ended_at DESC, g.id DESC
+      LIMIT ?`).all(userId, Math.max(1, Math.min(5, limit))) as unknown as Array<GameRow & {
+        self_side: 'red' | 'black';
+        self_result: 'won' | 'lost' | 'draw';
+      }>;
+    return rows.map(row => {
+      const participants = JSON.parse(row.participants_json) as ArchivedMistGameRecord['participants'];
+      return {
+        id: row.id,
+        roomCode: row.room_code,
+        endedAt: Number(row.ended_at),
+        side: row.self_side,
+        result: row.self_result,
+        opponents: participants.filter(participant => participant.side !== row.self_side)
+          .map(participant => participant.nickname),
+        moveCount: Number(row.move_count),
+        endReason: row.end_reason as MistArchivedEndReason,
+      };
+    });
+  }
+
+  mistGameForUser(userId: string, gameId: string): ArchivedMistGameRecord | null {
+    const row = this.db.prepare(`SELECT g.* FROM game_records g
+      JOIN game_participants p ON p.game_id = g.id
+      WHERE g.game_type = 'mist-chess' AND g.id = ? AND p.user_id = ?`)
+      .get(gameId, userId) as unknown as (GameRow & { winner: 'red' | 'black' | null }) | undefined;
+    if (!row) return null;
+    return {
+      gameType: 'mist-chess',
+      id: row.id,
+      roomCode: row.room_code,
+      round: Number(row.room_round),
+      startedAt: Number(row.started_at),
+      endedAt: Number(row.ended_at),
+      rulesVersion: row.rules_version as ArchivedMistGameRecord['rulesVersion'],
+      initialGame: JSON.parse(row.initial_json),
+      participants: JSON.parse(row.participants_json),
+      moves: JSON.parse(row.moves_json),
+      events: JSON.parse(row.events_json),
+      finalGame: JSON.parse(row.final_state_json),
+      endReason: row.end_reason as MistArchivedEndReason,
+      moveCount: Number(row.move_count),
+      winner: row.winner,
     };
   }
 

@@ -829,7 +829,10 @@ test('account registration, compact profile, password visibility, logout, and in
     assert.equal(JSON.stringify(localStorage).includes('1234'), false);
     assert.equal(JSON.stringify(localStorage).includes('three_chess_session'), false);
     await wrapper.findAll('.header-actions button').find(button => button.text() === '界面注册甲')!.trigger('click');
-    await waitUntil(() => wrapper!.find('.recent-state')?.text().includes('完成一盘联机对局后') ?? false, 'Empty recent game state did not render');
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 2, 'History directories did not render');
+    await wrapper.get('.history-directory.three-kingdoms').trigger('click');
+    await waitUntil(() => wrapper!.find('.recent-state')?.text().includes('暂无棋谱') ?? false, 'Empty recent game state did not render');
+    await wrapper.get('.history-back').trigger('click');
     assert.doesNotMatch(wrapper.get('.profile-hero').text(), /当前账号|固定用户 ID/);
     assert.equal(wrapper.find('.settings-form').exists(), false);
     await wrapper.findAll('.auth-dialog button').find(button => button.text() === '账号设置')!.trigger('click');
@@ -900,6 +903,8 @@ test('account profile lists the latest server game and opens it with the shared 
     await wrapper.findAll('.auth-dialog button').find(button => button.text() === '登录' && button.classes().includes('auth-submit'))!.trigger('click');
     await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '历史界面账号'), 'History account did not log in');
     await wrapper.findAll('.header-actions button').find(button => button.text() === '历史界面账号')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 2, 'History directories did not render');
+    await wrapper.get('.history-directory.three-kingdoms').trigger('click');
     await waitUntil(() => wrapper!.findAll('.recent-list li').length === 1, 'Recent game did not render');
     const row = wrapper.get('.recent-list li');
     assert.match(row.text(), /魏 · 曹操/);
@@ -917,5 +922,61 @@ test('account profile lists the latest server game and opens it with the shared 
   } finally {
     wrapper?.unmount();
     sockets.forEach(socket => socket.disconnect());
+  }
+});
+
+test('account directories separate mist history and open the full-board mist replay', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
+  const account = await server.authService.register('迷雾历史界面', '1234', true, '127.0.0.1');
+  assert.equal(account.ok, true);
+  if (!account.ok || !account.sessionToken) assert.fail('mist history account registration failed');
+
+  server.mist.setSocketAccount('mist-history-red', account.user.id);
+  const red = server.mist.join('迷雾历史界面', 'red', 'mist-history-red');
+  const black = server.mist.join('迷雾游客黑', 'black', 'mist-history-black');
+  if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('mist history join failed');
+  server.mist.setReady(red.ack.data.reconnectToken, true, 'mist-history-red');
+  const started = server.mist.setReady(black.ack.data.reconnectToken, true, 'mist-history-black');
+  if (!started.ack.ok) assert.fail('mist history game did not start');
+  const moved = server.mist.move(red.ack.data.reconnectToken, {
+    requestId: 'mist-history-ui-1',
+    version: started.ack.data.state.version,
+    pieceId: 'red-pawn-4-6',
+    to: { x: 4, y: 5 },
+  }, 'mist-history-red');
+  assert.equal(moved.ok, true);
+  assert.equal(server.mist.resign(black.ack.data.reconnectToken, 'mist-history-black').ok, true);
+
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '登录 / 注册'),
+      'Mist history account entry did not render');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '登录 / 注册')!.trigger('click');
+    await wrapper.get('.auth-dialog input[autocomplete="username"]').setValue('迷雾历史界面');
+    await wrapper.get('.auth-dialog input[autocomplete="current-password"]').setValue('1234');
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '登录' && button.classes().includes('auth-submit'))!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '迷雾历史界面'),
+      'Mist history account did not log in');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '迷雾历史界面')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 2, 'Mist history directories did not render');
+    assert.deepEqual(wrapper.findAll('.history-directory strong').map(item => item.text()), ['三国象棋', '迷雾象棋']);
+    await wrapper.get('.history-directory.mist-chess').trigger('click');
+    await waitUntil(() => wrapper!.findAll('.recent-list li').length === 1, 'Mist history list did not render');
+    const row = wrapper.get('.recent-list li');
+    assert.match(row.text(), /红方/);
+    assert.match(row.text(), /迷雾游客黑/);
+    assert.match(row.text(), /胜利/);
+    assert.match(row.text(), /1 步/);
+    await row.get('.replay-history').trigger('click');
+    await waitUntil(() => wrapper!.find('.mist-replay-panel').exists(), 'Mist replay panel did not open');
+    await wrapper.findAll('.mist-replay-controls button').find(button => button.text() === '最后一步')!.trigger('click');
+    assert.match(wrapper.get('.mist-replay-summary').text(), /红方获胜/);
+    assert.match(wrapper.get('.mist-replay-move').text(), /红方 · 兵/);
+    assert.match(wrapper.get('.mist-replay-move').text(), /\(5, 7\) → \(5, 6\)/);
+    await wrapper.findAll('.mist-replay-heading button').find(button => button.text() === '← 返回棋谱列表')!.trigger('click');
+    assert.equal(wrapper.find('.mist-replay-panel').exists(), false);
+  } finally {
+    wrapper?.unmount();
   }
 });

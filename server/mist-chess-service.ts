@@ -19,6 +19,11 @@ import type {
   MistState,
 } from '../src/mist-chess.ts';
 import type { ChineseSide } from '../src/chinese-chess.ts';
+import type {
+  ArchivedMistGameRecord,
+  ArchivedMistParticipant,
+  MistArchivedEndReason,
+} from '../src/mist-game-history.ts';
 
 interface MistPlayer {
   id: string;
@@ -37,6 +42,8 @@ interface StoredAck {
   fingerprint: string;
   ack: MistAck<{ state: MistState }>;
 }
+
+type PersistReason = MistArchivedEndReason | 'move';
 
 interface ActionSuccess<T = undefined> {
   ok: true;
@@ -61,10 +68,16 @@ export class MistChessService {
   private readonly onChanged: (service: MistChessService) => void;
   private readonly disconnectGraceMs: number;
   private readonly now: () => number;
+  private readonly onCompleted: (record: ArchivedMistGameRecord) => void;
   private phase: MistPhase = 'lobby';
   private version = 1;
   private round = 1;
   private game: MistGame | null = null;
+  private gameId: string | null = null;
+  private gameStartedAt: number | null = null;
+  private initialGame: MistGame | null = null;
+  private startedParticipants: ArchivedMistParticipant[] = [];
+  private gamePersisted = false;
   private drawOfferBy: ChineseSide | null = null;
   private players: MistPlayer[] = [];
   private readonly socketPlayers = new Map<string, string>();
@@ -79,10 +92,12 @@ export class MistChessService {
     onChanged: (service: MistChessService) => void,
     disconnectGraceMs = 60_000,
     now: () => number = Date.now,
+    onCompleted: (record: ArchivedMistGameRecord) => void = () => undefined,
   ) {
     this.onChanged = onChanged;
     this.disconnectGraceMs = disconnectGraceMs;
     this.now = now;
+    this.onCompleted = onCompleted;
   }
 
   setSocketAccount(socketId: string, accountId: string | null, avatar: string | null = null): void {
@@ -173,6 +188,17 @@ export class MistChessService {
     this.version++;
     if (this.players.length === 2 && this.players.every(player => player.online && player.ready)) {
       this.game = newMistGame();
+      this.gameId = randomUUID();
+      this.gameStartedAt = this.now();
+      this.initialGame = structuredClone(this.game);
+      this.startedParticipants = this.players.map(player => ({
+        playerId: player.id,
+        userId: player.accountId,
+        nickname: player.nickname,
+        side: player.side,
+        result: 'draw',
+      }));
+      this.gamePersisted = false;
       this.phase = 'playing';
       this.drawOfferBy = null;
       this.requests.clear();
@@ -222,6 +248,7 @@ export class MistChessService {
     this.game = result.game;
     this.phase = result.game.status === 'finished' ? 'finished' : 'playing';
     this.drawOfferBy = null;
+    if (this.phase === 'finished') this.persistFinishedGame('move', player.side);
     this.version++;
     const ack: MistAck<{ state: MistState }> = { ok: true, data: { state: this.state(player) } };
     playerRequests.set(intent.requestId, { fingerprint, ack });
@@ -237,6 +264,7 @@ export class MistChessService {
     this.game = resignMistGame(this.game, found.player.side);
     this.phase = 'finished';
     this.drawOfferBy = null;
+    this.persistFinishedGame('resignation', found.player.side);
     this.version++;
     return this.stateResult(found.player);
   }
@@ -265,6 +293,7 @@ export class MistChessService {
     if (acceptValue) {
       this.game = drawMistGame(this.game);
       this.phase = 'finished';
+      this.persistFinishedGame('draw', found.player.side);
     }
     this.drawOfferBy = null;
     this.version++;
@@ -405,7 +434,7 @@ export class MistChessService {
     };
   }
 
-  private removePlayer(player: MistPlayer, _cause: 'exit' | 'timeout'): void {
+  private removePlayer(player: MistPlayer, cause: 'exit' | 'timeout'): void {
     this.cancelExpiry(player.id);
     if (player.socketId) {
       this.socketPlayers.delete(player.socketId);
@@ -419,6 +448,7 @@ export class MistChessService {
       this.game = resignMistGame(this.game, player.side);
       this.phase = 'finished';
       this.drawOfferBy = null;
+      this.persistFinishedGame(cause, player.side);
     }
     this.players = this.players.filter(item => item.id !== player.id);
     this.version++;
@@ -429,6 +459,11 @@ export class MistChessService {
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.gameId = null;
+    this.gameStartedAt = null;
+    this.initialGame = null;
+    this.startedParticipants = [];
+    this.gamePersisted = false;
     this.drawOfferBy = null;
     this.requests.clear();
     for (const player of this.players) {
@@ -447,6 +482,11 @@ export class MistChessService {
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.gameId = null;
+    this.gameStartedAt = null;
+    this.initialGame = null;
+    this.startedParticipants = [];
+    this.gamePersisted = false;
     this.drawOfferBy = null;
     this.requests.clear();
     this.version++;
@@ -468,5 +508,40 @@ export class MistChessService {
     const timer = this.expiryTimers.get(playerId);
     if (timer) clearTimeout(timer);
     this.expiryTimers.delete(playerId);
+  }
+
+  private persistFinishedGame(reason: PersistReason, side?: ChineseSide): void {
+    if (this.gamePersisted || !this.game || this.game.status !== 'finished'
+      || !this.gameId || !this.gameStartedAt || !this.initialGame) return;
+    const winner = this.game.winner;
+    const participants: ArchivedMistParticipant[] = this.startedParticipants.map(player => ({
+      ...player,
+      result: winner === null ? 'draw' : winner === player.side ? 'won' : 'lost',
+    }));
+    const record: ArchivedMistGameRecord = {
+      gameType: 'mist-chess',
+      id: this.gameId,
+      roomCode: MIST_CHESS_GAME_ID,
+      round: this.round,
+      startedAt: this.gameStartedAt,
+      endedAt: this.now(),
+      rulesVersion: this.game.rulesVersion,
+      initialGame: structuredClone(this.initialGame),
+      participants,
+      moves: structuredClone(this.game.history),
+      events: [{
+        type: 'end',
+        step: this.game.history.length,
+        reason: reason === 'move' ? this.game.endReason ?? 'resignation' : reason,
+        ...(side ? { side } : {}),
+        winner,
+      }],
+      finalGame: structuredClone(this.game),
+      endReason: reason === 'move' ? this.game.endReason ?? 'resignation' : reason,
+      moveCount: this.game.history.length,
+      winner,
+    };
+    this.gamePersisted = true;
+    try { this.onCompleted(record); } catch { /* A completed game remains playable if archival fails. */ }
   }
 }

@@ -145,7 +145,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   }, 60_000, now);
   const mist = new MistChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('mist:state', item.state);
-  }, 60_000, now);
+  }, 60_000, now, record => authService.saveCompletedMistGame(record));
   const beast = new BeastChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('beast:state', item.state);
   }, 60_000, now);
@@ -256,6 +256,18 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     const user = requestUser(request);
     if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
     response.json({ ok: true, games: authService.recentGames(user.id, 5) });
+  });
+  app.get('/three-chess/api/games/mist/recent', (request, response) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    response.json({ ok: true, games: authService.recentMistGames(user.id, 5) });
+  });
+  app.get('/three-chess/api/games/mist/:gameId', (request, response) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    const game = authService.mistGameForUser(user.id, request.params.gameId);
+    if (!game) return response.status(404).json({ ok: false, code: 'GAME_NOT_FOUND', error: '没有找到这盘迷雾象棋棋谱。' });
+    response.json({ ok: true, game });
   });
   app.get('/three-chess/api/games/:gameId', (request, response) => {
     const user = requestUser(request);

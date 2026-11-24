@@ -10,6 +10,7 @@ import { musicTrack } from './music-catalog.ts';
 import { buildGameRecord, gameRecordFileName } from './game-record.ts';
 import { parseGameRecord, replayArchivedGame } from './game-replay.ts';
 import type { ReplayDocument } from './game-replay.ts';
+import type { ArchivedMistGameRecord } from './mist-game-history.ts';
 import { appRouteUrl, parseAppRoute } from './navigation.ts';
 import type { AppPage } from './navigation.ts';
 import { backendAssetUrl } from './network-config.ts';
@@ -71,6 +72,10 @@ const beastPage = ref<InstanceType<typeof BeastChessPage> | null>(null);
 const auth = useAuth(), authNotice = ref('');
 const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
 const authRecentGames = auth.recentGames, authRecentLoading = auth.recentLoading, authRecentError = auth.recentError;
+const authMistRecentGames = auth.mistRecentGames, authMistRecentLoading = auth.mistRecentLoading,
+  authMistRecentError = auth.mistRecentError;
+const mistReplayRecord = ref<ArchivedMistGameRecord | null>(null);
+const mistReplayLoading = ref(false), mistReplayError = ref('');
 const pendingHistoricalReplay = ref<{ replay: ReplayDocument; fileName: string } | null>(null);
 const historicalGameId = ref<string | null>(null);
 const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-room'>('manual');
@@ -334,6 +339,8 @@ function openRules() {
 }
 function openAuthDialog() {
   authNotice.value = '';
+  mistReplayRecord.value = null;
+  mistReplayError.value = '';
   authDialog.value?.open();
 }
 async function afterAuthChange(message: string): Promise<void> {
@@ -414,6 +421,28 @@ async function openHistoricalReplay(gameId: string) {
   await navigatePage('local', null, 'replace');
   if (!pendingRoomNavigation.value) showPendingHistoricalReplay();
 }
+
+async function openMistHistoricalReplay(gameId: string) {
+  mistReplayRecord.value = null;
+  mistReplayError.value = '';
+  mistReplayLoading.value = true;
+  try {
+    const result = await auth.loadMistGame(gameId);
+    if (!result.ok) {
+      mistReplayError.value = result.error;
+      return;
+    }
+    mistReplayRecord.value = result.game;
+  } finally {
+    mistReplayLoading.value = false;
+  }
+}
+
+function closeMistHistoricalReplay() {
+  mistReplayRecord.value = null;
+  mistReplayError.value = '';
+}
+
 function openCurrentRoom() {
   const code = room.value?.code ?? savedRoomCode.value;
   void navigatePage('room', code, 'replace');
@@ -1044,9 +1073,14 @@ async function requestRematch() {
     <AuthDialog ref="authDialog" :user="authUser" :busy="authBusy" :error="authError"
       :notice="authNotice" :logout-blocked="accountRoomLocked"
       :recent-games="authRecentGames" :recent-loading="authRecentLoading" :recent-error="authRecentError"
+      :mist-recent-games="authMistRecentGames" :mist-recent-loading="authMistRecentLoading"
+      :mist-recent-error="authMistRecentError" :mist-replay-record="mistReplayRecord"
+      :mist-replay-loading="mistReplayLoading" :mist-replay-error="mistReplayError"
       @login="loginAccount" @register="registerAccount" @change-password="changeAccountPassword"
       @upload-avatar="uploadAccountAvatar"
       @logout="logoutAccount" @replay="openHistoricalReplay" @refresh-recent="auth.loadRecent"
+      @replay-mist="openMistHistoricalReplay" @refresh-mist-recent="auth.loadMistRecent"
+      @close-mist-replay="closeMistHistoricalReplay"
       @clear-error="auth.clearError" />
   </div>
 </template>

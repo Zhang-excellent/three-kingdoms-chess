@@ -134,3 +134,56 @@ test('mist room keeps a disconnected seat for the grace period and then forfeits
     assert.equal(expired?.game?.winner, 'black');
   } finally { service.dispose(); }
 });
+
+test('mist rematches create distinct archived game ids and duplicate terminal handling saves once', () => {
+  const records: import('../src/mist-game-history.ts').ArchivedMistGameRecord[] = [];
+  let currentTime = 1_000;
+  const service = new MistChessService(() => undefined, 60_000, () => currentTime,
+    record => records.push(record));
+  try {
+    service.setSocketAccount('red', 'account-red');
+    service.setSocketAccount('black', 'account-black');
+    const red = service.join('红方账号', 'red', 'red');
+    const black = service.join('黑方账号', 'black', 'black');
+    if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('join failed');
+    service.setReady(red.ack.data.reconnectToken, true, 'red');
+    service.setReady(black.ack.data.reconnectToken, true, 'black');
+    currentTime += 1_000;
+    assert.equal(records.length, 0);
+    service.resign(black.ack.data.reconnectToken, 'black');
+    assert.equal(records.length, 1);
+    const first = records[0];
+    assert.equal(first.participants.filter(player => player.userId).length, 2);
+    assert.equal(first.winner, 'red');
+    assert.equal(service.resign(black.ack.data.reconnectToken, 'black').ok, false);
+    assert.equal(records.length, 1);
+
+    service.rematch(red.ack.data.reconnectToken, 'red');
+    service.setReady(red.ack.data.reconnectToken, true, 'red');
+    service.setReady(black.ack.data.reconnectToken, true, 'black');
+    currentTime += 1_000;
+    service.resign(red.ack.data.reconnectToken, 'red');
+    assert.equal(records.length, 2);
+    assert.notEqual(records[1].id, first.id);
+    assert.equal(records[1].round, first.round + 1);
+  } finally { service.dispose(); }
+});
+
+test('mist timeout writes a formal timeout archive once', async () => {
+  const records: import('../src/mist-game-history.ts').ArchivedMistGameRecord[] = [];
+  const service = new MistChessService(() => undefined, 30, Date.now, record => records.push(record));
+  try {
+    service.setSocketAccount('red', 'timeout-red');
+    const red = service.join('断线账号红', 'red', 'red');
+    const black = service.join('游客黑', 'black', 'black');
+    if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('join failed');
+    service.setReady(red.ack.data.reconnectToken, true, 'red');
+    service.setReady(black.ack.data.reconnectToken, true, 'black');
+    service.disconnect('red');
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(records.length, 1);
+    assert.equal(records[0].endReason, 'timeout');
+    assert.equal(records[0].winner, 'black');
+    assert.equal(records[0].participants.find(player => player.side === 'red')?.userId, 'timeout-red');
+  } finally { service.dispose(); }
+});
