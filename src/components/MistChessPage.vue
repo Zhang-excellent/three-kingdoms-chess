@@ -23,9 +23,15 @@ import {
 import type { ChinesePiece, ChinesePoint, ChineseSide } from '../chinese-chess.ts';
 import { backendAssetUrl, socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
+import { GameAudio, MistMoveSoundTracker, loadAudioSettings } from '../audio.ts';
+import type { AudioSettings } from '../audio.ts';
 import OtherGameTable from './OtherGameTable.vue';
 
-const props = defineProps<{ accountName: string | null; accountAvatar?: string | null }>();
+const props = defineProps<{
+  accountName: string | null;
+  accountAvatar?: string | null;
+  audioSettings?: AudioSettings;
+}>();
 const emit = defineEmits<{ other: [] }>();
 const guestAvatar = 'images/guest-avatar.svg';
 
@@ -70,6 +76,8 @@ const inviteVisible = ref(false), inviteText = ref('');
 const resignDialog = ref<HTMLDialogElement | null>(null), leaveDialog = ref<HTMLDialogElement | null>(null);
 const seatDialog = ref<HTMLDialogElement | null>(null);
 const menuOpen = ref(false);
+const gameAudio = new GameAudio();
+const moveSoundTracker = new MistMoveSoundTracker();
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
@@ -140,6 +148,14 @@ const canSeat = (side: ChineseSide) => !session.value && roomState.value?.phase 
 const drawOfferBy = computed(() => roomState.value?.drawOfferBy ?? null);
 const canRespondDraw = computed(() => !!session.value && roomState.value?.phase === 'playing'
   && !!drawOfferBy.value && drawOfferBy.value !== mySide.value);
+const mistAudioSettings = computed<AudioSettings>(() => {
+  const settings = props.audioSettings ?? loadAudioSettings();
+  return {
+    ...settings,
+    effectsEnabled: true,
+    effectsVolume: settings.effectsVolume > 0 ? settings.effectsVolume : 0.7,
+  };
+});
 
 function saveSession(receipt: MistReceipt): boolean {
   if (!receipt || receipt.gameId !== MIST_CHESS_GAME_ID || receipt.playerId !== receipt.state.selfId) return false;
@@ -223,8 +239,14 @@ function openSocket() {
   const options = { ...config.options, autoConnect: false, reconnection: true, forceNew: true };
   socket = config.origin ? io(config.origin, options) : io(options);
   socket.on('connect', () => { connection.value = 'online'; void recover(); });
-  socket.on('disconnect', () => { connection.value = 'offline'; });
-  socket.on('connect_error', () => { connection.value = 'offline'; });
+  socket.on('disconnect', () => {
+    connection.value = 'offline';
+    moveSoundTracker.suspend();
+  });
+  socket.on('connect_error', () => {
+    connection.value = 'offline';
+    moveSoundTracker.suspend();
+  });
   socket.on('mist:state', acceptState);
   socket.on('mist:session-replaced', () => {
     clearSession();
@@ -235,6 +257,7 @@ function openSocket() {
 
 function openSeat(side: ChineseSide) {
   if (busy.value || !canSeat(side)) return;
+  gameAudio.primeEffects(mistAudioSettings.value);
   if (props.accountName) {
     void joinSeat(side, '');
     return;
@@ -247,6 +270,7 @@ function openSeat(side: ChineseSide) {
 
 function confirmGuestSeat() {
   if (!pendingSide.value) return;
+  gameAudio.primeEffects(mistAudioSettings.value);
   if (!guestName.value.trim()) {
     error.value = '请输入昵称。';
     return;
@@ -275,6 +299,7 @@ async function joinSeat(side: ChineseSide, nickname: string) {
 
 async function setReady(ready: boolean) {
   if (!session.value || busy.value) return;
+  gameAudio.primeEffects(mistAudioSettings.value);
   busy.value = true;
   try {
     const ack = await emitAck<{ state: MistState }>('mist:ready', {
@@ -311,6 +336,7 @@ async function move(pieceId: string, to: ChinesePoint) {
 
 function clickPoint(point: ChinesePoint) {
   if (!isMyTurn.value) return;
+  gameAudio.primeEffects(mistAudioSettings.value);
   const piece = targetAt(point);
   if (piece?.side === mySide.value) {
     selectedId.value = selectedId.value === piece.id ? null : piece.id;
@@ -423,6 +449,16 @@ watch(() => roomState.value?.version, () => {
   if (selectedId.value && !game.value.pieces.some(piece => piece.id === selectedId.value))
     selectedId.value = null;
 });
+watch(() => roomState.value?.game, current => {
+  if (!current) return;
+  const kind = moveSoundTracker.observe(
+    current,
+    mySide.value,
+    `mist:${roomState.value?.round ?? 0}:${myPlayer.value?.id ?? 'visitor'}`,
+    connection.value === 'online',
+  );
+  if (kind) gameAudio.playEffect(kind, mistAudioSettings.value);
+});
 watch([() => props.accountName, () => props.accountAvatar], ([name], [previousName, previousAvatar]) => {
   if (name || props.accountAvatar !== previousAvatar) {
     guestName.value = '';
@@ -438,6 +474,7 @@ onBeforeUnmount(() => {
   socket?.removeAllListeners();
   socket?.disconnect();
   socket = null;
+  gameAudio.dispose();
 });
 
 defineExpose({ leaveForNavigation, openSeat });

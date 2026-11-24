@@ -1,5 +1,7 @@
 import type { Game } from './game.ts';
 import type { BeastGame } from './beast-chess.ts';
+import type { MistGameView } from './mist-chess.ts';
+import type { ChineseSide } from './chinese-chess.ts';
 import { musicTrack, resolveMusicSelection } from './music-catalog.ts';
 
 export interface AudioSettings {
@@ -65,6 +67,36 @@ export class BeastMoveSoundTracker {
     if (!sameScope || !previousLive || !live || game.history.length !== previousCount + 1) return null;
     const last = game.lastMove;
     return last?.number === game.history.length ? (last.captured ? 'capture' : 'move') : null;
+  }
+  suspend(): void {
+    this.live = false;
+  }
+}
+
+/** Mist chess uses a projected move count; own-piece loss still identifies an opponent capture without revealing it. */
+export class MistMoveSoundTracker {
+  private scope = '';
+  private moveCount = 0;
+  private ownPieceCount = 0;
+  private live = false;
+  observe(
+    game: Pick<MistGameView, 'moveCount' | 'pieces' | 'lastMove'>,
+    side: ChineseSide | null,
+    scope: string,
+    live: boolean,
+  ): 'move' | 'capture' | null {
+    const previousMoveCount = this.moveCount;
+    const previousOwnPieceCount = this.ownPieceCount;
+    const previousLive = this.live;
+    const sameScope = this.scope === scope;
+    const ownPieceCount = side ? game.pieces.filter(piece => piece.side === side).length : 0;
+    this.scope = scope;
+    this.moveCount = game.moveCount;
+    this.ownPieceCount = ownPieceCount;
+    this.live = live;
+    if (!side || !sameScope || !previousLive || !live || game.moveCount !== previousMoveCount + 1) return null;
+    if (ownPieceCount < previousOwnPieceCount || !!game.lastMove?.captured) return 'capture';
+    return 'move';
   }
   suspend(): void {
     this.live = false;

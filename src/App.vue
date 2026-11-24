@@ -781,7 +781,8 @@ async function requestRematch() {
 
     <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
-    <MistChessPage v-else-if="page === 'mist'" ref="mistPage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
+    <MistChessPage v-else-if="page === 'mist'" ref="mistPage" :account-name="authUser?.username ?? null"
+      :account-avatar="authUser?.avatarUrl ?? null" :audio-settings="audioSettings" @other="openOtherPage" />
 
     <BeastChessPage v-else-if="page === 'beast'" ref="beastPage" :account-name="authUser?.username ?? null"
       :account-avatar="authUser?.avatarUrl ?? null" :audio-settings="audioSettings" @other="openOtherPage" />

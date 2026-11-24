@@ -6,12 +6,14 @@ import {
   BeastMoveSoundTracker,
   DEFAULT_AUDIO_SETTINGS,
   GameAudio,
+  MistMoveSoundTracker,
   MoveSoundTracker,
   loadAudioSettings,
 } from '../src/audio.ts';
 import { MUSIC_PLAYLISTS, MUSIC_TRACKS, availablePlaylists, resolveMusicSelection, tracksInPlaylist } from '../src/music-catalog.ts';
 import { newGame, playMove } from '../src/game.ts';
 import { createBeastGame, newBeastGame, playBeastMove } from '../src/beast-chess.ts';
+import { newMistGame, playMistMove, projectMistGame } from '../src/mist-chess.ts';
 
 test('sound settings default to effects on, persist independent levels and reject malformed values', () => {
   GlobalRegistrator.register({ url: 'http://localhost:5173' });
@@ -95,6 +97,44 @@ test('beast chess sound tracker plays one move or capture and stays silent on re
   assert.equal(reconnectTracker.observe(initial, 'beast:3', true), null);
   reconnectTracker.suspend();
   assert.equal(reconnectTracker.observe(moved.game, 'beast:3', true), null);
+});
+
+test('mist chess sound tracker uses projected move count without exposing hidden opponent coordinates', () => {
+  const tracker = new MistMoveSoundTracker();
+  const initial = newMistGame();
+  assert.equal(tracker.observe(projectMistGame(initial, 'red'), 'red', 'mist:1:red', true), null);
+
+  const redMove = playMistMove(initial, 'red-pawn-4-6', { x: 4, y: 5 });
+  assert.equal(redMove.ok, true);
+  if (!redMove.ok) return;
+  assert.equal(tracker.observe(projectMistGame(redMove.game, 'red'), 'red', 'mist:1:red', true), 'move');
+  assert.equal(tracker.observe(projectMistGame(redMove.game, 'red'), 'red', 'mist:1:red', true), null);
+
+  const blackMove = playMistMove(redMove.game, 'black-pawn-4-3', { x: 4, y: 4 });
+  assert.equal(blackMove.ok, true);
+  if (!blackMove.ok) return;
+  const hiddenBlackMove = projectMistGame(blackMove.game, 'red');
+  assert.equal(hiddenBlackMove.lastMove, null);
+  assert.equal(tracker.observe(hiddenBlackMove, 'red', 'mist:1:red', true), 'move');
+
+  const redOtherMove = playMistMove(blackMove.game, 'red-pawn-2-6', { x: 2, y: 5 });
+  assert.equal(redOtherMove.ok, true);
+  if (!redOtherMove.ok) return;
+  assert.equal(tracker.observe(projectMistGame(redOtherMove.game, 'red'), 'red', 'mist:1:red', true), 'move');
+
+  const blackCapture = playMistMove(redOtherMove.game, 'black-pawn-4-3', { x: 4, y: 5 });
+  assert.equal(blackCapture.ok, true);
+  if (!blackCapture.ok) return;
+  const hiddenCapture = projectMistGame(blackCapture.game, 'red');
+  assert.equal(hiddenCapture.lastMove, null);
+  assert.equal(tracker.observe(hiddenCapture, 'red', 'mist:1:red', true), 'capture');
+
+  tracker.suspend();
+  const redAfterReconnect = playMistMove(blackCapture.game, 'red-pawn-0-6', { x: 0, y: 5 });
+  assert.equal(redAfterReconnect.ok, true);
+  if (!redAfterReconnect.ok) return;
+  assert.equal(tracker.observe(projectMistGame(redAfterReconnect.game, 'red'), 'red', 'mist:1:red', true), null);
+  assert.equal(tracker.observe(projectMistGame(redAfterReconnect.game, 'red'), 'red', 'mist:2:red', true), null);
 });
 
 test('music uses one looping player, independent volume and a path relative to the site', async () => {
