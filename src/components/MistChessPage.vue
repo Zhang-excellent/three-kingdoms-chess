@@ -148,14 +148,7 @@ const canSeat = (side: ChineseSide) => !session.value && roomState.value?.phase 
 const drawOfferBy = computed(() => roomState.value?.drawOfferBy ?? null);
 const canRespondDraw = computed(() => !!session.value && roomState.value?.phase === 'playing'
   && !!drawOfferBy.value && drawOfferBy.value !== mySide.value);
-const mistAudioSettings = computed<AudioSettings>(() => {
-  const settings = props.audioSettings ?? loadAudioSettings();
-  return {
-    ...settings,
-    effectsEnabled: true,
-    effectsVolume: settings.effectsVolume > 0 ? settings.effectsVolume : 0.7,
-  };
-});
+const mistAudioSettings = computed<AudioSettings>(() => props.audioSettings ?? loadAudioSettings());
 
 function saveSession(receipt: MistReceipt): boolean {
   if (!receipt || receipt.gameId !== MIST_CHESS_GAME_ID || receipt.playerId !== receipt.state.selfId) return false;
