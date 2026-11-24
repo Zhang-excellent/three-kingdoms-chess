@@ -8,6 +8,7 @@ import { FiveSoldiersService } from './five-soldiers-service.ts';
 import { HorseChessService } from './horse-chess-service.ts';
 import { ChineseChessService } from './chinese-chess-service.ts';
 import { BeastChessService } from './beast-chess-service.ts';
+import { MistChessService } from './mist-chess-service.ts';
 import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
 import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
@@ -16,6 +17,7 @@ import type { FiveAck, FiveMoveIntent, FiveReceipt, FiveState } from '../src/fiv
 import type { HorseAck, HorseMoveIntent, HorseReceipt, HorseState } from '../src/horse-chess.ts';
 import type { ChineseAck, ChineseMoveIntent, ChineseReceipt, ChineseState } from '../src/chinese-chess.ts';
 import type { BeastAck, BeastMoveIntent, BeastReceipt, BeastState } from '../src/beast-chess.ts';
+import type { MistAck, MistMoveIntent, MistReceipt, MistState } from '../src/mist-chess.ts';
 
 const PUBLIC_LOBBY = 'three-kingdoms-chess:public-lobby';
 const AUTH_COOKIE = 'three_chess_session';
@@ -141,6 +143,9 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const chinese = new ChineseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('chinese:state', item.state);
   }, 60_000, now);
+  const mist = new MistChessService(service => {
+    for (const item of service.views()) io.to(item.socketId).emit('mist:state', item.state);
+  }, 60_000, now);
   const beast = new BeastChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('beast:state', item.state);
   }, 60_000, now);
@@ -151,6 +156,8 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const horseInternalError = <T>(done: (ack: HorseAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const chineseInternalError = <T>(done: (ack: ChineseAck<T>) => void) =>
+    done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
+  const mistInternalError = <T>(done: (ack: MistAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
   const beastInternalError = <T>(done: (ack: BeastAck<T>) => void) =>
     done({ ok: false, code: 'INTERNAL_ERROR', error: '服务器暂时无法处理请求，请稍后重试。' });
@@ -281,6 +288,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       five.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       horse.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       chinese.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
+      mist.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       beast.setSocketAccount(socket.id, user?.id ?? null, user?.avatarUrl ?? null);
       return user;
     };
@@ -638,6 +646,108 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
       } catch { chineseInternalError(done); }
     });
+    socket.on('mist:inspect', (_payload: unknown, done: (ack: MistAck<MistState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(mist.inspect(socket.id));
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: MistAck<MistReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        const user = currentUser();
+        const result = mist.join(user?.username ?? payload?.nickname, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:resume', (payload: { reconnectToken?: unknown }, done: (ack: MistAck<MistReceipt>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.resume(payload?.reconnectToken, socket.id);
+        if (result.ok && result.replacedSocketId) {
+          io.to(result.replacedSocketId).emit('mist:session-replaced');
+          io.sockets.sockets.get(result.replacedSocketId)?.disconnect(true);
+        }
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:choose-side', (payload: { reconnectToken?: unknown; side?: unknown }, done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.chooseSide(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:ready', (payload: { reconnectToken?: unknown; ready?: unknown }, done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.setReady(payload?.reconnectToken, payload?.ready, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:rematch', (payload: { reconnectToken?: unknown }, done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.rematch(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:move', (payload: { reconnectToken?: unknown; intent?: unknown },
+      done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.move(payload?.reconnectToken, payload?.intent as MistMoveIntent | undefined, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:resign', (payload: { reconnectToken?: unknown }, done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.resign(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:draw-offer', (payload: { reconnectToken?: unknown }, done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.offerDraw(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:draw-respond', (payload: { reconnectToken?: unknown; accept?: unknown }, done: (ack: MistAck<{ state: MistState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.respondDraw(payload?.reconnectToken, payload?.accept, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:leave', (payload: { reconnectToken?: unknown }, done: (ack: MistAck) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = mist.leave(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+      } catch { mistInternalError(done); }
+    });
     socket.on('beast:inspect', (_payload: unknown, done: (ack: BeastAck<BeastState>) => void) => {
       if (typeof done !== 'function') return;
       try {
@@ -890,9 +1000,10 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       if (five.disconnect(socket.id)) for (const item of five.views()) io.to(item.socketId).emit('five:state', item.state);
       if (horse.disconnect(socket.id)) for (const item of horse.views()) io.to(item.socketId).emit('horse:state', item.state);
       if (chinese.disconnect(socket.id)) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      if (mist.disconnect(socket.id)) for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
       if (beast.disconnect(socket.id)) for (const item of beast.views()) io.to(item.socketId).emit('beast:state', item.state);
     });
   });
 
-  return { app, httpServer, io, rooms, five, horse, chinese, beast, authService };
+  return { app, httpServer, io, rooms, five, horse, chinese, mist, beast, authService };
 }

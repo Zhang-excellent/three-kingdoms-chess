@@ -34,8 +34,8 @@ const waitUntil = async (condition: () => boolean, message: string, timeoutMs = 
 test('other games page contains four independent game selectors', async t => {
   const wrapper = mount(OtherGamesPage, { attachTo: document.body });
   t.after(() => wrapper.unmount());
-  assert.equal(wrapper.findAll('button.variant-entry').length, 4);
-  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋', '斗兽棋']);
+  assert.equal(wrapper.findAll('button.variant-entry').length, 5);
+  assert.deepEqual(wrapper.findAll('.variant-entry strong').map(item => item.text()), ['五兵联盟', '马棋', '中国象棋', '迷雾象棋', '斗兽棋']);
 });
 
 async function enterGuestSeat(

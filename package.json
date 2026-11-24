@@ -13,6 +13,7 @@
     "accept:home": "node scripts/home-browser-acceptance.mjs",
     "accept:three-kingdoms": "node scripts/three-kingdoms-browser-acceptance.mjs",
     "accept:chinese": "node scripts/chinese-browser-acceptance.mjs",
+    "accept:mist": "node scripts/mist-chess-browser-acceptance.mjs",
     "accept:other-games": "node scripts/other-games-browser-acceptance.mjs",
     "accept:beast": "node scripts/beast-chess-browser-acceptance.mjs",
     "start": "tsx server/index.ts",

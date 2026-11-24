@@ -11,14 +11,17 @@ interface TablePlayer {
   ready: boolean;
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   title: string;
   eyebrow: string;
   phase: 'lobby' | 'playing' | 'finished';
   players: TablePlayer[];
   busy: boolean;
   sideNames?: Partial<Record<Side, string>>;
-}>();
+  watchEnabled?: boolean;
+}>(), {
+  watchEnabled: true,
+});
 const emit = defineEmits<{ seat: [side: Side]; watch: [] }>();
 
 const guestAvatar = 'images/guest-avatar.svg';
@@ -29,13 +32,13 @@ const avatarFor = (side: Side) => {
   return player ? backendAssetUrl(player.avatar) || guestAvatar : null;
 };
 const statusText = computed(() => {
-  if (props.phase === 'playing') return '对局中 · 点击桌子观战';
-  if (props.phase === 'finished') return '本局结束 · 查看棋盘';
+  if (props.phase === 'playing') return props.watchEnabled === false ? '迷雾对局进行中 · 第一版暂不开放观战' : '对局中 · 点击桌子观战';
+  if (props.phase === 'finished') return props.watchEnabled === false ? '本局结束 · 仅对局双方可见终局棋盘' : '本局结束 · 查看棋盘';
   if (props.players.length === 2) return '双方已入座 · 等待准备';
   if (props.players.length === 1) return '等待另一位棋友';
   return `空桌 · 请选择${sideName('red')}或${sideName('black')}`;
 });
-const canWatch = computed(() => props.phase !== 'lobby');
+const canWatch = computed(() => props.watchEnabled !== false && props.phase !== 'lobby');
 const occupiedCount = computed(() => props.players.length);
 </script>
 
@@ -67,7 +70,9 @@ const occupiedCount = computed(() => props.players.length);
         <small>{{ statusText }}</small>
       </button>
     </div>
-    <p class="game-table-hint">{{ phase === 'lobby' ? '点击左右头像选择阵营并入座；入座后再进入棋盘。' : '对局已经开始，请点击中间桌子进入旁观。' }}</p>
+    <p class="game-table-hint">{{ phase === 'lobby' ? '点击左右头像选择阵营并入座；入座后再进入棋盘。'
+      : watchEnabled === false ? '迷雾象棋第一版关闭观战；对局双方刷新或断线后仍会恢复各自视野。'
+      : '对局已经开始，请点击中间桌子进入旁观。' }}</p>
   </section>
 </template>
 

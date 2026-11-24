@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const emit = defineEmits<{ five: []; horse: []; chinese: []; beast: [] }>();
+const emit = defineEmits<{ five: []; horse: []; chinese: []; mist: []; beast: [] }>();
 </script>
 
 <template>
@@ -18,6 +18,11 @@ const emit = defineEmits<{ five: []; horse: []; chinese: []; beast: [] }>();
       <button class="variant-entry chinese-entry" type="button" aria-label="进入中国象棋" @click="emit('chinese')">
         <span class="variant-entry-seal" aria-hidden="true">弈</span>
         <strong>中国象棋</strong>
+        <span class="variant-entry-arrow" aria-hidden="true">→</span>
+      </button>
+      <button class="variant-entry mist-entry" type="button" aria-label="进入迷雾象棋" @click="emit('mist')">
+        <span class="variant-entry-seal" aria-hidden="true">雾</span>
+        <strong>迷雾象棋</strong>
         <span class="variant-entry-arrow" aria-hidden="true">→</span>
       </button>
       <button class="variant-entry beast-entry" type="button" aria-label="进入斗兽棋" @click="emit('beast')">
@@ -39,6 +44,7 @@ const emit = defineEmits<{ five: []; horse: []; chinese: []; beast: [] }>();
 .variant-entry-seal{display:grid;place-items:center;width:54px;height:60px;border:1px solid #853a30;border-radius:6px;background:#a64b3c;color:#fff8e9;font:700 31px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #fff3dc2e,0 7px 16px #7d3c2c20;transform:rotate(-2deg)}
 .horse-entry .variant-entry-seal{border-color:#2d5660;background:#356d78}
 .chinese-entry .variant-entry-seal{border-color:#7a592b;background:#9b7338}
+.mist-entry .variant-entry-seal{border-color:#484c5d;background:#5b6074}
 .beast-entry .variant-entry-seal{border-color:#71513a;background:#875a39}
 .variant-entry strong{font:700 29px/1.2 "Songti SC","SimSun",serif;letter-spacing:4px}
 .variant-entry-arrow{color:#9b7441;font-size:25px;transition:transform .18s ease}

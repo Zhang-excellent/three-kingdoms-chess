@@ -21,6 +21,7 @@ import OtherGamesPage from './components/OtherGamesPage.vue';
 import FiveSoldiersPage from './components/FiveSoldiersPage.vue';
 import HorseChessPage from './components/HorseChessPage.vue';
 import ChineseChessPage from './components/ChineseChessPage.vue';
+import MistChessPage from './components/MistChessPage.vue';
 import BeastChessPage from './components/BeastChessPage.vue';
 
 const storageKey = 'three-kingdoms-chess:win-loss-v1';
@@ -65,6 +66,7 @@ const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null);
 const fivePage = ref<InstanceType<typeof FiveSoldiersPage> | null>(null);
 const horsePage = ref<InstanceType<typeof HorseChessPage> | null>(null);
 const chinesePage = ref<InstanceType<typeof ChineseChessPage> | null>(null);
+const mistPage = ref<InstanceType<typeof MistChessPage> | null>(null);
 const beastPage = ref<InstanceType<typeof BeastChessPage> | null>(null);
 const auth = useAuth(), authNotice = ref('');
 const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
@@ -264,7 +266,7 @@ async function completeRoomDeparture(): Promise<void> {
 }
 
 async function activatePage(next: AppPage, code: string | null, initial = false) {
-  if (next === 'other' || next === 'five' || next === 'beast') {
+  if (next === 'other' || next === 'five' || next === 'mist' || next === 'beast') {
     void online.unsubscribeLobby();
     online.suspend();
     return;
@@ -303,6 +305,7 @@ async function navigatePage(next: AppPage, code: string | null = null, method: '
   if (page.value === 'five' && next !== 'five') await fivePage.value?.leaveForNavigation();
   if (page.value === 'horse' && next !== 'horse') await horsePage.value?.leaveForNavigation();
   if (page.value === 'chinese' && next !== 'chinese') await chinesePage.value?.leaveForNavigation();
+  if (page.value === 'mist' && next !== 'mist') await mistPage.value?.leaveForNavigation();
   if (page.value === 'beast' && next !== 'beast') await beastPage.value?.leaveForNavigation();
   if (leavesRoom(next, code)) {
     pendingRoomNavigation.value = { next, code, method };
@@ -321,6 +324,7 @@ function openOtherPage() { void navigatePage('other'); }
 function openFivePage() { void navigatePage('five'); }
 function openHorsePage() { void navigatePage('horse'); }
 function openChinesePage() { void navigatePage('chinese'); }
+function openMistPage() { void navigatePage('mist'); }
 function openBeastPage() { void navigatePage('beast'); }
 function openRules() {
   if (page.value === 'other') otherRulesDialog.value?.showModal();
@@ -420,6 +424,7 @@ async function syncPageFromLocation() {
   if (page.value === 'five' && route.page !== 'five') await fivePage.value?.leaveForNavigation();
   if (page.value === 'horse' && route.page !== 'horse') await horsePage.value?.leaveForNavigation();
   if (page.value === 'chinese' && route.page !== 'chinese') await chinesePage.value?.leaveForNavigation();
+  if (page.value === 'mist' && route.page !== 'mist') await mistPage.value?.leaveForNavigation();
   if (page.value === 'beast' && route.page !== 'beast') await beastPage.value?.leaveForNavigation();
   if (leavesRoom(route.page, route.roomCode)) {
     const targetHref = location.href;
@@ -755,12 +760,12 @@ async function requestRematch() {
         <button class="plain-button" :class="{ active: page === 'home' }" @click="openHomePage">首页</button>
         <button class="plain-button" :class="{ active: page === 'lobby' }" @click="openLobbyPage">对战大厅</button>
         <button class="plain-button" :class="{ active: page === 'friends' }" @click="openFriendsPage">好友对战</button>
-        <button class="plain-button" :class="{ active: page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' || page === 'beast' }" @click="openOtherPage">其他玩法</button>
+        <button class="plain-button" :class="{ active: page === 'other' || page === 'five' || page === 'horse' || page === 'chinese' || page === 'mist' || page === 'beast' }" @click="openOtherPage">其他玩法</button>
         <button v-if="hasSession && page !== 'room'" class="plain-button room-return-button" @click="openCurrentRoom">{{ resumeRoomLabel }}</button>
         <button v-if="authUser" class="plain-button account-button" :title="`我的账号：${authUser.username}`" @click="openAuthDialog">{{ authUser.username }}</button>
         <button v-else class="plain-button account-button" @click="openAuthDialog">登录 / 注册</button>
         <button class="plain-button" @click="settingsDialog?.showModal()">设置</button>
-        <button v-if="page !== 'chinese' && page !== 'five' && page !== 'horse' && page !== 'beast'" class="plain-button" @click="openRules">玩法说明</button>
+        <button v-if="page !== 'chinese' && page !== 'mist' && page !== 'five' && page !== 'horse' && page !== 'beast'" class="plain-button" @click="openRules">玩法说明</button>
       </div>
     </header>
     <p v-if="onlineError && page === 'home'" class="app-notice error" role="alert">{{ onlineError }}</p>
@@ -768,13 +773,15 @@ async function requestRematch() {
     <HomePage v-if="page === 'home'" :has-room="hasSession" :room-code="room?.code ?? savedRoomCode" :room-phase="currentRoomPhase"
       @lobby="openLobbyPage" @friends="openFriendsPage" @other="openOtherPage" @local="openLocalPage" @resume="openCurrentRoom" />
 
-    <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" @horse="openHorsePage" @chinese="openChinesePage" @beast="openBeastPage" />
+    <OtherGamesPage v-else-if="page === 'other'" @five="openFivePage" @horse="openHorsePage" @chinese="openChinesePage" @mist="openMistPage" @beast="openBeastPage" />
 
     <FiveSoldiersPage v-else-if="page === 'five'" ref="fivePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
     <HorseChessPage v-else-if="page === 'horse'" ref="horsePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
     <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
+
+    <MistChessPage v-else-if="page === 'mist'" ref="mistPage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
     <BeastChessPage v-else-if="page === 'beast'" ref="beastPage" :account-name="authUser?.username ?? null"
       :account-avatar="authUser?.avatarUrl ?? null" :audio-settings="audioSettings" @other="openOtherPage" />

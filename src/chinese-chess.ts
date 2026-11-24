@@ -222,7 +222,11 @@ function pseudoMoves(pieces: readonly ChinesePiece[], piece: ChinesePiece): Chin
   return moves;
 }
 
-function applyMovePieces(pieces: readonly ChinesePiece[], piece: ChinesePiece, to: ChinesePoint): ChinesePiece[] {
+export function chineseMovesIgnoringCheck(pieces: readonly ChinesePiece[], piece: ChinesePiece): ChinesePoint[] {
+  return pseudoMoves(pieces, piece);
+}
+
+export function applyChineseMovePieces(pieces: readonly ChinesePiece[], piece: ChinesePiece, to: ChinesePoint): ChinesePiece[] {
   const captured = chinesePieceAt(pieces, to);
   return pieces
     .filter(item => item.id !== captured?.id)
@@ -237,7 +241,8 @@ export function isChineseKingInCheck(pieces: readonly ChinesePiece[], side: Chin
 }
 
 export function legalChineseMoves(pieces: readonly ChinesePiece[], piece: ChinesePiece): ChinesePoint[] {
-  return pseudoMoves(pieces, piece).filter(to => !isChineseKingInCheck(applyMovePieces(pieces, piece, to), piece.side));
+  return chineseMovesIgnoringCheck(pieces, piece)
+    .filter(to => !isChineseKingInCheck(applyChineseMovePieces(pieces, piece, to), piece.side));
 }
 
 export function allLegalChineseMoves(game: ChineseGame, side = game.turn): Array<{ piece: ChinesePiece; to: ChinesePoint }> {
@@ -273,9 +278,9 @@ export function playChineseMove(game: ChineseGame, pieceId: string, to: ChineseP
   const piece = game.pieces.find(item => item.id === pieceId);
   if (!piece) return { ok: false, error: '没有找到要移动的棋子。' };
   if (piece.side !== game.turn) return { ok: false, error: `现在轮到${chineseSideName(game.turn)}行棋。` };
-  if (!pseudoMoves(game.pieces, piece).some(move => move.x === to.x && move.y === to.y))
+  if (!chineseMovesIgnoringCheck(game.pieces, piece).some(move => move.x === to.x && move.y === to.y))
     return { ok: false, error: '这个位置不符合该棋子的走法。' };
-  const nextPieces = applyMovePieces(game.pieces, piece, to);
+  const nextPieces = applyChineseMovePieces(game.pieces, piece, to);
   if (isChineseKingInCheck(nextPieces, piece.side))
     return { ok: false, error: '这步棋会让本方将帅处于被将军状态。' };
 
