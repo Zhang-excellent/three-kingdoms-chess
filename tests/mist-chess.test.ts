@@ -8,6 +8,7 @@ import {
   newMistGame,
   playMistMove,
   projectMistGame,
+  spectatorMistGame,
   validMistGame,
 } from '../src/mist-chess.ts';
 import type { MistGame } from '../src/mist-chess.ts';
@@ -33,11 +34,16 @@ test('mist chess starts from the classic 32-piece layout and projects different 
   const black = projectMistGame(game, 'black');
   assert.equal(red.pieces.some(piece => piece.id === 'black-king-4-0'), false);
   assert.equal(black.pieces.some(piece => piece.id === 'red-king-4-9'), false);
-  assert.equal(red.pieces.some(piece => piece.id === 'black-horse-1-0'), true);
+  assert.equal(red.pieces.some(piece => piece.id === 'black-horse-1-0'), false);
   assert.equal(black.pieces.some(piece => piece.id === 'red-horse-1-9'), true);
+  assert.equal(red.legalMoves.some(move => move.pieceId.startsWith('red-cannon-')), false);
   assert.notDeepEqual(red.visibleCells, black.visibleCells);
   assert.equal(red.history.length, 0);
   assert.equal(black.history.length, 0);
+  const spectator = spectatorMistGame(game);
+  assert.equal(spectator.pieces.length, 32);
+  assert.equal(spectator.visibleCells.length, MIST_BOARD_CELLS.length);
+  assert.equal(spectator.fullBoardVisible, true);
 });
 
 test('visibility uses destinations only and never lights rook paths, horse legs, elephant eyes or cannon screens automatically', () => {
@@ -54,7 +60,7 @@ test('visibility uses destinations only and never lights rook paths, horse legs,
     { id: 'rook-beyond', side: 'black', kind: 'horse', x: 0, y: 1 },
     { id: 'red-king', side: 'red', kind: 'king', x: 4, y: 9 },
     { id: 'black-king', side: 'black', kind: 'king', x: 3, y: 0 },
-  ]);
+  ], 'black');
   const red = projectMistGame(game, 'red');
 
   assert.equal(visible(game, 'red', 0, 4), true);
@@ -66,6 +72,23 @@ test('visibility uses destinations only and never lights rook paths, horse legs,
   assert.equal(visible(game, 'red', 8, 3), true);
   assert.equal(red.pieces.some(piece => piece.id === 'cannon-target'), true);
   assert.equal(red.pieces.some(piece => piece.id === 'hidden-screen'), false);
+});
+
+test('red cannot move a cannon on the first move, but cannons recover after that move', () => {
+  const game = newMistGame();
+  const before = structuredClone(game);
+  const banned = playMistMove(game, 'red-cannon-1-7', { x: 1, y: 6 });
+  assert.equal(banned.ok, false);
+  assert.deepEqual(game, before);
+
+  const first = playMistMove(game, 'red-pawn-0-6', { x: 0, y: 5 });
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  const reply = playMistMove(first.game, 'black-pawn-0-3', { x: 0, y: 4 });
+  assert.equal(reply.ok, true);
+  if (!reply.ok) return;
+  const cannon = playMistMove(reply.game, 'red-cannon-1-7', { x: 1, y: 6 });
+  assert.equal(cannon.ok, true);
 });
 
 test('visibility is retained for the waiting side and enemies enter or leave immediately', () => {

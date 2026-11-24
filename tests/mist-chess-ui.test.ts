@@ -49,7 +49,7 @@ async function enterGuestSeat(
     && wrapper.text().includes(nickname), `${nickname} did not enter the board`);
 }
 
-test('mist chess opens one table, projects one side per player, hides opponent moves and never opens spectator board', async t => {
+test('mist chess projects one side per player, hides opponent moves and opens an unfogged spectator board', async t => {
   localStorage.removeItem(MIST_CHESS_SESSION_KEY);
   const red = mount(MistChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => red.unmount());
@@ -57,7 +57,7 @@ test('mist chess opens one table, projects one side per player, hides opponent m
   assert.equal((red.get('.game-table-center').element as HTMLButtonElement).disabled, true);
   await waitUntil(() => red.get('.mist-page').attributes('data-connection') === 'online', `red did not connect: ${red.text()}`);
   await enterGuestSeat(red, '.game-table-seat.red', '迷雾红游客');
-  assert.equal(red.findAll('.mist-piece').length, 18);
+  assert.equal(red.findAll('.mist-piece').length, 16);
   assert.equal(red.findAll('.mist-piece.red').length, 16);
   assert.ok(red.findAll('.mist-fog-cell').length > 0);
 
@@ -92,9 +92,16 @@ test('mist chess opens one table, projects one side per player, hides opponent m
   const visitor = mount(MistChessPage, { attachTo: document.body, props: { accountName: null } });
   t.after(() => visitor.unmount());
   await waitUntil(() => visitor.get('.mist-page').attributes('data-connection') === 'online', `visitor did not connect: ${visitor.text()}`);
-  await waitUntil(() => visitor.get('.game-table-center').text().includes('暂不开放观战'), 'visitor did not see spectator closure');
-  assert.equal((visitor.get('.game-table-center').element as HTMLButtonElement).disabled, true);
+  await waitUntil(() => visitor.get('.game-table-center').text().includes('点击桌子观战'), 'visitor did not see spectator entry');
+  assert.equal((visitor.get('.game-table-center').element as HTMLButtonElement).disabled, false);
   assert.equal(visitor.findAll('.mist-piece').length, 0);
+  await visitor.get('.game-table-center').trigger('click');
+  await waitUntil(() => visitor.findAll('.mist-piece').length === 32, 'spectator did not receive the full board');
+  assert.equal(visitor.findAll('.mist-fog-cell').length, 0);
+  assert.equal(visitor.get('.mist-history').text().includes('(1, 6)'), true);
+  assert.equal(visitor.findAll('button').some(button => ['认输', '再来一局', '离开'].includes(button.text())), false);
+  await visitor.get('.board-back-to-table').trigger('click');
+  await waitUntil(() => visitor.findAll('.mist-piece').length === 0, 'spectator did not return to the table');
 
   type LeaveForNavigation = { leaveForNavigation: () => Promise<void> };
   await (black.vm as unknown as LeaveForNavigation).leaveForNavigation();

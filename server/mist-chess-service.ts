@@ -6,6 +6,7 @@ import {
   playMistMove,
   projectMistGame,
   resignMistGame,
+  spectatorMistGame,
 } from '../src/mist-chess.ts';
 import { isChineseSide } from '../src/chinese-chess.ts';
 import type {
@@ -70,6 +71,7 @@ export class MistChessService {
   private readonly socketAccounts = new Map<string, string | null>();
   private readonly socketAvatars = new Map<string, string | null>();
   private readonly lobbyWatchers = new Set<string>();
+  private readonly observers = new Set<string>();
   private readonly requests = new Map<string, Map<string, StoredAck>>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -114,13 +116,15 @@ export class MistChessService {
     };
     this.players.push(player);
     this.lobbyWatchers.delete(socketId);
+    this.observers.delete(socketId);
     this.bindSocket(player, socketId);
     this.version++;
     return { ok: true, changed: true, ack: { ok: true, data: this.receipt(player) } };
   }
 
   inspect(socketId?: string): MistAck<MistState> {
-    if (socketId && !this.socketPlayers.has(socketId)) this.lobbyWatchers.add(socketId);
+    if (socketId && !this.socketPlayers.has(socketId) && !this.observers.has(socketId))
+      this.lobbyWatchers.add(socketId);
     return { ok: true, data: this.state(null) };
   }
 
@@ -137,6 +141,7 @@ export class MistChessService {
     found.player.offlineUntil = null;
     found.player.avatar = found.player.accountId ? this.socketAvatars.get(socketId) ?? null : null;
     this.lobbyWatchers.delete(socketId);
+    this.observers.delete(socketId);
     this.bindSocket(found.player, socketId);
     this.version++;
     return {
@@ -276,8 +281,22 @@ export class MistChessService {
     return { ok: true, changed: true, departedSocketId, ack: { ok: true, data: undefined } };
   }
 
+  watch(socketId: string): MistAck<MistState> {
+    if (!this.socketPlayers.has(socketId)) {
+      this.lobbyWatchers.delete(socketId);
+      this.observers.add(socketId);
+    }
+    return { ok: true, data: this.state(null, true) };
+  }
+
+  unwatch(socketId: string): void {
+    this.observers.delete(socketId);
+    if (!this.socketPlayers.has(socketId)) this.lobbyWatchers.add(socketId);
+  }
+
   disconnect(socketId: string): boolean {
     this.lobbyWatchers.delete(socketId);
+    this.observers.delete(socketId);
     const playerId = this.socketPlayers.get(socketId);
     if (!playerId) return false;
     const player = this.players.find(item => item.id === playerId);
@@ -299,6 +318,7 @@ export class MistChessService {
       ...this.players.flatMap(player => player.socketId
         ? [{ socketId: player.socketId, state: this.state(player) }]
         : []),
+      ...Array.from(this.observers, socketId => ({ socketId, state: this.state(null, true) })),
       ...Array.from(this.lobbyWatchers, socketId => ({ socketId, state: this.state(null) })),
     ];
   }
@@ -359,7 +379,7 @@ export class MistChessService {
     };
   }
 
-  private state(self: MistPlayer | null): MistState {
+  private state(self: MistPlayer | null, spectator = false): MistState {
     const players: MistPlayerView[] = this.players.map(player => ({
       id: player.id,
       nickname: player.nickname,
@@ -376,7 +396,9 @@ export class MistChessService {
       version: this.version,
       round: this.round,
       players,
-      game: self ? projectMistGame(this.game ?? newMistGame(), self.side) : null,
+      game: self
+        ? projectMistGame(this.game ?? newMistGame(), self.side)
+        : spectator ? spectatorMistGame(this.game ?? newMistGame()) : null,
       drawOfferBy: this.drawOfferBy,
       selfId: self?.id ?? null,
       selfSide: self?.side ?? null,
@@ -390,6 +412,7 @@ export class MistChessService {
       this.socketAccounts.delete(player.socketId);
       this.socketAvatars.delete(player.socketId);
       this.lobbyWatchers.delete(player.socketId);
+      this.observers.delete(player.socketId);
     }
     this.requests.delete(player.id);
     if (this.phase === 'playing' && this.game) {

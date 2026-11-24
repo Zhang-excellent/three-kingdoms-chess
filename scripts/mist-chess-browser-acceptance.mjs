@@ -230,7 +230,7 @@ async function main() {
     const emptyScreenshot = await capture(devtools, red, '迷雾象棋-棋桌-空桌.png');
     await clickSelector(devtools, red, '.game-table-seat.red', '红方席位');
     await fillSeat(devtools, red, '迷雾红游客');
-    await waitFor(devtools, red, `document.querySelectorAll('.mist-piece').length === 18`, '红方投影棋盘');
+    await waitFor(devtools, red, `document.querySelectorAll('.mist-piece').length === 16`, '红方首手禁炮投影棋盘');
     await clickStart(devtools, red);
     await waitFor(devtools, red, `document.querySelector('.self-seat')?.classList.contains('ready')`, '红方准备');
 
@@ -249,6 +249,14 @@ async function main() {
     const hiddenHistory = await evaluate(devtools, black, `document.querySelector('.mist-history')?.textContent.includes('(5, 6)') ?? false`);
     if (hiddenHistory) throw new Error('黑方界面泄露了红方迷雾走子坐标。');
     const desktopScreenshot = await capture(devtools, red, '迷雾象棋-桌面-双方视野.png');
+
+    const visitor = await createPage(devtools, { width: 1440, height: 1000 });
+    await waitFor(devtools, visitor, `document.querySelector('.mist-page[data-connection="online"]') !== null`, '观战页面连接');
+    await waitFor(devtools, visitor, `document.querySelector('.game-table-center')?.classList.contains('active')`, '观战棋桌状态');
+    await clickSelector(devtools, visitor, '.game-table-center', '观战棋桌');
+    await waitFor(devtools, visitor, `document.querySelectorAll('.mist-piece').length === 32 && document.querySelectorAll('.mist-fog-cell').length === 0`, '无迷雾完整观战棋盘');
+    await waitFor(devtools, visitor, `document.querySelector('.mist-history')?.textContent.includes('(5, 6)')`, '观战完整棋谱');
+    const spectatorScreenshot = await capture(devtools, visitor, '迷雾象棋-桌面-观战无迷雾.png');
 
     await devtools.send('Page.reload', {}, black.sessionId);
     await waitFor(devtools, black, `document.querySelector('.mist-page[data-connection="online"]') && document.querySelector('.mist-board-heading h2')?.textContent.includes('轮到 迷雾黑游客 行棋')`, '刷新重连恢复');
@@ -326,6 +334,7 @@ async function main() {
       screenshots: {
         emptyScreenshot,
         desktopScreenshot,
+        spectatorScreenshot,
         reconnectScreenshot,
         finishedScreenshot,
         mobileScreenshot,

@@ -121,23 +121,32 @@ export function otherMistSide(side: ChineseSide): ChineseSide {
   return side === 'red' ? 'black' : 'red';
 }
 
+export function mistMoveForbidden(
+  game: Pick<MistGame, 'turn' | 'history'>,
+  piece: Pick<ChinesePiece, 'side' | 'kind'>,
+): boolean {
+  return game.history.length === 0 && game.turn === 'red' && piece.side === 'red' && piece.kind === 'cannon';
+}
+
 export function allMistMoves(
-  game: Pick<MistGame, 'pieces'>,
+  game: Pick<MistGame, 'pieces' | 'turn' | 'history'>,
   side: ChineseSide,
 ): MistLegalMove[] {
   return game.pieces
-    .filter(piece => piece.side === side)
+    .filter(piece => piece.side === side && !mistMoveForbidden(game, piece))
     .flatMap(piece => chineseMovesIgnoringCheck(game.pieces, piece)
       .map(to => ({ pieceId: piece.id, to: { x: to.x, y: to.y } })));
 }
 
-export function mistVisibleCells(game: Pick<MistGame, 'pieces' | 'status'>, side: ChineseSide): ChinesePoint[] {
+export function mistVisibleCells(game: Pick<MistGame, 'pieces' | 'status' | 'turn' | 'history'>, side: ChineseSide): ChinesePoint[] {
   if (game.status === 'finished') return clonePoints(MIST_BOARD_CELLS);
   const visible = new Set<string>();
   for (const piece of game.pieces) {
     if (piece.side !== side) continue;
     visible.add(pointKey(piece));
-    for (const move of chineseMovesIgnoringCheck(game.pieces, piece)) visible.add(pointKey(move));
+    if (!mistMoveForbidden(game, piece)) {
+      for (const move of chineseMovesIgnoringCheck(game.pieces, piece)) visible.add(pointKey(move));
+    }
   }
   return Array.from(visible, key => {
     const [x, y] = key.split(',').map(Number);
@@ -183,11 +192,31 @@ export function projectMistGame(game: MistGame, side: ChineseSide): MistGameView
   };
 }
 
+export function spectatorMistGame(game: MistGame): MistGameView {
+  return {
+    schema: 1,
+    rulesVersion: MIST_CHESS_RULES_VERSION,
+    pieces: structuredClone(game.pieces),
+    turn: game.turn,
+    status: game.status,
+    winner: game.winner,
+    endReason: game.endReason,
+    lastMove: visibleRecord(game.lastMove),
+    history: structuredClone(game.history),
+    visibleCells: clonePoints(MIST_BOARD_CELLS),
+    legalMoves: [],
+    moveCount: game.history.length,
+    lostKinds: game.history.flatMap(record => record.captured ? [record.captured.kind] : []),
+    fullBoardVisible: true,
+  };
+}
+
 export function playMistMove(game: MistGame, pieceId: string, to: ChinesePoint):
   { ok: true; game: MistGame } | { ok: false } {
   if (game.status !== 'playing') return { ok: false };
   const piece = game.pieces.find(item => item.id === pieceId);
   if (!piece || piece.side !== game.turn) return { ok: false };
+  if (mistMoveForbidden(game, piece)) return { ok: false };
   if (!chineseMovesIgnoringCheck(game.pieces, piece).some(move => move.x === to.x && move.y === to.y))
     return { ok: false };
 

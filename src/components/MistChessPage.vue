@@ -76,13 +76,14 @@ const inviteVisible = ref(false), inviteText = ref('');
 const resignDialog = ref<HTMLDialogElement | null>(null), leaveDialog = ref<HTMLDialogElement | null>(null);
 const seatDialog = ref<HTMLDialogElement | null>(null);
 const menuOpen = ref(false);
+const watching = ref(false);
 const gameAudio = new GameAudio();
 const moveSoundTracker = new MistMoveSoundTracker();
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
 const roomState = computed(() => state.value ?? inspected.value);
-const showTableView = computed(() => !session.value);
+const showTableView = computed(() => !session.value && !watching.value);
 const game = computed(() => roomState.value?.game ?? EMPTY_GAME);
 const myPlayer = computed(() => state.value?.players.find(player => player.id === state.value?.selfId) ?? null);
 const mySide = computed(() => myPlayer.value?.side ?? null);
@@ -216,7 +217,9 @@ async function recover() {
     } else error.value = ack.error;
     return;
   }
-  const ack = await emitAck<MistState>('mist:inspect', {});
+  const ack = watching.value
+    ? await emitAck<MistState>('mist:watch', {})
+    : await emitAck<MistState>('mist:inspect', {});
   if (attempt !== resumeAttempt) return;
   if (ack.ok) inspected.value = ack.data;
   else error.value = ack.error;
@@ -259,6 +262,23 @@ function openSeat(side: ChineseSide) {
   guestName.value = '';
   error.value = '';
   seatDialog.value?.showModal();
+}
+
+async function openSpectator() {
+  if (session.value || watching.value) return;
+  if (!await ensureConnected()) {
+    error.value = '暂时无法连接服务器，请稍后重试。';
+    return;
+  }
+  const ack = await emitAck<MistState>('mist:watch', {});
+  if (!ack.ok) {
+    error.value = ack.error;
+    return;
+  }
+  watching.value = true;
+  inspected.value = ack.data;
+  selectedId.value = null;
+  error.value = '';
 }
 
 function confirmGuestSeat() {
@@ -407,9 +427,22 @@ async function leaveRoom(): Promise<void> {
   }
 }
 
+async function returnToTable(): Promise<void> {
+  if (watching.value) await emitAck('mist:unwatch', {});
+  watching.value = false;
+  selectedId.value = null;
+  menuOpen.value = false;
+  const ack = await emitAck<MistState>('mist:inspect', {});
+  if (ack.ok) inspected.value = ack.data;
+}
+
 async function leaveForNavigation(): Promise<void> {
   const saved = session.value;
-  if (!saved) return;
+  if (!saved) {
+    if (watching.value) await emitAck('mist:unwatch', {});
+    watching.value = false;
+    return;
+  }
   if (connection.value === 'online') await emitAck('mist:leave', { reconnectToken: saved.reconnectToken }, 3500);
   clearSession();
 }
@@ -489,7 +522,7 @@ defineExpose({ leaveForNavigation, openSeat });
 
     <OtherGameTable v-if="showTableView" title="迷雾象棋" eyebrow="FOG CHINESE CHESS"
       :phase="roomState?.phase ?? 'lobby'" :players="roomState?.players ?? []" :busy="busy || !roomState"
-      :watch-enabled="false" @seat="openSeat" />
+      @seat="openSeat" @watch="openSpectator" />
 
     <template v-else>
       <article class="mist-table-seat opponent-seat" :class="[topSide, { ready: sidePlayer(topSide)?.ready, active: roomState?.phase === 'playing' && game.turn === topSide }]">
@@ -507,6 +540,7 @@ defineExpose({ leaveForNavigation, openSeat });
       <section class="mist-game-layout">
         <div class="mist-board-column">
           <div class="game-board-menu-row">
+            <button v-if="!session" class="tool-button board-back-to-table" type="button" @click="returnToTable">← 返回棋桌</button>
             <div v-if="session" class="game-action-menu">
               <button class="game-action-menu-toggle" type="button" :aria-expanded="menuOpen" aria-label="打开对局菜单" @click="menuOpen = !menuOpen">‹</button>
               <div v-if="menuOpen" class="game-action-menu-list">
@@ -519,7 +553,9 @@ defineExpose({ leaveForNavigation, openSeat });
           </div>
           <div class="mist-board-heading">
             <h2>{{ boardTitle }}</h2>
-            <span>{{ roomState?.phase === 'lobby' ? '等待开局' : `第 ${game.moveCount} 手` }}</span>
+            <span>{{ roomState?.phase === 'lobby' ? '等待开局'
+              : game.moveCount === 0 && game.turn === 'red' ? '首手：红方禁炮'
+              : `第 ${game.moveCount} 手` }}</span>
           </div>
           <div class="board-frame mist-board-frame" :class="{ 'full-board': game.fullBoardVisible }">
             <svg class="board-svg mist-board-svg" :class="{ playable: roomState?.phase === 'playing' && isMyTurn }"
@@ -625,7 +661,7 @@ defineExpose({ leaveForNavigation, openSeat });
           <div v-else class="empty-history"><span aria-hidden="true">雾</span><p>{{ roomState?.phase === 'lobby' ? '开局后显示可见行动。' : '暂无可见行动记录。' }}</p></div>
           <details class="mist-live-rules">
             <summary>玩法说明</summary>
-            <p>只能看见己方棋子及全部可走、可吃落点，路径和炮架不会自动点亮。允许送将和将帅照面，吃掉将帅立即获胜；终局后才公开完整棋盘与棋谱。</p>
+            <p>红方全局第一手不能动炮，其余棋子不限；第二手起炮恢复正常。只能看见己方棋子及全部可走、可吃落点，路径和炮架不会自动点亮。允许送将和将帅照面，吃掉将帅立即获胜；终局后才公开完整棋盘与棋谱。</p>
           </details>
         </aside>
       </section>

@@ -13,7 +13,7 @@ import {
 import { MUSIC_PLAYLISTS, MUSIC_TRACKS, availablePlaylists, resolveMusicSelection, tracksInPlaylist } from '../src/music-catalog.ts';
 import { newGame, playMove } from '../src/game.ts';
 import { createBeastGame, newBeastGame, playBeastMove } from '../src/beast-chess.ts';
-import { newMistGame, playMistMove, projectMistGame } from '../src/mist-chess.ts';
+import { newMistGame, playMistMove, projectMistGame, spectatorMistGame } from '../src/mist-chess.ts';
 
 test('sound settings default to effects on, persist independent levels and reject malformed values', () => {
   GlobalRegistrator.register({ url: 'http://localhost:5173' });
@@ -103,11 +103,14 @@ test('mist chess sound tracker uses projected move count without exposing hidden
   const tracker = new MistMoveSoundTracker();
   const initial = newMistGame();
   assert.equal(tracker.observe(projectMistGame(initial, 'red'), 'red', 'mist:1:red', true), null);
+  const spectatorTracker = new MistMoveSoundTracker();
+  assert.equal(spectatorTracker.observe(spectatorMistGame(initial), null, 'mist:1:spectator', true), null);
 
   const redMove = playMistMove(initial, 'red-pawn-4-6', { x: 4, y: 5 });
   assert.equal(redMove.ok, true);
   if (!redMove.ok) return;
   assert.equal(tracker.observe(projectMistGame(redMove.game, 'red'), 'red', 'mist:1:red', true), 'move');
+  assert.equal(spectatorTracker.observe(spectatorMistGame(redMove.game), null, 'mist:1:spectator', true), 'move');
   assert.equal(tracker.observe(projectMistGame(redMove.game, 'red'), 'red', 'mist:1:red', true), null);
 
   const blackMove = playMistMove(redMove.game, 'black-pawn-4-3', { x: 4, y: 4 });

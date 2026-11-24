@@ -44,8 +44,10 @@ test('two mist chess clients receive only their own projected board and hidden o
   const [redSocket, blackSocket, visitor] = await Promise.all([client(), client(), client()]);
   const redStates: MistState[] = [];
   const blackStates: MistState[] = [];
+  const visitorStates: MistState[] = [];
   redSocket.on('mist:state', state => redStates.push(state));
   blackSocket.on('mist:state', state => blackStates.push(state));
+  visitor.on('mist:state', state => visitorStates.push(state));
 
   const visitorState = success(await emit<MistState>(visitor, 'mist:inspect', {}));
   assert.equal(visitorState.game, null);
@@ -57,6 +59,9 @@ test('two mist chess clients receive only their own projected board and hidden o
   const started = success(await emit<{ state: MistState }>(blackSocket, 'mist:ready', {
     reconnectToken: black.reconnectToken, ready: true,
   })).state;
+  const watched = success(await emit<MistState>(visitor, 'mist:watch', {}));
+  assert.equal(watched.game?.pieces.length, 32);
+  assert.equal(watched.game?.fullBoardVisible, true);
 
   success(await emit(redSocket, 'mist:move', {
     reconnectToken: red.reconnectToken,
@@ -76,6 +81,10 @@ test('two mist chess clients receive only their own projected board and hidden o
   assert.equal(latestBlack?.game?.lastMove, null);
   assert.equal(latestBlack?.game?.pieces.some(piece => piece.id === 'red-king-4-9'), false);
   assert.equal(JSON.stringify(latestBlack).includes('red-pawn-0-6'), false);
+  assert.equal(visitorStates.at(-1)?.game?.history.length, 1);
+  assert.equal(visitorStates.at(-1)?.game?.lastMove?.from.x, 0);
+  assert.equal(visitorStates.at(-1)?.game?.pieces.length, 32);
+  assert.equal(visitorStates.at(-1)?.game?.visibleCells.length, 90);
 
   redSocket.disconnect();
   await new Promise(resolve => setTimeout(resolve, 30));

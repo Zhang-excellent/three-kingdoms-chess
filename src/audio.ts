@@ -94,8 +94,8 @@ export class MistMoveSoundTracker {
     this.moveCount = game.moveCount;
     this.ownPieceCount = ownPieceCount;
     this.live = live;
-    if (!side || !sameScope || !previousLive || !live || game.moveCount !== previousMoveCount + 1) return null;
-    if (ownPieceCount < previousOwnPieceCount || !!game.lastMove?.captured) return 'capture';
+    if (!sameScope || !previousLive || !live || game.moveCount !== previousMoveCount + 1) return null;
+    if ((side && ownPieceCount < previousOwnPieceCount) || !!game.lastMove?.captured) return 'capture';
     return 'move';
   }
   suspend(): void {

@@ -653,6 +653,19 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
         done(mist.inspect(socket.id));
       } catch { mistInternalError(done); }
     });
+    socket.on('mist:watch', (_payload: unknown, done: (ack: MistAck<MistState>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        done(mist.watch(socket.id));
+      } catch { mistInternalError(done); }
+    });
+    socket.on('mist:unwatch', (_payload: unknown, done: (ack: MistAck) => void) => {
+      if (typeof done !== 'function') return;
+      mist.unwatch(socket.id);
+      done({ ok: true, data: undefined });
+      for (const item of mist.views()) io.to(item.socketId).emit('mist:state', item.state);
+    });
     socket.on('mist:join', (payload: { nickname?: unknown; side?: unknown }, done: (ack: MistAck<MistReceipt>) => void) => {
       if (typeof done !== 'function') return;
       try {

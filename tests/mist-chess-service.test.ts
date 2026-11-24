@@ -10,13 +10,19 @@ function joined() {
   return { service, red: red.ack.data, black: black.ack.data };
 }
 
-test('mist chess room seats two sides and exposes no board to an unseated visitor', () => {
+test('mist chess room exposes no board before a visitor chooses watch, then returns the full unfogged board', () => {
   const { service, red, black } = joined();
   try {
     const inspected = service.inspect('visitor');
     if (!inspected.ok) assert.fail('inspect failed');
     assert.equal(inspected.data.players.length, 2);
     assert.equal(inspected.data.game, null);
+    const watched = service.watch('visitor');
+    assert.equal(watched.ok, true);
+    if (!watched.ok) return;
+    assert.equal(watched.data.game?.pieces.length, 32);
+    assert.equal(watched.data.game?.fullBoardVisible, true);
+    assert.equal(watched.data.selfId, null);
     assert.equal(red.state.game?.pieces.some(piece => piece.id === 'black-king-4-0'), false);
     assert.equal(black.state.game?.pieces.some(piece => piece.id === 'red-king-4-9'), false);
   } finally { service.dispose(); }
@@ -49,6 +55,14 @@ test('both ready starts a server-authoritative game with separate views and hidd
     assert.equal(blackState?.game?.moveCount, 1);
     assert.equal(blackState?.game?.pieces.some(piece => piece.id === 'red-king-4-9'), false);
     assert.equal(JSON.stringify(blackState).includes('red-pawn-0-6'), false);
+
+    const watched = service.watch('observer');
+    assert.equal(watched.ok, true);
+    if (!watched.ok) return;
+    assert.equal(watched.data.game?.pieces.length, 32);
+    assert.equal(watched.data.game?.history.length, 1);
+    assert.equal(watched.data.game?.lastMove?.from.x, 0);
+    assert.equal(watched.data.game?.visibleCells.length, 90);
   } finally { service.dispose(); }
 });
 
