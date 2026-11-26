@@ -11,4 +11,5 @@ coverage/
 preview/
 tests/.compiled-app.mts
 *.log
+*.apk
 .DS_Store

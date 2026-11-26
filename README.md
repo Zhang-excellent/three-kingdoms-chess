@@ -64,7 +64,12 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat --no-daemon assembleDebug
 ```
 
-调试 APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。也可直接运行 `npm run android:apk:debug` 完成网页构建、Capacitor 同步、自动选择 JDK 17～24 和调试 APK 编译。发布签名 APK 需先按自己的 Android 签名配置生成 Keystore，再执行 `.\gradlew.bat assembleRelease`；项目不会提交私钥或签名密码。
+分享用调试 APK 可运行 `npm run android:apk` 生成。命令会完成网页构建、Capacitor 同步、自动选择 JDK 17～24 和 Android 编译，并自动写出两个便于查找的同名文件：
+
+- 项目根目录：`three-chess.apk`
+- `android/app/build/outputs/apk/three-chess.apk`
+
+Gradle 内部的 `android/app/build/outputs/apk/debug/app-debug.apk` 仍会作为中间产物存在，但不需要进入 `debug` 目录查找或重命名。发布签名 APK 需先按自己的 Android 签名配置生成 Keystore，再执行 `.\gradlew.bat assembleRelease`；项目不会提交私钥或签名密码。
 
 ## 已实现
 

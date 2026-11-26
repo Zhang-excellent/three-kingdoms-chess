@@ -22,6 +22,7 @@
     "test": "node scripts/test.mjs",
     "build": "node scripts/build.mjs",
     "android:sync": "npm run build && cap sync android",
+    "android:apk": "npm run android:apk:debug",
     "android:apk:debug": "npm run android:sync && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-debug.ps1"
   },
   "dependencies": {

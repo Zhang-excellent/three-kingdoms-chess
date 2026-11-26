@@ -43,3 +43,26 @@ try {
 } finally {
     Pop-Location
 }
+
+$builtApk = Join-Path $root 'android\app\build\outputs\apk\debug\app-debug.apk'
+if (-not (Test-Path -LiteralPath $builtApk)) {
+    throw "Android build finished but expected APK was not found: $builtApk"
+}
+
+$rootApk = Join-Path $root 'three-chess.apk'
+$apkOutputDirectory = Join-Path $root 'android\app\build\outputs\apk'
+$buildApk = Join-Path $apkOutputDirectory 'three-chess.apk'
+Copy-Item -LiteralPath $builtApk -Destination $rootApk -Force
+Copy-Item -LiteralPath $builtApk -Destination $buildApk -Force
+
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$stream = [System.IO.File]::OpenRead($rootApk)
+try {
+    $hash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+} finally {
+    $stream.Dispose()
+    $sha256.Dispose()
+}
+Write-Host "APK_FOR_SHARING=$rootApk"
+Write-Host "APK_BUILD_COPY=$buildApk"
+Write-Host "APK_SHA256=$hash"
