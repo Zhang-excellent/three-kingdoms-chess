@@ -231,7 +231,7 @@ test('Chinese chess engine seat claims atomically and can switch back before pla
     assert.equal(competing.ok, false);
     if (competing.ack.ok) return;
     assert.equal(competing.ack.code, 'SIDE_TAKEN');
-    assert.match(competing.ack.error, /皮卡鱼/);
+    assert.match(competing.ack.error, /神秘老人/);
 
     const removed = service.removeEngine(human.ack.data.reconnectToken, 'human-red');
     assert.equal(removed.ok, true);
@@ -333,7 +333,7 @@ test('Pikafish failures keep the board, support retry, and stale results are dis
     service.setReady(human.ack.data.reconnectToken, true, 'human-black');
     await waitUntil(() => {
       const state = service.inspect();
-      return state.ok && state.data.engineError === '皮卡鱼暂不可用' && !state.data.engineThinking;
+      return state.ok && state.data.engineError === '神秘老人暂不可用' && !state.data.engineThinking;
     }, 'engine failure did not surface');
     const failed = service.inspect();
     if (!failed.ok) return;
@@ -342,7 +342,7 @@ test('Pikafish failures keep the board, support retry, and stale results are dis
     assert.equal(retry.ok, true);
     await waitUntil(() => {
       const state = service.inspect();
-      return state.ok && state.data.engineError === '皮卡鱼暂不可用' && !state.data.engineThinking;
+      return state.ok && state.data.engineError === '神秘老人暂不可用' && !state.data.engineThinking;
     }, 'illegal engine move did not surface');
     const illegal = service.inspect();
     if (!illegal.ok) return;
@@ -366,7 +366,7 @@ test('Pikafish queue saturation is shown as a busy message', async () => {
     service.setReady(human.ack.data.reconnectToken, true, 'human-black');
     await waitUntil(() => {
       const state = service.inspect();
-      return state.ok && state.data.engineError === '皮卡鱼繁忙' && !state.data.engineThinking;
+      return state.ok && state.data.engineError === '神秘老人繁忙' && !state.data.engineThinking;
     }, 'busy engine state did not surface');
     const state = service.inspect();
     if (!state.ok) return;
@@ -383,7 +383,7 @@ test('engine requests fail when Pikafish is not configured', () => {
     assert.equal(selected.ok, false);
     if (selected.ack.ok) return;
     assert.equal(selected.ack.code, 'ENGINE_UNAVAILABLE');
-    assert.equal(selected.ack.error, '皮卡鱼暂不可用。');
+    assert.equal(selected.ack.error, '神秘老人暂不可用。');
   } finally { service.dispose(); }
 });
 

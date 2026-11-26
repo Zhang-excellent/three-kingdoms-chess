@@ -109,7 +109,7 @@ export class ChineseChessService {
     if (this.players.length >= 2) return this.fail('ROOM_FULL', '两个席位都已坐满。');
     if (!isChineseSide(sideValue)) return this.fail('INVALID_SIDE', '请选择红方或黑方。');
     if (this.engineSide === sideValue)
-      return this.fail('SIDE_TAKEN', '这个席位已经由皮卡鱼占用。');
+      return this.fail('SIDE_TAKEN', '这个席位已经由神秘老人占用。');
     if (this.players.some(player => player.side === sideValue))
       return this.fail('SIDE_TAKEN', `${sideValue === 'red' ? '红方' : '黑方'}席位已经被占用。`);
     const accountId = this.socketAccounts.get(socketId) ?? null;
@@ -170,7 +170,7 @@ export class ChineseChessService {
     if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '开局后不能更换阵营。', found.player);
     if (!isChineseSide(sideValue)) return this.fail('INVALID_SIDE', '请选择红方或黑方。', found.player);
     if (this.engineSide === sideValue)
-      return this.fail('SIDE_TAKEN', '这个阵营已经由皮卡鱼占用。', found.player);
+      return this.fail('SIDE_TAKEN', '这个阵营已经由神秘老人占用。', found.player);
     if (this.players.some(player => player !== found.player && player.side === sideValue))
       return this.fail('SIDE_TAKEN', '这个阵营已经有玩家。', found.player);
     found.player.side = sideValue;
@@ -186,13 +186,13 @@ export class ChineseChessService {
     if (!isChineseSide(sideValue)) return this.fail('INVALID_SIDE', '请选择要切换的席位。', found.player);
     if (sideValue === found.player.side) return this.fail('INVALID_SIDE', '软件对手不能放在自己的席位。', found.player);
     if (!this.engine?.configured)
-      return this.fail('ENGINE_UNAVAILABLE', '皮卡鱼暂不可用。', found.player);
+      return this.fail('ENGINE_UNAVAILABLE', '神秘老人暂不可用。', found.player);
     if (this.players.length >= 2)
       return this.fail('ROOM_FULL', '对手席位已经有真人玩家。', found.player);
     if (this.players.some(player => player.side === sideValue))
       return this.fail('SIDE_TAKEN', '这个席位已经有真人玩家。', found.player);
     if (this.engineSide && this.engineSide !== sideValue)
-      return this.fail('ENGINE_SEATED', '皮卡鱼已经在另一个席位。', found.player);
+      return this.fail('ENGINE_SEATED', '神秘老人已经在另一个席位。', found.player);
     this.engineSide = sideValue;
     this.engineThinking = false;
     this.engineError = null;
@@ -218,8 +218,8 @@ export class ChineseChessService {
     const found = this.findActivePlayer(tokenValue, socketId);
     if (!found.ok) return found;
     if (this.phase !== 'playing' || !this.game || !this.engineSide || this.game.turn !== this.engineSide)
-      return this.fail('ENGINE_NOT_THINKING', '现在不需要皮卡鱼计算。', found.player);
-    if (this.engineThinking) return this.fail('ENGINE_BUSY', '皮卡鱼正在思考。', found.player);
+      return this.fail('ENGINE_NOT_THINKING', '现在不需要神秘老人计算。', found.player);
+    if (this.engineThinking) return this.fail('ENGINE_BUSY', '神秘老人正在思考。', found.player);
     this.engineError = null;
     this.beginEngineTurn();
     return this.stateResult(found.player);
@@ -469,7 +469,7 @@ export class ChineseChessService {
     if (generation !== this.engineGeneration) return;
     const code = error instanceof PikafishError ? error.code : 'PROTOCOL';
     this.engineThinking = false;
-    this.engineError = code === 'BUSY' ? '皮卡鱼繁忙' : '皮卡鱼暂不可用';
+    this.engineError = code === 'BUSY' ? '神秘老人繁忙' : '神秘老人暂不可用';
     this.version++;
     console.error(`[Chinese engine] ${code}: ${error instanceof Error ? error.message : String(error)}`);
     this.onChanged(this);

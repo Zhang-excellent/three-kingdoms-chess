@@ -210,8 +210,8 @@ async function fillGuestSeat(devtools, page, nickname) {
 async function selectPikafish(devtools, page) {
   await clickSelector(devtools, page, '.opponent-seat', '空对手席');
   await waitFor(devtools, page, `document.querySelector('.engine-seat-dialog')?.open === true`, '切换软件弹窗');
-  await clickSelector(devtools, page, '.engine-seat-dialog .engine-choice', '皮卡鱼');
-  await waitFor(devtools, page, `document.querySelector('.opponent-seat')?.textContent.includes('皮卡鱼 · 软件对手')`, '皮卡鱼入座');
+  await clickSelector(devtools, page, '.engine-seat-dialog .engine-choice', '神秘老人');
+  await waitFor(devtools, page, `document.querySelector('.opponent-seat')?.textContent.includes('神秘老人 · 软件对手')`, '神秘老人入座');
 }
 
 async function capture(devtools, page, fileName, fullPage = false) {
@@ -248,26 +248,26 @@ async function main() {
   const screens = {};
   const metrics = {};
   try {
-    stage('真人执红，皮卡鱼执黑');
+    stage('真人执红，神秘老人执黑');
     const red = await createPage(devtools, { width: 1440, height: 1000 });
     await waitFor(devtools, red, `document.querySelector('.chinese-page[data-connection="online"]') !== null`, '桌面中国象棋连接');
     await clickSelector(devtools, red, '.game-table-seat.red', '红方空席');
-    await fillGuestSeat(devtools, red, '皮卡鱼验收红');
+    await fillGuestSeat(devtools, red, '神秘老人验收红');
     await clickSelector(devtools, red, '.opponent-seat', '空对手席');
     await waitFor(devtools, red, `document.querySelector('.engine-seat-dialog')?.open === true`, '切换软件弹窗');
-    screens.chooser = await capture(devtools, red, '皮卡鱼-桌面-选择软件.png');
-    await clickSelector(devtools, red, '.engine-seat-dialog .engine-choice', '皮卡鱼');
-    await waitFor(devtools, red, `document.querySelector('.opponent-seat')?.textContent.includes('皮卡鱼 · 软件对手')`, '皮卡鱼入座');
+    screens.chooser = await capture(devtools, red, '神秘老人-桌面-选择软件.png');
+    await clickSelector(devtools, red, '.engine-seat-dialog .engine-choice', '神秘老人');
+    await waitFor(devtools, red, `document.querySelector('.opponent-seat')?.textContent.includes('神秘老人 · 软件对手')`, '神秘老人入座');
     await clickButton(devtools, red, '开始');
     await waitFor(devtools, red, `!document.querySelector('.game-board-waiting-card')
-      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 皮卡鱼验收红 行棋')`, '真人红方开局');
+      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 神秘老人验收红 行棋')`, '真人红方开局');
     await clickSelector(devtools, red, '.chinese-piece[aria-label="红方兵，1 路第 7 线"]', '红方一路兵');
     await waitFor(devtools, red, `document.querySelector('.chinese-target[aria-label="走到第1路第6线"]') !== null`, '红方兵合法落点');
     await clickSelector(devtools, red, '.chinese-target[aria-label="走到第1路第6线"]', '红方一路兵落点');
     await waitFor(devtools, red, `document.querySelectorAll('.move-list li').length === 2
-      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 皮卡鱼验收红 行棋')
-      && !document.querySelector('.engine-error-bar')`, '皮卡鱼黑方回应');
-    screens.desktop = await capture(devtools, red, '皮卡鱼-桌面-真人红方对局.png', true);
+      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 神秘老人验收红 行棋')
+      && !document.querySelector('.engine-error-bar')`, '神秘老人黑方回应');
+    screens.desktop = await capture(devtools, red, '神秘老人-桌面-真人红方对局.png', true);
     metrics.redTurn = await evaluate(devtools, red, `(() => ({
       moves: document.querySelectorAll('.move-list li').length,
       lastActor: document.querySelector('.move-list li strong')?.textContent.trim(),
@@ -276,20 +276,20 @@ async function main() {
     }))()`);
     await leaveByNavigation(devtools, red);
 
-    stage('真人执黑，皮卡鱼执红自动首步');
+    stage('真人执黑，神秘老人执红自动首步');
     const black = await createPage(devtools, { width: 1440, height: 1000 });
     await waitFor(devtools, black, `document.querySelector('.chinese-page[data-connection="online"]') !== null`, '黑方页面连接');
     await clickSelector(devtools, black, '.game-table-seat.black', '黑方空席');
-    await fillGuestSeat(devtools, black, '皮卡鱼验收黑');
+    await fillGuestSeat(devtools, black, '神秘老人验收黑');
     await selectPikafish(devtools, black);
     await clickButton(devtools, black, '开始');
     await waitFor(devtools, black, `document.querySelectorAll('.move-list li').length === 1
-      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 皮卡鱼验收黑 行棋')`, '皮卡鱼红方自动首步');
+      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 神秘老人验收黑 行棋')`, '神秘老人红方自动首步');
     await clickSelector(devtools, black, '.chinese-piece[aria-label="黑方卒，1 路第 4 线"]', '黑方一路卒');
     await waitFor(devtools, black, `document.querySelector('.chinese-target[aria-label="走到第1路第5线"]') !== null`, '黑方卒合法落点');
     await clickSelector(devtools, black, '.chinese-target[aria-label="走到第1路第5线"]', '黑方一路卒落点');
     await waitFor(devtools, black, `document.querySelectorAll('.move-list li').length === 3
-      && !document.querySelector('.engine-error-bar')`, '皮卡鱼红方再次回应');
+      && !document.querySelector('.engine-error-bar')`, '神秘老人红方再次回应');
     await clickSelector(devtools, black, '.game-action-menu-toggle', '对局菜单');
     const drawDisabled = await evaluate(devtools, black, `(() => {
       const button = [...document.querySelectorAll('.game-action-menu-list button')]
@@ -302,11 +302,11 @@ async function main() {
     await waitFor(devtools, black, `document.querySelector('.result-banner') !== null`, '认输终局');
     await clickButton(devtools, black, '再来一局');
     await waitFor(devtools, black, `document.querySelector('.game-board-waiting-card') !== null
-      && document.querySelector('.opponent-seat')?.textContent.includes('皮卡鱼 · 软件对手')`, '再来一局保留皮卡鱼');
+      && document.querySelector('.opponent-seat')?.textContent.includes('神秘老人 · 软件对手')`, '再来一局保留神秘老人');
     await clickButton(devtools, black, '开始');
     await waitFor(devtools, black, `document.querySelectorAll('.move-list li').length === 1
-      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 皮卡鱼验收黑 行棋')`, '第二局皮卡鱼自动首步');
-    screens.rematch = await capture(devtools, black, '皮卡鱼-桌面-再来一局.png', true);
+      && document.querySelector('.chinese-board-heading h2')?.textContent.includes('轮到 神秘老人验收黑 行棋')`, '第二局神秘老人自动首步');
+    screens.rematch = await capture(devtools, black, '神秘老人-桌面-再来一局.png', true);
     metrics.rematch = await evaluate(devtools, black, `(() => ({
       moves: document.querySelectorAll('.move-list li').length,
       engineSeat: document.querySelector('.opponent-seat .chinese-seat-copy strong')?.textContent.trim(),
@@ -318,12 +318,12 @@ async function main() {
     const mobile = await createPage(devtools, { width: 390, height: 844, mobile: true });
     await waitFor(devtools, mobile, `document.querySelector('.chinese-page[data-connection="online"]') !== null`, '手机页面连接');
     await clickSelector(devtools, mobile, '.game-table-seat.black', '手机黑方空席');
-    await fillGuestSeat(devtools, mobile, '皮卡鱼手机验收');
+    await fillGuestSeat(devtools, mobile, '神秘老人手机验收');
     await clickSelector(devtools, mobile, '.opponent-seat', '手机对手空席');
     await waitFor(devtools, mobile, `document.querySelector('.engine-seat-dialog')?.open === true`, '手机切换软件弹窗');
-    await clickSelector(devtools, mobile, '.engine-choice', '手机选择皮卡鱼');
-    await waitFor(devtools, mobile, `document.querySelector('.opponent-seat')?.textContent.includes('皮卡鱼 · 软件对手')`, '手机皮卡鱼入座');
-    screens.mobile = await capture(devtools, mobile, '皮卡鱼-手机-软件席位.png', true);
+    await clickSelector(devtools, mobile, '.engine-choice', '手机选择神秘老人');
+    await waitFor(devtools, mobile, `document.querySelector('.opponent-seat')?.textContent.includes('神秘老人 · 软件对手')`, '手机神秘老人入座');
+    screens.mobile = await capture(devtools, mobile, '神秘老人-手机-软件席位.png', true);
     metrics.mobile = await evaluate(devtools, mobile, `(() => {
       const board = document.querySelector('.chinese-board-frame').getBoundingClientRect();
       const seat = document.querySelector('.opponent-seat').getBoundingClientRect();
@@ -335,7 +335,7 @@ async function main() {
         seatText: document.querySelector('.opponent-seat').textContent.trim(),
       };
     })()`);
-    await clickSelector(devtools, mobile, '.opponent-seat', '手机皮卡鱼席位');
+    await clickSelector(devtools, mobile, '.opponent-seat', '手机神秘老人席位');
     await clickButton(devtools, mobile, '切回等待棋友');
     await waitFor(devtools, mobile, `document.querySelector('.opponent-seat')?.textContent.includes('等待棋友')`, '手机切回真人');
     metrics.mobile.switchedBack = true;
@@ -365,9 +365,9 @@ async function main() {
       if (value?.scrollWidth > value?.innerWidth) throw new Error(`${label} 出现横向溢出。`);
     }
     if (metrics.mobile.seatWidth > metrics.mobile.innerWidth) throw new Error('手机对手席位超出视口。');
-    if (metrics.redTurn.lastActor !== '黑方') throw new Error('皮卡鱼黑方回应未进入行棋记录。');
-    if (metrics.rematch.engineSeat !== '皮卡鱼 · 软件对手' || metrics.rematch.moves !== 1) {
-      throw new Error('再来一局没有保留皮卡鱼或自动首步。');
+    if (metrics.redTurn.lastActor !== '黑方') throw new Error('神秘老人黑方回应未进入行棋记录。');
+    if (metrics.rematch.engineSeat !== '神秘老人 · 软件对手' || metrics.rematch.moves !== 1) {
+      throw new Error('再来一局没有保留神秘老人或自动首步。');
     }
     if (!metrics.rematch.drawDisabled) throw new Error('人机对局仍允许提和。');
     if (!metrics.regression.entries.some(entry => entry.includes('中国象棋')))

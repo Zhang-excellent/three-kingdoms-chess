@@ -69,6 +69,7 @@ export class PikafishEngineClient implements ChineseEngineClient {
   private buffer = '';
   private waiters: Waiter[] = [];
   private options = new Set<string>();
+  private stdoutTail = '';
   private stderrTail = '';
   private queueSize = 0;
   private tail: Promise<unknown> = Promise.resolve();
@@ -155,10 +156,15 @@ export class PikafishEngineClient implements ChineseEngineClient {
     this.child = child;
     this.buffer = '';
     this.options.clear();
+    this.stdoutTail = '';
     this.stderrTail = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', chunk => this.consume(String(chunk)));
+    child.stdout.on('data', chunk => {
+      const text = String(chunk);
+      this.stdoutTail = (this.stdoutTail + text).slice(-4_000);
+      this.consume(text);
+    });
     child.stderr.on('data', chunk => {
       this.stderrTail = (this.stderrTail + String(chunk)).slice(-4_000);
       if (this.stderrTail.includes('ERROR')) console.error(`[Pikafish] ${this.stderrTail.trim()}`);
@@ -167,7 +173,7 @@ export class PikafishEngineClient implements ChineseEngineClient {
       if (this.child !== child) return;
       this.stderrTail = (this.stderrTail + `\nstdin: ${error.message}`).slice(-4_000);
       const failure = new PikafishError('UNAVAILABLE',
-        `Pikafish process stdin failed: ${error.message}.${this.stderrSuffix()}`);
+        `Pikafish process stdin failed: ${error.message}.${this.outputSuffix()}`);
       setTimeout(() => {
         if (this.child === child) this.resetProcess(failure);
       }, 100).unref?.();
@@ -176,7 +182,7 @@ export class PikafishEngineClient implements ChineseEngineClient {
       if (this.child === child) {
         this.child = null;
         const failure = new PikafishError('UNAVAILABLE',
-          `Pikafish process error: ${error.message}.${this.stderrSuffix()}`);
+          `Pikafish process error: ${error.message}.${this.outputSuffix()}`);
         console.error(`[Pikafish] ${failure.message}`);
         this.rejectAll(failure);
       }
@@ -186,7 +192,7 @@ export class PikafishEngineClient implements ChineseEngineClient {
         this.child = null;
         const reason = `code=${code ?? 'none'}, signal=${signal ?? 'none'}`;
         const failure = new PikafishError('UNAVAILABLE',
-          `Pikafish process exited unexpectedly (${reason}).${this.stderrSuffix()}`);
+          `Pikafish process exited unexpectedly (${reason}).${this.outputSuffix()}`);
         console.error(`[Pikafish] ${failure.message}`);
         this.rejectAll(failure);
       }
@@ -255,13 +261,17 @@ export class PikafishEngineClient implements ChineseEngineClient {
     const child = this.child;
     if (!child || child.stdin.destroyed || !child.stdin.writable)
       throw new PikafishError('UNAVAILABLE',
-        `Pikafish process stdin is not available.${this.stderrSuffix()}`);
+        `Pikafish process stdin is not available.${this.outputSuffix()}`);
     child.stdin.write(`${line}\n`);
   }
 
-  private stderrSuffix(): string {
-    const detail = this.stderrTail.trim();
-    return detail ? ` stderr: ${detail}` : '';
+  private outputSuffix(): string {
+    const details = [];
+    const stderr = this.stderrTail.trim();
+    const stdout = this.stdoutTail.trim();
+    if (stderr) details.push(`stderr: ${stderr}`);
+    if (stdout) details.push(`stdout: ${stdout}`);
+    return details.length ? ` ${details.join(' | ')}` : '';
   }
 
   private rejectAll(error: Error): void {

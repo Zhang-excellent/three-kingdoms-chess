@@ -28,6 +28,8 @@ import OtherGameTable from './OtherGameTable.vue';
 const props = defineProps<{ accountName: string | null; accountAvatar?: string | null }>();
 const emit = defineEmits<{ other: [] }>();
 const guestAvatar = 'images/guest-avatar.svg';
+const engineDisplayName = '神秘老人';
+const engineAvatar = 'images/mysterious-elder.png';
 
 interface SavedSession { reconnectToken: string; playerId: string }
 
@@ -81,9 +83,9 @@ const boardTitle = computed(() => {
     if (!mySide.value) return '本局结束';
     return game.value.winner === mySide.value ? '你获胜' : '你失败';
   }
-  if (room.engineThinking && room.engineSide === game.value.turn) return '皮卡鱼思考中…';
+  if (room.engineThinking && room.engineSide === game.value.turn) return `${engineDisplayName}思考中…`;
   const active = room.players.find(player => player.side === game.value.turn);
-  const name = active?.nickname || (room.engineSide === game.value.turn ? '皮卡鱼' : chineseSideName(game.value.turn));
+  const name = active?.nickname || (room.engineSide === game.value.turn ? engineDisplayName : chineseSideName(game.value.turn));
   return `轮到 ${name} 行棋`;
 });
 const resultText = computed(() => {
@@ -106,10 +108,10 @@ const topSide = computed<ChineseSide>(() => flipped.value ? 'red' : 'black');
 const bottomSide = computed<ChineseSide>(() => otherChineseSide(topSide.value));
 const sidePlayer = (side: ChineseSide) => roomState.value?.players.find(player => player.side === side) ?? null;
 const engineOn = (side: ChineseSide) => engineSide.value === side;
-const avatarFor = (side: ChineseSide) => engineOn(side) ? null
+const avatarFor = (side: ChineseSide) => engineOn(side) ? engineAvatar
   : backendAssetUrl(sidePlayer(side)?.avatar) || (sidePlayer(side) ? guestAvatar : null);
 const sideLabel = (side: ChineseSide) => chineseSideName(side);
-const seatName = (side: ChineseSide) => engineOn(side) ? '皮卡鱼 · 软件对手'
+const seatName = (side: ChineseSide) => engineOn(side) ? `${engineDisplayName} · 软件对手`
   : sidePlayer(side)?.nickname || '等待棋友';
 const seatSubtitle = (side: ChineseSide) => engineOn(side) ? `${sideLabel(side)}软件席位` : `${sideLabel(side)}席位`;
 const pieceLabel = (piece: ChinesePiece) =>
@@ -564,7 +566,7 @@ defineExpose({ leaveForNavigation, openSeat });
           <div v-if="session && roomState?.phase === 'lobby'" class="game-board-waiting-card">
             <span class="eyebrow">棋桌准备</span>
             <h3>{{ occupiedCount < 2 ? '等待棋友' : '双方已入座' }}</h3>
-            <p v-if="engineSide">{{ myPlayer?.ready ? '已准备，点击开始后由真人先手或等待皮卡鱼。' : '皮卡鱼已入座，点击开始即可对局。' }}</p>
+            <p v-if="engineSide">{{ myPlayer?.ready ? `已准备，点击开始后由真人先手或等待${engineDisplayName}。` : `${engineDisplayName}已入座，点击开始即可对局。` }}</p>
             <p v-else>{{ myPlayer?.ready ? '已准备，等待对手。' : '准备后即可等待开局。' }}</p>
             <div class="game-waiting-actions">
               <button class="primary-button" type="button" :disabled="busy || connection !== 'online'" @click="setReady(!myPlayer?.ready)">{{ myPlayer?.ready ? '取消开始' : '开始' }}</button>
@@ -574,7 +576,7 @@ defineExpose({ leaveForNavigation, openSeat });
         </div>
         <div v-if="engineError" class="engine-error-bar" role="status">
           <span>{{ engineError }}</span>
-          <button class="tool-button" type="button" :disabled="busy || connection !== 'online'" @click="retryEngine">重试皮卡鱼</button>
+          <button class="tool-button" type="button" :disabled="busy || connection !== 'online'" @click="retryEngine">重试{{ engineDisplayName }}</button>
         </div>
         <div v-if="drawOfferBy && roomState?.phase === 'playing'" class="draw-offer-bar">
           <span>{{ drawOfferBy === mySide ? '已提和，等待对手回应。' : `${sideLabel(drawOfferBy)}提出和棋。` }}</span>
@@ -605,7 +607,7 @@ defineExpose({ leaveForNavigation, openSeat });
         <div v-if="latest" class="last-move-card"><span class="eyebrow">上一步</span><h3 :class="latest.side">{{ chineseSideName(latest.side) }} · {{ chinesePieceName(latest) }}</h3><p>{{ coordinate(latest.from) }} → {{ coordinate(latest.to) }}</p><small>{{ latest.captured ? `吃掉${chineseSideName(latest.captured.side)}${chinesePieceName(latest.captured)}` : '已标记起点和落点' }}</small></div>
         <ol v-if="history.length" class="move-list"><li v-for="record in history" :key="record.number"><span class="record-number">{{ String(record.number).padStart(2, '0') }}</span><div><strong :class="record.side">{{ chineseSideName(record.side) }}</strong><p>{{ chinesePieceName(record) }} {{ coordinate(record.from) }} → {{ coordinate(record.to) }}</p><small v-if="record.captured">吃掉{{ chineseSideName(record.captured.side) }}{{ chinesePieceName(record.captured) }}</small></div></li></ol>
         <div v-else class="empty-history"><span aria-hidden="true">弈</span><p>{{ roomState?.phase === 'lobby' ? '开局后显示正式棋谱。' : '暂无行棋记录。' }}</p></div>
-        <details class="chinese-live-rules"><summary>玩法说明</summary><p>经典中国象棋规则；不能送将，将死或困毙判负。点击空对手席可切换皮卡鱼，开局后不可切换。</p></details>
+        <details class="chinese-live-rules"><summary>玩法说明</summary><p>经典中国象棋规则；不能送将，将死或困毙判负。点击空对手席可选择{{ engineDisplayName }}，开局后不可切换。</p></details>
       </aside>
     </section>
     </template>
@@ -623,13 +625,13 @@ defineExpose({ leaveForNavigation, openSeat });
         <button class="dialog-close" type="button" aria-label="关闭" @click="engineDialog?.close()">×</button>
       </div>
       <div v-if="engineDialogSide && engineOn(engineDialogSide)" class="engine-current">
-        <span class="engine-fish-mark" aria-hidden="true">鱼</span>
-        <div><strong>皮卡鱼</strong><small>{{ sideLabel(engineDialogSide) }} · 软件对手</small></div>
+        <span class="engine-fish-mark" aria-hidden="true"><img :src="engineAvatar" alt=""></span>
+        <div><strong>{{ engineDisplayName }}</strong><small>{{ sideLabel(engineDialogSide) }} · 软件对手</small></div>
       </div>
       <button v-else type="button" class="engine-choice" :disabled="busy || connection !== 'online' || !!(engineDialogSide && sidePlayer(engineDialogSide))"
         @click="selectEngineOpponent">
-        <span class="engine-fish-mark" aria-hidden="true">鱼</span>
-        <span><strong>皮卡鱼</strong><small>使用官方 UCI 引擎作为软件对手</small></span>
+        <span class="engine-fish-mark" aria-hidden="true"><img :src="engineAvatar" alt=""></span>
+        <span><strong>{{ engineDisplayName }}</strong><small>深不可测的软件棋手</small></span>
         <em>{{ engineDialogSide && sidePlayer(engineDialogSide) ? '席位已被真人占用' : '选择' }}</em>
       </button>
       <p v-if="error" class="connection-note error" role="alert">{{ error }}</p>
@@ -653,6 +655,6 @@ defineExpose({ leaveForNavigation, openSeat });
 @media(max-width:640px){.chinese-page{padding:14px 0 38px}.chinese-page-nav{margin-bottom:14px}.chinese-heading p{display:none}.chinese-heading h1{font-size:31px}.chinese-board-heading{gap:8px}.chinese-board-heading h2{font-size:17px}.chinese-board-heading span{padding:4px 8px;font-size:9px}.chinese-table-seat{min-height:58px;padding:8px 10px}.chinese-table-seat>em{max-width:74px;overflow:hidden;text-overflow:ellipsis}.chinese-table-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.chinese-table-actions>button{width:100%;min-height:44px;margin:0}.chinese-table-actions .primary-button{min-width:0}.chinese-history{padding:12px}.chinese-invite-text{margin-top:2px}.chinese-seat-dialog{padding:20px}.chinese-result-banner{margin-top:8px}}
 .chinese-seat-avatar{border-radius:9px;overflow:hidden}.chinese-seat-avatar img{width:100%;height:100%;object-fit:cover}
 .chinese-piece text.general{font-size:32px}
-.chinese-table-seat.manageable{cursor:pointer}.chinese-table-seat.manageable:hover{border-color:#a8834d;background:#fbf4e7;transform:translateY(-1px);box-shadow:0 8px 18px #59432312}.chinese-table-seat.engine{border-color:#5f6b86;background:linear-gradient(145deg,#eef1f6,#e2e7ef)}.chinese-seat-avatar.engine{border-color:#5f6b86;background:#5f6b86;color:#fff;font-family:"STKaiti","KaiTi",serif}.engine-error-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #c89b79;border-radius:9px;background:#fbefe7;color:#8f493b;font-size:11px}.engine-seat-dialog .dialog-heading{margin-bottom:12px}.engine-choice,.engine-current{display:grid;grid-template-columns:52px minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;padding:13px;border:1px solid #cfbfa7;border-radius:11px;background:linear-gradient(145deg,#fffdf8,#f3edf2);color:#493d31;text-align:left}.engine-choice{cursor:pointer}.engine-choice:hover:not(:disabled){border-color:#6b7590;background:#f4f6fa}.engine-choice:disabled{opacity:.58;cursor:not-allowed}.engine-fish-mark{display:grid;place-items:center;width:48px;height:48px;border-radius:10px;background:#5f6b86;color:#fff;font:700 26px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 3px #ffffff33}.engine-choice span:nth-child(2),.engine-current div{display:grid;gap:4px;min-width:0}.engine-choice strong,.engine-current strong{font:700 20px/1.2 "Songti SC","SimSun",serif}.engine-choice small,.engine-current small{color:#817362;font-size:10px}.engine-choice em{font-size:10px;font-style:normal;color:#705b45}.engine-seat-dialog .dialog-actions{margin-top:15px}.engine-seat-dialog .dialog-actions{display:flex}.engine-seat-dialog .connection-note{margin:12px 0 0!important}
+.chinese-table-seat.manageable{cursor:pointer}.chinese-table-seat.manageable:hover{border-color:#a8834d;background:#fbf4e7;transform:translateY(-1px);box-shadow:0 8px 18px #59432312}.chinese-table-seat.engine{border-color:#8b7047;background:linear-gradient(145deg,#f4eee2,#e8dece)}.chinese-seat-avatar.engine{border-color:#8b7047;border-radius:50%;background:#171b1f;color:#fff;font-family:"STKaiti","KaiTi",serif}.engine-error-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #c89b79;border-radius:9px;background:#fbefe7;color:#8f493b;font-size:11px}.engine-seat-dialog .dialog-heading{margin-bottom:12px}.engine-choice,.engine-current{display:grid;grid-template-columns:52px minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;padding:13px;border:1px solid #cfbfa7;border-radius:11px;background:linear-gradient(145deg,#fffdf8,#f3edf2);color:#493d31;text-align:left}.engine-choice{cursor:pointer}.engine-choice:hover:not(:disabled){border-color:#8b7047;background:#f7f1e6}.engine-choice:disabled{opacity:.58;cursor:not-allowed}.engine-fish-mark{display:grid;place-items:center;width:48px;height:48px;overflow:hidden;border-radius:50%;background:#171b1f;color:#fff;font:700 26px/1 "STKaiti","KaiTi",serif;box-shadow:inset 0 0 0 2px #e4c98f66}.engine-fish-mark img{width:100%;height:100%;object-fit:cover}.engine-choice span:nth-child(2),.engine-current div{display:grid;gap:4px;min-width:0}.engine-choice strong,.engine-current strong{font:700 20px/1.2 "Songti SC","SimSun",serif}.engine-choice small,.engine-current small{color:#817362;font-size:10px}.engine-choice em{font-size:10px;font-style:normal;color:#705b45}.engine-seat-dialog .dialog-actions{margin-top:15px}.engine-seat-dialog .dialog-actions{display:flex}.engine-seat-dialog .connection-note{margin:12px 0 0!important}
 @media(max-width:560px){.engine-error-bar{align-items:stretch;flex-direction:column}.engine-error-bar button{width:100%}.engine-seat-dialog .dialog-actions{display:grid;grid-template-columns:1fr 1fr}.engine-seat-dialog .dialog-actions button{width:100%}}
 </style>
