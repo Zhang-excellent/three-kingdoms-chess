@@ -146,7 +146,7 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const pikafish = options.chineseEngine ?? new PikafishEngineClient(pikafishConfigFromEnv());
   const chinese = new ChineseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('chinese:state', item.state);
-  }, 60_000, now, pikafish);
+  }, 60_000, now, pikafish, record => authService.saveCompletedChineseGame(record));
   const mist = new MistChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('mist:state', item.state);
   }, 60_000, now, record => authService.saveCompletedMistGame(record));
@@ -271,6 +271,18 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
     if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
     const game = authService.mistGameForUser(user.id, request.params.gameId);
     if (!game) return response.status(404).json({ ok: false, code: 'GAME_NOT_FOUND', error: '没有找到这盘迷雾象棋棋谱。' });
+    response.json({ ok: true, game });
+  });
+  app.get('/three-chess/api/games/chinese/recent', (request, response) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    response.json({ ok: true, games: authService.recentChineseGames(user.id, 5) });
+  });
+  app.get('/three-chess/api/games/chinese/:gameId', (request, response) => {
+    const user = requestUser(request);
+    if (!user) return response.status(401).json({ ok: false, code: 'UNAUTHENTICATED', error: '请先登录。' });
+    const game = authService.chineseGameForUser(user.id, request.params.gameId);
+    if (!game) return response.status(404).json({ ok: false, code: 'GAME_NOT_FOUND', error: '没有找到这盘中国象棋棋谱。' });
     response.json({ ok: true, game });
   });
   app.get('/three-chess/api/games/:gameId', (request, response) => {

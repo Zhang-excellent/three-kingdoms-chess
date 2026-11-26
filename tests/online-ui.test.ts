@@ -829,7 +829,7 @@ test('account registration, compact profile, password visibility, logout, and in
     assert.equal(JSON.stringify(localStorage).includes('1234'), false);
     assert.equal(JSON.stringify(localStorage).includes('three_chess_session'), false);
     await wrapper.findAll('.header-actions button').find(button => button.text() === '界面注册甲')!.trigger('click');
-    await waitUntil(() => wrapper!.findAll('.history-directory').length === 2, 'History directories did not render');
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 3, 'History directories did not render');
     await wrapper.get('.history-directory.three-kingdoms').trigger('click');
     await waitUntil(() => wrapper!.find('.recent-state')?.text().includes('暂无棋谱') ?? false, 'Empty recent game state did not render');
     await wrapper.get('.history-back').trigger('click');
@@ -903,7 +903,7 @@ test('account profile lists the latest server game and opens it with the shared 
     await wrapper.findAll('.auth-dialog button').find(button => button.text() === '登录' && button.classes().includes('auth-submit'))!.trigger('click');
     await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '历史界面账号'), 'History account did not log in');
     await wrapper.findAll('.header-actions button').find(button => button.text() === '历史界面账号')!.trigger('click');
-    await waitUntil(() => wrapper!.findAll('.history-directory').length === 2, 'History directories did not render');
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 3, 'History directories did not render');
     await wrapper.get('.history-directory.three-kingdoms').trigger('click');
     await waitUntil(() => wrapper!.findAll('.recent-list li').length === 1, 'Recent game did not render');
     const row = wrapper.get('.recent-list li');
@@ -959,8 +959,8 @@ test('account directories separate mist history and open the full-board mist rep
     await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '迷雾历史界面'),
       'Mist history account did not log in');
     await wrapper.findAll('.header-actions button').find(button => button.text() === '迷雾历史界面')!.trigger('click');
-    await waitUntil(() => wrapper!.findAll('.history-directory').length === 2, 'Mist history directories did not render');
-    assert.deepEqual(wrapper.findAll('.history-directory strong').map(item => item.text()), ['三国象棋', '迷雾象棋']);
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 3, 'Mist history directories did not render');
+    assert.deepEqual(wrapper.findAll('.history-directory strong').map(item => item.text()), ['三国象棋', '中国象棋', '迷雾象棋']);
     await wrapper.get('.history-directory.mist-chess').trigger('click');
     await waitUntil(() => wrapper!.findAll('.recent-list li').length === 1, 'Mist history list did not render');
     const row = wrapper.get('.recent-list li');
@@ -976,6 +976,61 @@ test('account directories separate mist history and open the full-board mist rep
     assert.match(wrapper.get('.mist-replay-move').text(), /\(5, 7\) → \(5, 6\)/);
     await wrapper.findAll('.mist-replay-heading button').find(button => button.text() === '← 返回棋谱列表')!.trigger('click');
     assert.equal(wrapper.find('.mist-replay-panel').exists(), false);
+  } finally {
+    wrapper?.unmount();
+  }
+});
+
+test('account Chinese chess directory lists the latest five games and opens a full replay', async () => {
+  localStorage.clear(); sessionStorage.clear(); history.replaceState(null, '', `${origin}/three-chess/`);
+  const account = await server.authService.register('中国历史界面', '1234', true, '127.0.0.1');
+  assert.equal(account.ok, true);
+  if (!account.ok || !account.sessionToken) assert.fail('Chinese history account registration failed');
+
+  server.chinese.setSocketAccount('chinese-history-red', account.user.id);
+  const red = server.chinese.join('中国历史界面', 'red', 'chinese-history-red');
+  const black = server.chinese.join('中国游客黑', 'black', 'chinese-history-black');
+  if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('Chinese history join failed');
+  server.chinese.setReady(red.ack.data.reconnectToken, true, 'chinese-history-red');
+  const started = server.chinese.setReady(black.ack.data.reconnectToken, true, 'chinese-history-black');
+  if (!started.ack.ok) assert.fail('Chinese history game did not start');
+  const moved = server.chinese.move(red.ack.data.reconnectToken, {
+    requestId: 'chinese-history-ui-1',
+    version: started.ack.data.state.version,
+    pieceId: 'red-pawn-0-6',
+    to: { x: 0, y: 5 },
+  }, 'chinese-history-red');
+  assert.equal(moved.ok, true);
+  assert.equal(server.chinese.resign(black.ack.data.reconnectToken, 'chinese-history-black').ok, true);
+
+  let wrapper: ReturnType<typeof mount> | null = null;
+  try {
+    wrapper = mount(App, { attachTo: document.body });
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '登录 / 注册'),
+      'Chinese history account entry did not render');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '登录 / 注册')!.trigger('click');
+    await wrapper.get('.auth-dialog input[autocomplete="username"]').setValue('中国历史界面');
+    await wrapper.get('.auth-dialog input[autocomplete="current-password"]').setValue('1234');
+    await wrapper.findAll('.auth-dialog button').find(button => button.text() === '登录' && button.classes().includes('auth-submit'))!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.header-actions button').some(button => button.text() === '中国历史界面'),
+      'Chinese history account did not log in');
+    await wrapper.findAll('.header-actions button').find(button => button.text() === '中国历史界面')!.trigger('click');
+    await waitUntil(() => wrapper!.findAll('.history-directory').length === 3, 'Chinese history directories did not render');
+    await wrapper.get('.history-directory.chinese-chess').trigger('click');
+    await waitUntil(() => wrapper!.findAll('.recent-list li').length === 1, 'Chinese history list did not render');
+    const row = wrapper.get('.recent-list li');
+    assert.match(row.text(), /红方/);
+    assert.match(row.text(), /中国游客黑/);
+    assert.match(row.text(), /胜利/);
+    assert.match(row.text(), /1 手/);
+    await row.get('.replay-history').trigger('click');
+    await waitUntil(() => wrapper!.find('.chinese-replay-panel').exists(), 'Chinese replay panel did not open');
+    await wrapper.findAll('.chinese-replay-controls button').find(button => button.text() === '最后一步')!.trigger('click');
+    assert.match(wrapper.get('.chinese-replay-summary').text(), /红方获胜/);
+    assert.match(wrapper.get('.chinese-replay-move').text(), /红方 · 兵/);
+    assert.match(wrapper.get('.chinese-replay-move').text(), /\(1, 7\) → \(1, 6\)/);
+    await wrapper.findAll('.chinese-replay-heading button').find(button => button.text() === '← 返回棋谱列表')!.trigger('click');
+    assert.equal(wrapper.find('.chinese-replay-panel').exists(), false);
   } finally {
     wrapper?.unmount();
   }

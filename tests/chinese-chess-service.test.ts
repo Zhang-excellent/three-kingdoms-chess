@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ChineseChessService } from '../server/chinese-chess-service.ts';
 import { PikafishError } from '../server/pikafish-engine.ts';
 import type { ChineseEngineClient, ChineseEngineRequest } from '../server/pikafish-engine.ts';
+import type { ArchivedChineseGameRecord } from '../src/chinese-game-history.ts';
 
 class FakeEngine implements ChineseEngineClient {
   readonly configured = true;
@@ -198,6 +199,29 @@ test('Chinese chess players can agree to a draw and rematch from the same table'
     assert.equal(accepted.ack.data.state.phase, 'finished');
     assert.equal(accepted.ack.data.state.game?.winner, null);
     assert.equal(accepted.ack.data.state.game?.endReason, 'draw');
+  } finally { service.dispose(); }
+});
+
+test('completed Chinese chess games are archived once with participant results', () => {
+  const archived: ArchivedChineseGameRecord[] = [];
+  const service = new ChineseChessService(() => undefined, 60_000, Date.now, null,
+    record => { archived.push(record); });
+  try {
+    const red = service.join('棋谱红', 'red', 'red');
+    const black = service.join('棋谱黑', 'black', 'black');
+    if (!red.ok || !red.ack.ok || !black.ok || !black.ack.ok) assert.fail('join failed');
+    service.setReady(red.ack.data.reconnectToken, true, 'red');
+    service.setReady(black.ack.data.reconnectToken, true, 'black');
+    service.resign(red.ack.data.reconnectToken, 'red');
+    assert.equal(archived.length, 1);
+    assert.equal(archived[0].gameType, 'chinese-chess');
+    assert.equal(archived[0].finalGame.status, 'finished');
+    assert.equal(archived[0].endReason, 'resignation');
+    assert.equal(archived[0].participants.find(player => player.side === 'red')?.result, 'lost');
+    assert.equal(archived[0].participants.find(player => player.side === 'black')?.result, 'won');
+    service.resign(black.ack.data.reconnectToken, 'black');
+    assert.equal(archived.length, 1);
+    assert.equal(archived[0].moveCount, 0);
   } finally { service.dispose(); }
 });
 

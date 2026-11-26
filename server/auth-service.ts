@@ -17,6 +17,11 @@ import type {
   MistArchivedEndReason,
   RecentMistGameSummary,
 } from '../src/mist-game-history.ts';
+import type {
+  ArchivedChineseGameRecord,
+  ChineseArchivedEndReason,
+  RecentChineseGameSummary,
+} from '../src/chinese-game-history.ts';
 import { FixedWindowRateLimiter } from './rate-limit.ts';
 
 const SCRYPT_N = 16_384;
@@ -508,6 +513,83 @@ export class AuthService {
       events: JSON.parse(row.events_json),
       finalGame: JSON.parse(row.final_state_json),
       endReason: row.end_reason as MistArchivedEndReason,
+      moveCount: Number(row.move_count),
+      winner: row.winner,
+    };
+  }
+
+  saveCompletedChineseGame(record: ArchivedChineseGameRecord): void {
+    if (record.gameType !== 'chinese-chess' || record.finalGame.status !== 'finished'
+      || record.endedAt < record.startedAt)
+      throw new Error('只能保存已经结束且时间有效的中国象棋对局。');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(`INSERT OR IGNORE INTO game_records
+        (id, game_type, room_code, room_round, started_at, ended_at, rules_version, initial_json, participants_json,
+         moves_json, events_json, final_state_json, final_pieces_json, end_reason, move_count, winner)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(record.id, record.gameType, record.roomCode, record.round, record.startedAt, record.endedAt,
+          record.rulesVersion, JSON.stringify(record.initialGame), JSON.stringify(record.participants),
+          JSON.stringify(record.moves), JSON.stringify(record.events), JSON.stringify(record.finalGame),
+          JSON.stringify(record.finalGame.pieces), record.endReason, record.moveCount, record.winner);
+      const insertParticipant = this.db.prepare(`INSERT OR IGNORE INTO game_participants
+        (game_id, user_id, player_id, nickname, faction, result, eliminated) VALUES (?, ?, ?, ?, ?, ?, 0)`);
+      for (const participant of record.participants) {
+        insertParticipant.run(record.id, participant.userId, participant.playerId, participant.nickname,
+          participant.side, participant.result);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  recentChineseGames(userId: string, limit = 5): RecentChineseGameSummary[] {
+    const rows = this.db.prepare(`SELECT g.*, p.faction AS self_side, p.result AS self_result
+      FROM game_records g JOIN game_participants p ON p.game_id = g.id
+      WHERE g.game_type = 'chinese-chess' AND p.user_id = ?
+      ORDER BY g.ended_at DESC, g.id DESC
+      LIMIT ?`).all(userId, Math.max(1, Math.min(5, limit))) as unknown as Array<GameRow & {
+        self_side: 'red' | 'black';
+        self_result: 'won' | 'lost' | 'draw';
+      }>;
+    return rows.map(row => {
+      const participants = JSON.parse(row.participants_json) as ArchivedChineseGameRecord['participants'];
+      return {
+        id: row.id,
+        roomCode: row.room_code,
+        endedAt: Number(row.ended_at),
+        side: row.self_side,
+        result: row.self_result,
+        opponents: participants.filter(participant => participant.side !== row.self_side)
+          .map(participant => participant.nickname),
+        moveCount: Number(row.move_count),
+        endReason: row.end_reason as ChineseArchivedEndReason,
+      };
+    });
+  }
+
+  chineseGameForUser(userId: string, gameId: string): ArchivedChineseGameRecord | null {
+    const row = this.db.prepare(`SELECT g.* FROM game_records g
+      JOIN game_participants p ON p.game_id = g.id
+      WHERE g.game_type = 'chinese-chess' AND g.id = ? AND p.user_id = ?`)
+      .get(gameId, userId) as unknown as (GameRow & { winner: 'red' | 'black' | null }) | undefined;
+    if (!row) return null;
+    return {
+      gameType: 'chinese-chess',
+      id: row.id,
+      roomCode: row.room_code,
+      round: Number(row.room_round),
+      startedAt: Number(row.started_at),
+      endedAt: Number(row.ended_at),
+      rulesVersion: row.rules_version as ArchivedChineseGameRecord['rulesVersion'],
+      initialGame: JSON.parse(row.initial_json),
+      participants: JSON.parse(row.participants_json),
+      moves: JSON.parse(row.moves_json),
+      events: JSON.parse(row.events_json),
+      finalGame: JSON.parse(row.final_state_json),
+      endReason: row.end_reason as ChineseArchivedEndReason,
       moveCount: Number(row.move_count),
       winner: row.winner,
     };

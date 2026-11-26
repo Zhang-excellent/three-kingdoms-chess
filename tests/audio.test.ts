@@ -4,6 +4,7 @@ import { GlobalRegistrator } from '@happy-dom/global-registrator';
 import {
   AUDIO_SETTINGS_KEY,
   BeastMoveSoundTracker,
+  ChineseMoveSoundTracker,
   DEFAULT_AUDIO_SETTINGS,
   GameAudio,
   MistMoveSoundTracker,
@@ -14,6 +15,7 @@ import { MUSIC_PLAYLISTS, MUSIC_TRACKS, availablePlaylists, resolveMusicSelectio
 import { newGame, playMove } from '../src/game.ts';
 import { createBeastGame, newBeastGame, playBeastMove } from '../src/beast-chess.ts';
 import { newMistGame, playMistMove, projectMistGame, spectatorMistGame } from '../src/mist-chess.ts';
+import { newChineseGame, playChineseMove } from '../src/chinese-chess.ts';
 
 test('sound settings default to effects on, persist independent levels and reject malformed values', () => {
   GlobalRegistrator.register({ url: 'http://localhost:5173' });
@@ -97,6 +99,27 @@ test('beast chess sound tracker plays one move or capture and stays silent on re
   assert.equal(reconnectTracker.observe(initial, 'beast:3', true), null);
   reconnectTracker.suspend();
   assert.equal(reconnectTracker.observe(moved.game, 'beast:3', true), null);
+});
+
+test('Chinese chess sound tracker plays one new authoritative move per live round', () => {
+  const tracker = new ChineseMoveSoundTracker();
+  const initial = newChineseGame();
+  assert.equal(tracker.observe(initial, 'chinese:1', true), null);
+  const moved = playChineseMove(initial, 'red-pawn-0-6', { x: 0, y: 5 });
+  assert.equal(moved.ok, true);
+  if (!moved.ok) return;
+  assert.equal(tracker.observe(moved.game, 'chinese:1', true), 'move');
+  assert.equal(tracker.observe(moved.game, 'chinese:1', true), null);
+  assert.equal(tracker.observe(moved.game, 'chinese:1', false), null);
+  assert.equal(tracker.observe(moved.game, 'chinese:1', true), null);
+  const capture = structuredClone(moved.game);
+  capture.history.push({
+    ...capture.history[0],
+    number: 2,
+    captured: { id: 'captured', side: 'red', kind: 'pawn', x: 0, y: 5 },
+  });
+  capture.lastMove = capture.history[1];
+  assert.equal(tracker.observe(capture, 'chinese:1', true), 'capture');
 });
 
 test('mist chess sound tracker uses projected move count without exposing hidden opponent coordinates', () => {

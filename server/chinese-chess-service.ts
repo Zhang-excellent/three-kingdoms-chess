@@ -27,6 +27,11 @@ import type {
 } from '../src/chinese-chess.ts';
 import { PikafishError } from './pikafish-engine.ts';
 import type { ChineseEngineClient } from './pikafish-engine.ts';
+import type {
+  ArchivedChineseGameRecord,
+  ArchivedChineseParticipant,
+  ChineseArchivedEndReason,
+} from '../src/chinese-game-history.ts';
 
 interface ChinesePlayer {
   id: string;
@@ -45,6 +50,8 @@ interface StoredAck {
   fingerprint: string;
   ack: ChineseAck<{ state: ChineseState }>;
 }
+
+type PersistReason = ChineseArchivedEndReason | 'move';
 
 interface ActionSuccess<T = undefined> {
   ok: true;
@@ -70,12 +77,17 @@ export class ChineseChessService {
   private readonly disconnectGraceMs: number;
   private readonly now: () => number;
   private readonly engine: ChineseEngineClient | null;
+  private readonly onCompleted: (record: ArchivedChineseGameRecord) => void;
   private phase: ChinesePhase = 'lobby';
   private version = 1;
   private round = 1;
   private game: ChineseGame | null = null;
+  private gameId: string | null = null;
+  private gameStartedAt: number | null = null;
   private initialGame: ChineseGame | null = null;
   private gameToken: string | null = null;
+  private startedParticipants: ArchivedChineseParticipant[] = [];
+  private gamePersisted = false;
   private drawOfferBy: ChineseSide | null = null;
   private engineSide: ChineseSide | null = null;
   private engineThinking = false;
@@ -91,11 +103,13 @@ export class ChineseChessService {
 
   constructor(onChanged: (service: ChineseChessService) => void,
     disconnectGraceMs = 60_000, now: () => number = Date.now,
-    engine: ChineseEngineClient | null = null) {
+    engine: ChineseEngineClient | null = null,
+    onCompleted: (record: ArchivedChineseGameRecord) => void = () => undefined) {
     this.onChanged = onChanged;
     this.disconnectGraceMs = disconnectGraceMs;
     this.now = now;
     this.engine = engine;
+    this.onCompleted = onCompleted;
   }
 
   setSocketAccount(socketId: string, accountId: string | null, avatar: string | null = null): void {
@@ -233,8 +247,27 @@ export class ChineseChessService {
     this.version++;
     if (this.canStartGame()) {
       this.game = newChineseGame();
+      this.gameId = randomUUID();
+      this.gameStartedAt = this.now();
       this.initialGame = structuredClone(this.game);
       this.gameToken = randomUUID();
+      this.startedParticipants = this.players.map(player => ({
+        playerId: player.id,
+        userId: player.accountId,
+        nickname: player.nickname,
+        side: player.side,
+        result: 'draw',
+      }));
+      if (this.engineSide) {
+        this.startedParticipants.push({
+          playerId: `engine-${this.engineSide}`,
+          userId: null,
+          nickname: '神秘老人',
+          side: this.engineSide,
+          result: 'draw',
+        });
+      }
+      this.gamePersisted = false;
       this.phase = 'playing';
       this.drawOfferBy = null;
       this.requests.clear();
@@ -285,6 +318,7 @@ export class ChineseChessService {
     this.game = result.game;
     this.phase = result.game.status === 'finished' ? 'finished' : 'playing';
     this.drawOfferBy = null;
+    if (this.phase === 'finished') this.persistFinishedGame('move', player.side);
     this.engineGeneration++;
     this.engineThinking = false;
     this.engineError = null;
@@ -304,6 +338,7 @@ export class ChineseChessService {
     this.game = resignChineseGame(this.game, found.player.side);
     this.phase = 'finished';
     this.drawOfferBy = null;
+    this.persistFinishedGame('resignation', found.player.side);
     this.engineGeneration++;
     this.engineThinking = false;
     this.engineError = null;
@@ -336,6 +371,7 @@ export class ChineseChessService {
     if (acceptValue) {
       this.game = drawChineseGame(this.game);
       this.phase = 'finished';
+      this.persistFinishedGame('draw', found.player.side);
       this.engineGeneration++;
       this.engineThinking = false;
       this.engineError = null;
@@ -433,6 +469,7 @@ export class ChineseChessService {
           this.game.winner = winner;
           this.game.endReason = isChineseKingInCheck(this.game.pieces, engineSide) ? 'checkmate' : 'stalemate';
           this.phase = 'finished';
+          this.persistFinishedGame('move', engineSide);
           this.engineThinking = false;
           this.version++;
           this.onChanged(this);
@@ -458,6 +495,7 @@ export class ChineseChessService {
       }
       this.game = result.game;
       this.phase = result.game.status === 'finished' ? 'finished' : 'playing';
+      if (this.phase === 'finished') this.persistFinishedGame('move', engineSide);
       this.engineThinking = false;
       this.engineError = null;
       this.version++;
@@ -566,6 +604,7 @@ export class ChineseChessService {
       this.game = resignChineseGame(this.game, player.side);
       this.phase = 'finished';
       this.drawOfferBy = null;
+      this.persistFinishedGame(cause, player.side);
     }
     this.players = this.players.filter(item => item.id !== player.id);
     this.version++;
@@ -580,8 +619,12 @@ export class ChineseChessService {
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.gameId = null;
+    this.gameStartedAt = null;
     this.initialGame = null;
     this.gameToken = null;
+    this.startedParticipants = [];
+    this.gamePersisted = false;
     this.drawOfferBy = null;
     this.engineThinking = false;
     this.engineError = null;
@@ -603,14 +646,56 @@ export class ChineseChessService {
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.gameId = null;
+    this.gameStartedAt = null;
     this.initialGame = null;
     this.gameToken = null;
+    this.startedParticipants = [];
+    this.gamePersisted = false;
     this.drawOfferBy = null;
     this.engineSide = null;
     this.engineThinking = false;
     this.engineError = null;
     this.requests.clear();
     this.version++;
+  }
+
+  private persistFinishedGame(reason: PersistReason, side?: ChineseSide): void {
+    if (this.gamePersisted || !this.game || this.game.status !== 'finished'
+      || !this.gameId || !this.gameStartedAt || !this.initialGame) return;
+    const winner = this.game.winner;
+    const endReason: ChineseArchivedEndReason = reason === 'move'
+      ? this.game.endReason ?? 'resignation'
+      : reason;
+    const participants: ArchivedChineseParticipant[] = this.startedParticipants.map(player => ({
+      ...player,
+      result: winner === null ? 'draw' : winner === player.side ? 'won' : 'lost',
+    }));
+    const record: ArchivedChineseGameRecord = {
+      gameType: 'chinese-chess',
+      id: this.gameId,
+      roomCode: CHINESE_CHESS_GAME_ID,
+      round: this.round,
+      startedAt: this.gameStartedAt,
+      endedAt: this.now(),
+      rulesVersion: this.game.rulesVersion,
+      initialGame: structuredClone(this.initialGame),
+      participants,
+      moves: structuredClone(this.game.history),
+      events: [{
+        type: 'end',
+        step: this.game.history.length,
+        reason: endReason,
+        ...(side ? { side } : {}),
+        winner,
+      }],
+      finalGame: structuredClone(this.game),
+      endReason,
+      moveCount: this.game.history.length,
+      winner,
+    };
+    this.gamePersisted = true;
+    try { this.onCompleted(record); } catch { /* A completed game remains playable if archival fails. */ }
   }
 
   private scheduleExpiry(player: ChinesePlayer): void {

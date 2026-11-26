@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import type { AuthUser } from './auth.ts';
 import type { ArchivedGameRecord, RecentGameSummary } from './game-history.ts';
 import type { ArchivedMistGameRecord, RecentMistGameSummary } from './mist-game-history.ts';
+import type { ArchivedChineseGameRecord, RecentChineseGameSummary } from './chinese-game-history.ts';
 import { apiRequestCredentials, apiUrl } from './network-config.ts';
 
 interface ApiFailure {
@@ -40,13 +41,16 @@ export function useAuth() {
   const mistRecentGames = ref<RecentMistGameSummary[]>([]);
   const mistRecentLoading = ref(false);
   const mistRecentError = ref('');
+  const chineseRecentGames = ref<RecentChineseGameSummary[]>([]);
+  const chineseRecentLoading = ref(false);
+  const chineseRecentError = ref('');
 
   async function refresh(): Promise<void> {
     const result = await request<{ user: AuthUser | null }>('auth/me');
     if (result.ok) user.value = result.user;
     else error.value = result.error;
     ready.value = true;
-    if (user.value) await Promise.all([loadRecent(), loadMistRecent()]);
+    if (user.value) await Promise.all([loadRecent(), loadMistRecent(), loadChineseRecent()]);
   }
 
   async function run(action: () => Promise<UserResult>): Promise<UserResult> {
@@ -57,7 +61,7 @@ export function useAuth() {
       if (!result.ok) error.value = result.error;
       else {
         user.value = result.user;
-        await Promise.all([loadRecent(), loadMistRecent()]);
+        await Promise.all([loadRecent(), loadMistRecent(), loadChineseRecent()]);
       }
       return result;
     } finally {
@@ -115,6 +119,27 @@ export function useAuth() {
     return request<{ game: ArchivedMistGameRecord }>(`games/mist/${encodeURIComponent(gameId)}`);
   }
 
+  async function loadChineseRecent(): Promise<void> {
+    if (!user.value) {
+      chineseRecentGames.value = [];
+      chineseRecentError.value = '';
+      return;
+    }
+    chineseRecentLoading.value = true;
+    chineseRecentError.value = '';
+    try {
+      const result = await request<{ games: RecentChineseGameSummary[] }>('games/chinese/recent');
+      if (result.ok) chineseRecentGames.value = result.games.slice(0, 5);
+      else chineseRecentError.value = result.error;
+    } finally {
+      chineseRecentLoading.value = false;
+    }
+  }
+
+  async function loadChineseGame(gameId: string): Promise<ApiResult<{ game: ArchivedChineseGameRecord }>> {
+    return request<{ game: ArchivedChineseGameRecord }>(`games/chinese/${encodeURIComponent(gameId)}`);
+  }
+
   async function logout(): Promise<ApiResult<Record<string, never>>> {
     if (busy.value) return { ok: false, code: 'BUSY', error: '正在处理上一项账号操作，请稍候。' };
     busy.value = true; error.value = '';
@@ -126,6 +151,8 @@ export function useAuth() {
       recentError.value = '';
       mistRecentGames.value = [];
       mistRecentError.value = '';
+      chineseRecentGames.value = [];
+      chineseRecentError.value = '';
       return result;
     } finally {
       busy.value = false;
@@ -143,7 +170,8 @@ export function useAuth() {
   return {
     user, ready, busy, error, recentGames, recentLoading, recentError,
     mistRecentGames, mistRecentLoading, mistRecentError,
+    chineseRecentGames, chineseRecentLoading, chineseRecentError,
     refresh, login, register, changePassword, uploadAvatar, loadRecent, loadMistRecent,
-    loadGame, loadMistGame, logout, clearError, setError,
+    loadChineseRecent, loadGame, loadMistGame, loadChineseGame, logout, clearError, setError,
   };
 }

@@ -1,7 +1,7 @@
 import type { Game } from './game.ts';
 import type { BeastGame } from './beast-chess.ts';
 import type { MistGameView } from './mist-chess.ts';
-import type { ChineseSide } from './chinese-chess.ts';
+import type { ChineseGame, ChineseSide } from './chinese-chess.ts';
 import { musicTrack, resolveMusicSelection } from './music-catalog.ts';
 
 export interface AudioSettings {
@@ -70,6 +70,21 @@ export class BeastMoveSoundTracker {
   }
   suspend(): void {
     this.live = false;
+  }
+}
+
+export class ChineseMoveSoundTracker {
+  private scope = '';
+  private count = 0;
+  private live = false;
+  observe(game: Pick<ChineseGame, 'history' | 'lastMove'>, scope: string, live: boolean): 'move' | 'capture' | null {
+    const previousCount = this.count, previousLive = this.live, sameScope = this.scope === scope;
+    this.scope = scope;
+    this.count = game.history.length;
+    this.live = live;
+    if (!sameScope || !previousLive || !live || game.history.length !== previousCount + 1) return null;
+    const last = game.lastMove;
+    return last?.number === game.history.length ? (last.captured ? 'capture' : 'move') : null;
   }
 }
 

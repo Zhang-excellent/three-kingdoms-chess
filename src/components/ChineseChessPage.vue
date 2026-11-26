@@ -23,9 +23,15 @@ import type {
 } from '../chinese-chess.ts';
 import { backendAssetUrl, socketIoConfig } from '../network-config.ts';
 import { appRouteUrl } from '../navigation.ts';
+import { ChineseMoveSoundTracker, GameAudio, loadAudioSettings } from '../audio.ts';
+import type { AudioSettings } from '../audio.ts';
 import OtherGameTable from './OtherGameTable.vue';
 
-const props = defineProps<{ accountName: string | null; accountAvatar?: string | null }>();
+const props = defineProps<{
+  accountName: string | null;
+  accountAvatar?: string | null;
+  audioSettings?: AudioSettings;
+}>();
 const emit = defineEmits<{ other: [] }>();
 const guestAvatar = 'images/guest-avatar.svg';
 const engineDisplayName = '神秘老人';
@@ -54,6 +60,8 @@ const seatDialog = ref<HTMLDialogElement | null>(null);
 const engineDialog = ref<HTMLDialogElement | null>(null);
 const engineDialogSide = ref<ChineseSide | null>(null);
 const watching = ref(false), menuOpen = ref(false);
+const gameAudio = new GameAudio();
+const moveSoundTracker = new ChineseMoveSoundTracker();
 let socket: Socket | null = null;
 let resumeAttempt = 0;
 
@@ -138,6 +146,7 @@ const canWatchTable = computed(() => !session.value && !watching.value
 const drawOfferBy = computed(() => roomState.value?.drawOfferBy ?? null);
 const canRespondDraw = computed(() => !!session.value && roomState.value?.phase === 'playing'
   && !!drawOfferBy.value && drawOfferBy.value !== mySide.value);
+const chineseAudioSettings = computed<AudioSettings>(() => props.audioSettings ?? loadAudioSettings());
 
 function saveSession(receipt: ChineseReceipt): boolean {
   if (!receipt || receipt.gameId !== CHINESE_CHESS_GAME_ID || receipt.playerId !== receipt.state.selfId) return false;
@@ -233,6 +242,7 @@ function openSocket() {
 
 function openSeat(side: ChineseSide) {
   if (busy.value || !canSeat(side)) return;
+  gameAudio.primeEffects(chineseAudioSettings.value);
   if (props.accountName) {
     void joinSeat(side, '');
     return;
@@ -306,6 +316,7 @@ async function retryEngine() {
 
 function confirmGuestSeat() {
   if (!pendingSide.value) return;
+  gameAudio.primeEffects(chineseAudioSettings.value);
   if (!guestName.value.trim()) {
     error.value = '请输入昵称。';
     return;
@@ -336,6 +347,7 @@ async function joinSeat(side: ChineseSide, nickname: string) {
 
 async function setReady(ready: boolean) {
   if (!session.value || busy.value) return;
+  gameAudio.primeEffects(chineseAudioSettings.value);
   busy.value = true;
   try {
     const ack = await emitAck<{ state: ChineseState }>('chinese:ready', {
@@ -372,6 +384,7 @@ async function move(pieceId: string, to: ChinesePoint) {
 
 function clickPoint(point: ChinesePoint) {
   if (roomState.value?.phase !== 'playing' || !isMyTurn.value) return;
+  gameAudio.primeEffects(chineseAudioSettings.value);
   const piece = targetAt(point);
   if (piece?.side === mySide.value) {
     selectedId.value = selectedId.value === piece.id ? null : piece.id;
@@ -492,6 +505,15 @@ function selectInvite(event: FocusEvent) {
   (event.target as HTMLTextAreaElement).select();
 }
 
+watch(() => roomState.value?.game, current => {
+  if (!current) return;
+  const kind = moveSoundTracker.observe(
+    current,
+    `chinese:${roomState.value?.round ?? 0}`,
+    connection.value === 'online',
+  );
+  if (kind) gameAudio.playEffect(kind, chineseAudioSettings.value);
+});
 watch(mySide, side => { if (side) flipped.value = side === 'black'; });
 watch([() => props.accountName, () => props.accountAvatar], ([name], [previousName, previousAvatar]) => {
   if (name || props.accountAvatar !== previousAvatar) {
@@ -508,6 +530,7 @@ onBeforeUnmount(() => {
   socket?.removeAllListeners();
   socket?.disconnect();
   socket = null;
+  gameAudio.dispose();
 });
 
 defineExpose({ leaveForNavigation, openSeat });

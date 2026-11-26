@@ -11,6 +11,7 @@ import { buildGameRecord, gameRecordFileName } from './game-record.ts';
 import { parseGameRecord, replayArchivedGame } from './game-replay.ts';
 import type { ReplayDocument } from './game-replay.ts';
 import type { ArchivedMistGameRecord } from './mist-game-history.ts';
+import type { ArchivedChineseGameRecord } from './chinese-game-history.ts';
 import { appRouteUrl, parseAppRoute } from './navigation.ts';
 import type { AppPage } from './navigation.ts';
 import { backendAssetUrl } from './network-config.ts';
@@ -74,8 +75,12 @@ const authUser = auth.user, authBusy = auth.busy, authError = auth.error;
 const authRecentGames = auth.recentGames, authRecentLoading = auth.recentLoading, authRecentError = auth.recentError;
 const authMistRecentGames = auth.mistRecentGames, authMistRecentLoading = auth.mistRecentLoading,
   authMistRecentError = auth.mistRecentError;
+const authChineseRecentGames = auth.chineseRecentGames, authChineseRecentLoading = auth.chineseRecentLoading,
+  authChineseRecentError = auth.chineseRecentError;
 const mistReplayRecord = ref<ArchivedMistGameRecord | null>(null);
 const mistReplayLoading = ref(false), mistReplayError = ref('');
+const chineseReplayRecord = ref<ArchivedChineseGameRecord | null>(null);
+const chineseReplayLoading = ref(false), chineseReplayError = ref('');
 const pendingHistoricalReplay = ref<{ replay: ReplayDocument; fileName: string } | null>(null);
 const historicalGameId = ref<string | null>(null);
 const inviteLink = ref(''), inviteCopyResult = ref<'copied' | 'manual' | 'no-room'>('manual');
@@ -341,6 +346,8 @@ function openAuthDialog() {
   authNotice.value = '';
   mistReplayRecord.value = null;
   mistReplayError.value = '';
+  chineseReplayRecord.value = null;
+  chineseReplayError.value = '';
   authDialog.value?.open();
 }
 async function afterAuthChange(message: string): Promise<void> {
@@ -441,6 +448,27 @@ async function openMistHistoricalReplay(gameId: string) {
 function closeMistHistoricalReplay() {
   mistReplayRecord.value = null;
   mistReplayError.value = '';
+}
+
+async function openChineseHistoricalReplay(gameId: string) {
+  chineseReplayRecord.value = null;
+  chineseReplayError.value = '';
+  chineseReplayLoading.value = true;
+  try {
+    const result = await auth.loadChineseGame(gameId);
+    if (!result.ok) {
+      chineseReplayError.value = result.error;
+      return;
+    }
+    chineseReplayRecord.value = result.game;
+  } finally {
+    chineseReplayLoading.value = false;
+  }
+}
+
+function closeChineseHistoricalReplay() {
+  chineseReplayRecord.value = null;
+  chineseReplayError.value = '';
 }
 
 function openCurrentRoom() {
@@ -808,7 +836,8 @@ async function requestRematch() {
 
     <HorseChessPage v-else-if="page === 'horse'" ref="horsePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
 
-    <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null" :account-avatar="authUser?.avatarUrl ?? null" @other="openOtherPage" />
+    <ChineseChessPage v-else-if="page === 'chinese'" ref="chinesePage" :account-name="authUser?.username ?? null"
+      :account-avatar="authUser?.avatarUrl ?? null" :audio-settings="audioSettings" @other="openOtherPage" />
 
     <MistChessPage v-else-if="page === 'mist'" ref="mistPage" :account-name="authUser?.username ?? null"
       :account-avatar="authUser?.avatarUrl ?? null" :audio-settings="audioSettings" @other="openOtherPage" />
@@ -1076,11 +1105,16 @@ async function requestRematch() {
       :mist-recent-games="authMistRecentGames" :mist-recent-loading="authMistRecentLoading"
       :mist-recent-error="authMistRecentError" :mist-replay-record="mistReplayRecord"
       :mist-replay-loading="mistReplayLoading" :mist-replay-error="mistReplayError"
+      :chinese-recent-games="authChineseRecentGames" :chinese-recent-loading="authChineseRecentLoading"
+      :chinese-recent-error="authChineseRecentError" :chinese-replay-record="chineseReplayRecord"
+      :chinese-replay-loading="chineseReplayLoading" :chinese-replay-error="chineseReplayError"
       @login="loginAccount" @register="registerAccount" @change-password="changeAccountPassword"
       @upload-avatar="uploadAccountAvatar"
       @logout="logoutAccount" @replay="openHistoricalReplay" @refresh-recent="auth.loadRecent"
       @replay-mist="openMistHistoricalReplay" @refresh-mist-recent="auth.loadMistRecent"
       @close-mist-replay="closeMistHistoricalReplay"
+      @replay-chinese="openChineseHistoricalReplay" @refresh-chinese-recent="auth.loadChineseRecent"
+      @close-chinese-replay="closeChineseHistoricalReplay"
       @clear-error="auth.clearError" />
   </div>
 </template>
