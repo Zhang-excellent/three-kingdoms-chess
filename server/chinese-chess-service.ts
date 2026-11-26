@@ -1,12 +1,20 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   CHINESE_CHESS_GAME_ID,
+  allLegalChineseMoves,
+  chinesePieceAt,
   drawChineseGame,
   isChineseSide,
+  isChineseKingInCheck,
   newChineseGame,
   playChineseMove,
   resignChineseGame,
 } from '../src/chinese-chess.ts';
+import {
+  chineseUciHistory,
+  initialChineseFen,
+  parseUciBestMove,
+} from '../src/chinese-chess-uci.ts';
 import type {
   ChineseAck,
   ChineseGame,
@@ -17,6 +25,8 @@ import type {
   ChineseSide,
   ChineseState,
 } from '../src/chinese-chess.ts';
+import { PikafishError } from './pikafish-engine.ts';
+import type { ChineseEngineClient } from './pikafish-engine.ts';
 
 interface ChinesePlayer {
   id: string;
@@ -59,11 +69,18 @@ export class ChineseChessService {
   private readonly onChanged: (service: ChineseChessService) => void;
   private readonly disconnectGraceMs: number;
   private readonly now: () => number;
+  private readonly engine: ChineseEngineClient | null;
   private phase: ChinesePhase = 'lobby';
   private version = 1;
   private round = 1;
   private game: ChineseGame | null = null;
+  private initialGame: ChineseGame | null = null;
+  private gameToken: string | null = null;
   private drawOfferBy: ChineseSide | null = null;
+  private engineSide: ChineseSide | null = null;
+  private engineThinking = false;
+  private engineError: string | null = null;
+  private engineGeneration = 0;
   private players: ChinesePlayer[] = [];
   private readonly socketPlayers = new Map<string, string>();
   private readonly socketAccounts = new Map<string, string | null>();
@@ -73,10 +90,12 @@ export class ChineseChessService {
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(onChanged: (service: ChineseChessService) => void,
-    disconnectGraceMs = 60_000, now: () => number = Date.now) {
+    disconnectGraceMs = 60_000, now: () => number = Date.now,
+    engine: ChineseEngineClient | null = null) {
     this.onChanged = onChanged;
     this.disconnectGraceMs = disconnectGraceMs;
     this.now = now;
+    this.engine = engine;
   }
 
   setSocketAccount(socketId: string, accountId: string | null, avatar: string | null = null): void {
@@ -89,6 +108,8 @@ export class ChineseChessService {
     if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '当前对局已经开始，请等待下一局。');
     if (this.players.length >= 2) return this.fail('ROOM_FULL', '两个席位都已坐满。');
     if (!isChineseSide(sideValue)) return this.fail('INVALID_SIDE', '请选择红方或黑方。');
+    if (this.engineSide === sideValue)
+      return this.fail('SIDE_TAKEN', '这个席位已经由皮卡鱼占用。');
     if (this.players.some(player => player.side === sideValue))
       return this.fail('SIDE_TAKEN', `${sideValue === 'red' ? '红方' : '黑方'}席位已经被占用。`);
     const accountId = this.socketAccounts.get(socketId) ?? null;
@@ -148,11 +169,59 @@ export class ChineseChessService {
     if (!found.ok) return found;
     if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '开局后不能更换阵营。', found.player);
     if (!isChineseSide(sideValue)) return this.fail('INVALID_SIDE', '请选择红方或黑方。', found.player);
+    if (this.engineSide === sideValue)
+      return this.fail('SIDE_TAKEN', '这个阵营已经由皮卡鱼占用。', found.player);
     if (this.players.some(player => player !== found.player && player.side === sideValue))
       return this.fail('SIDE_TAKEN', '这个阵营已经有玩家。', found.player);
     found.player.side = sideValue;
     found.player.ready = false;
     this.version++;
+    return this.stateResult(found.player);
+  }
+
+  selectEngine(tokenValue: unknown, sideValue: unknown, socketId: string): ActionResult<{ state: ChineseState }> {
+    const found = this.findActivePlayer(tokenValue, socketId);
+    if (!found.ok) return found;
+    if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '开局后不能切换软件对手。', found.player);
+    if (!isChineseSide(sideValue)) return this.fail('INVALID_SIDE', '请选择要切换的席位。', found.player);
+    if (sideValue === found.player.side) return this.fail('INVALID_SIDE', '软件对手不能放在自己的席位。', found.player);
+    if (!this.engine?.configured)
+      return this.fail('ENGINE_UNAVAILABLE', '皮卡鱼暂不可用。', found.player);
+    if (this.players.length >= 2)
+      return this.fail('ROOM_FULL', '对手席位已经有真人玩家。', found.player);
+    if (this.players.some(player => player.side === sideValue))
+      return this.fail('SIDE_TAKEN', '这个席位已经有真人玩家。', found.player);
+    if (this.engineSide && this.engineSide !== sideValue)
+      return this.fail('ENGINE_SEATED', '皮卡鱼已经在另一个席位。', found.player);
+    this.engineSide = sideValue;
+    this.engineThinking = false;
+    this.engineError = null;
+    found.player.ready = false;
+    this.version++;
+    return this.stateResult(found.player);
+  }
+
+  removeEngine(tokenValue: unknown, socketId: string): ActionResult<{ state: ChineseState }> {
+    const found = this.findActivePlayer(tokenValue, socketId);
+    if (!found.ok) return found;
+    if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '开局后不能切回等待棋友。', found.player);
+    if (!this.engineSide) return this.fail('ENGINE_NOT_SEATED', '当前没有软件对手。', found.player);
+    this.engineSide = null;
+    this.engineThinking = false;
+    this.engineError = null;
+    found.player.ready = false;
+    this.version++;
+    return this.stateResult(found.player);
+  }
+
+  retryEngine(tokenValue: unknown, socketId: string): ActionResult<{ state: ChineseState }> {
+    const found = this.findActivePlayer(tokenValue, socketId);
+    if (!found.ok) return found;
+    if (this.phase !== 'playing' || !this.game || !this.engineSide || this.game.turn !== this.engineSide)
+      return this.fail('ENGINE_NOT_THINKING', '现在不需要皮卡鱼计算。', found.player);
+    if (this.engineThinking) return this.fail('ENGINE_BUSY', '皮卡鱼正在思考。', found.player);
+    this.engineError = null;
+    this.beginEngineTurn();
     return this.stateResult(found.player);
   }
 
@@ -162,12 +231,15 @@ export class ChineseChessService {
     if (this.phase !== 'lobby') return this.fail('GAME_STARTED', '对局已经开始。', found.player);
     found.player.ready = readyValue === true;
     this.version++;
-    if (this.players.length === 2 && this.players.every(player => player.online && player.ready)) {
+    if (this.canStartGame()) {
       this.game = newChineseGame();
+      this.initialGame = structuredClone(this.game);
+      this.gameToken = randomUUID();
       this.phase = 'playing';
       this.drawOfferBy = null;
       this.requests.clear();
       this.version++;
+      if (this.isEngineTurn()) this.beginEngineTurn();
     }
     return this.stateResult(found.player);
   }
@@ -213,7 +285,11 @@ export class ChineseChessService {
     this.game = result.game;
     this.phase = result.game.status === 'finished' ? 'finished' : 'playing';
     this.drawOfferBy = null;
+    this.engineGeneration++;
+    this.engineThinking = false;
+    this.engineError = null;
     this.version++;
+    if (this.phase === 'playing' && this.isEngineTurn()) this.beginEngineTurn();
     const ack: ChineseAck<{ state: ChineseState }> = { ok: true, data: { state: this.state(player) } };
     playerRequests.set(intent.requestId, { fingerprint, ack });
     if (playerRequests.size > 200) playerRequests.delete(playerRequests.keys().next().value!);
@@ -228,6 +304,9 @@ export class ChineseChessService {
     this.game = resignChineseGame(this.game, found.player.side);
     this.phase = 'finished';
     this.drawOfferBy = null;
+    this.engineGeneration++;
+    this.engineThinking = false;
+    this.engineError = null;
     this.version++;
     return this.stateResult(found.player);
   }
@@ -237,6 +316,7 @@ export class ChineseChessService {
     if (!found.ok) return found;
     if (this.phase !== 'playing' || !this.game)
       return this.fail('GAME_NOT_PLAYING', '当前没有进行中的棋局。', found.player);
+    if (this.engineSide) return this.fail('ENGINE_NO_DRAW', '人机对局暂不支持提和。', found.player);
     if (this.players.length < 2) return this.fail('NO_OPPONENT', '当前没有可以回应提和的对手。', found.player);
     if (this.drawOfferBy) return this.fail('DRAW_ALREADY_OFFERED', '已经有一项提和申请正在等待回应。', found.player);
     this.drawOfferBy = found.player.side;
@@ -256,6 +336,9 @@ export class ChineseChessService {
     if (acceptValue) {
       this.game = drawChineseGame(this.game);
       this.phase = 'finished';
+      this.engineGeneration++;
+      this.engineThinking = false;
+      this.engineError = null;
     }
     this.drawOfferBy = null;
     this.version++;
@@ -311,6 +394,85 @@ export class ChineseChessService {
   dispose(): void {
     for (const timer of this.expiryTimers.values()) clearTimeout(timer);
     this.expiryTimers.clear();
+    this.engineGeneration++;
+    this.engineThinking = false;
+    this.engine?.dispose();
+  }
+
+  private canStartGame(): boolean {
+    if (this.phase !== 'lobby' || !this.players.length || !this.players.every(player => player.online && player.ready))
+      return false;
+    if (this.engineSide) return this.players.length === 1;
+    return this.players.length === 2;
+  }
+
+  private isEngineTurn(): boolean {
+    return this.phase === 'playing' && !!this.game && !!this.engineSide && this.game.turn === this.engineSide;
+  }
+
+  private beginEngineTurn(): void {
+    if (!this.isEngineTurn() || !this.engine?.configured || !this.game || !this.engineSide
+      || !this.gameToken || !this.initialGame || this.engineThinking) return;
+    const generation = ++this.engineGeneration;
+    const gameToken = this.gameToken;
+    const expectedHistoryLength = this.game.history.length;
+    const engineSide = this.engineSide;
+    const initialFen = initialChineseFen();
+    const moves = chineseUciHistory(this.game);
+    this.engineThinking = true;
+    this.engineError = null;
+    this.version++;
+    void this.engine.bestMove({ initialFen, moves }).then(bestMove => {
+      if (generation !== this.engineGeneration || !this.game || this.gameToken !== gameToken
+        || this.phase !== 'playing' || this.game.turn !== engineSide
+        || this.game.history.length !== expectedHistoryLength) return;
+      if (!bestMove) {
+        if (allLegalChineseMoves(this.game, engineSide).length === 0) {
+          const winner = engineSide === 'red' ? 'black' : 'red';
+          this.game.status = 'finished';
+          this.game.winner = winner;
+          this.game.endReason = isChineseKingInCheck(this.game.pieces, engineSide) ? 'checkmate' : 'stalemate';
+          this.phase = 'finished';
+          this.engineThinking = false;
+          this.version++;
+          this.onChanged(this);
+          return;
+        }
+        this.failEngineTurn(generation, new PikafishError('PROTOCOL', 'Pikafish returned no move in a live position.'));
+        return;
+      }
+      const parsed = parseUciBestMove(bestMove);
+      if (!parsed) {
+        this.failEngineTurn(generation, new PikafishError('PROTOCOL', `Invalid Pikafish bestmove: ${bestMove}`));
+        return;
+      }
+      const piece = chinesePieceAt(this.game.pieces, parsed.from);
+      if (!piece || piece.side !== engineSide) {
+        this.failEngineTurn(generation, new PikafishError('PROTOCOL', `Pikafish selected an invalid piece: ${bestMove}`));
+        return;
+      }
+      const result = playChineseMove(this.game, piece.id, parsed.to);
+      if (!result.ok) {
+        this.failEngineTurn(generation, new PikafishError('PROTOCOL', `Illegal Pikafish move ${bestMove}: ${result.error}`));
+        return;
+      }
+      this.game = result.game;
+      this.phase = result.game.status === 'finished' ? 'finished' : 'playing';
+      this.engineThinking = false;
+      this.engineError = null;
+      this.version++;
+      this.onChanged(this);
+    }).catch(error => this.failEngineTurn(generation, error));
+  }
+
+  private failEngineTurn(generation: number, error: unknown): void {
+    if (generation !== this.engineGeneration) return;
+    const code = error instanceof PikafishError ? error.code : 'PROTOCOL';
+    this.engineThinking = false;
+    this.engineError = code === 'BUSY' ? '皮卡鱼繁忙' : '皮卡鱼暂不可用';
+    this.version++;
+    console.error(`[Chinese engine] ${code}: ${error instanceof Error ? error.message : String(error)}`);
+    this.onChanged(this);
   }
 
   private stateResult(player: ChinesePlayer): ActionSuccess<{ state: ChineseState }> {
@@ -383,11 +545,17 @@ export class ChineseChessService {
       game: this.game ? structuredClone(this.game) : null,
       drawOfferBy: this.drawOfferBy,
       selfId: self?.id ?? null,
+      engineSide: this.engineSide,
+      engineThinking: this.engineThinking,
+      engineError: this.engineError,
     };
   }
 
   private removePlayer(player: ChinesePlayer, cause: 'exit' | 'timeout'): void {
     this.cancelExpiry(player.id);
+    this.engineGeneration++;
+    this.engineThinking = false;
+    this.engineError = null;
     if (player.socketId) {
       this.socketPlayers.delete(player.socketId);
       this.socketAccounts.delete(player.socketId);
@@ -408,10 +576,15 @@ export class ChineseChessService {
   }
 
   private resetToLobby(): void {
+    this.engineGeneration++;
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.initialGame = null;
+    this.gameToken = null;
     this.drawOfferBy = null;
+    this.engineThinking = false;
+    this.engineError = null;
     this.requests.clear();
     for (const player of this.players) {
       player.ready = false;
@@ -426,10 +599,16 @@ export class ChineseChessService {
   private resetRoom(): void {
     for (const timer of this.expiryTimers.values()) clearTimeout(timer);
     this.expiryTimers.clear();
+    this.engineGeneration++;
     this.phase = 'lobby';
     this.round++;
     this.game = null;
+    this.initialGame = null;
+    this.gameToken = null;
     this.drawOfferBy = null;
+    this.engineSide = null;
+    this.engineThinking = false;
+    this.engineError = null;
     this.requests.clear();
     this.version++;
   }

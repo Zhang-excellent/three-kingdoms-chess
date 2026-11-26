@@ -17,6 +17,14 @@ Environment=THREE_CHESS_REGISTER_LIMIT=20
 Environment=THREE_CHESS_REGISTER_WINDOW_MINUTES=60
 Environment=THREE_CHESS_LOGIN_LIMIT=10
 Environment=THREE_CHESS_LOGIN_WINDOW_MINUTES=15
+Environment=PIKAFISH_PATH=/opt/pikafish/pikafish
+Environment=PIKAFISH_EVAL_FILE=/opt/pikafish/pikafish.nnue
+Environment=PIKAFISH_THREADS=1
+Environment=PIKAFISH_HASH_MB=64
+Environment=PIKAFISH_MOVE_TIME_MS=800
+Environment=PIKAFISH_SEARCH_TIMEOUT_MS=6000
+Environment=PIKAFISH_STARTUP_TIMEOUT_MS=8000
+Environment=PIKAFISH_MAX_QUEUE=2
 ExecStart=/opt/three-kingdoms-chess/runtime/node-v24.22.1-linux-x64/bin/node /opt/three-kingdoms-chess/current/node_modules/tsx/dist/cli.mjs server/index.ts
 Restart=on-failure
 RestartSec=3

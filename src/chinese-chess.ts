@@ -60,6 +60,9 @@ export interface ChineseState {
   game: ChineseGame | null;
   drawOfferBy: ChineseSide | null;
   selfId: string | null;
+  engineSide: ChineseSide | null;
+  engineThinking: boolean;
+  engineError: string | null;
 }
 
 export interface ChineseReceipt {

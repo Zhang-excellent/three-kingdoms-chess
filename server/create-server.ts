@@ -9,6 +9,8 @@ import { HorseChessService } from './horse-chess-service.ts';
 import { ChineseChessService } from './chinese-chess-service.ts';
 import { BeastChessService } from './beast-chess-service.ts';
 import { MistChessService } from './mist-chess-service.ts';
+import { PikafishEngineClient, pikafishConfigFromEnv } from './pikafish-engine.ts';
+import type { ChineseEngineClient } from './pikafish-engine.ts';
 import { AuthService, type AuthFailure, type AuthResult } from './auth-service.ts';
 import { REMEMBER_SESSION_SECONDS } from '../src/auth.ts';
 import type { AuthUser } from '../src/auth.ts';
@@ -30,6 +32,7 @@ export interface OnlineServerOptions {
   authDbPath?: string;
   cookieSecure?: boolean;
   now?: () => number;
+  chineseEngine?: ChineseEngineClient;
 }
 
 function authCookie(token: string, remember: boolean, secure: boolean, crossSite: boolean): string {
@@ -140,9 +143,10 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
   const horse = new HorseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('horse:state', item.state);
   }, 60_000, now);
+  const pikafish = options.chineseEngine ?? new PikafishEngineClient(pikafishConfigFromEnv());
   const chinese = new ChineseChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('chinese:state', item.state);
-  }, 60_000, now);
+  }, 60_000, now, pikafish);
   const mist = new MistChessService(service => {
     for (const item of service.views()) io.to(item.socketId).emit('mist:state', item.state);
   }, 60_000, now, record => authService.saveCompletedMistGame(record));
@@ -590,6 +594,33 @@ export function createOnlineServer(options: OnlineServerOptions = {}) {
       try {
         currentUser();
         const result = chinese.chooseSide(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:engine-select', (payload: { reconnectToken?: unknown; side?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.selectEngine(payload?.reconnectToken, payload?.side, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:engine-remove', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.removeEngine(payload?.reconnectToken, socket.id);
+        done(result.ack);
+        if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
+      } catch { chineseInternalError(done); }
+    });
+    socket.on('chinese:engine-retry', (payload: { reconnectToken?: unknown }, done: (ack: ChineseAck<{ state: ChineseState }>) => void) => {
+      if (typeof done !== 'function') return;
+      try {
+        currentUser();
+        const result = chinese.retryEngine(payload?.reconnectToken, socket.id);
         done(result.ack);
         if (result.changed) for (const item of chinese.views()) io.to(item.socketId).emit('chinese:state', item.state);
       } catch { chineseInternalError(done); }
