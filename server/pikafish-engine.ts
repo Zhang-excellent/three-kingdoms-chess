@@ -163,16 +163,32 @@ export class PikafishEngineClient implements ChineseEngineClient {
       this.stderrTail = (this.stderrTail + String(chunk)).slice(-4_000);
       if (this.stderrTail.includes('ERROR')) console.error(`[Pikafish] ${this.stderrTail.trim()}`);
     });
+    child.stdin.on('error', error => {
+      if (this.child !== child) return;
+      this.stderrTail = (this.stderrTail + `\nstdin: ${error.message}`).slice(-4_000);
+      const failure = new PikafishError('UNAVAILABLE',
+        `Pikafish process stdin failed: ${error.message}.${this.stderrSuffix()}`);
+      setTimeout(() => {
+        if (this.child === child) this.resetProcess(failure);
+      }, 100).unref?.();
+    });
     child.on('error', error => {
       if (this.child === child) {
         this.child = null;
-        this.rejectAll(new PikafishError('UNAVAILABLE', `Pikafish process error: ${error.message}`));
+        const failure = new PikafishError('UNAVAILABLE',
+          `Pikafish process error: ${error.message}.${this.stderrSuffix()}`);
+        console.error(`[Pikafish] ${failure.message}`);
+        this.rejectAll(failure);
       }
     });
-    child.on('exit', () => {
+    child.on('close', (code, signal) => {
       if (this.child === child) {
         this.child = null;
-        this.rejectAll(new PikafishError('UNAVAILABLE', 'Pikafish process exited unexpectedly.'));
+        const reason = `code=${code ?? 'none'}, signal=${signal ?? 'none'}`;
+        const failure = new PikafishError('UNAVAILABLE',
+          `Pikafish process exited unexpectedly (${reason}).${this.stderrSuffix()}`);
+        console.error(`[Pikafish] ${failure.message}`);
+        this.rejectAll(failure);
       }
     });
 
@@ -237,9 +253,15 @@ export class PikafishEngineClient implements ChineseEngineClient {
 
   private writeLine(line: string): void {
     const child = this.child;
-    if (!child || !child.stdin.writable)
-      throw new PikafishError('UNAVAILABLE', 'Pikafish process stdin is not available.');
+    if (!child || child.stdin.destroyed || !child.stdin.writable)
+      throw new PikafishError('UNAVAILABLE',
+        `Pikafish process stdin is not available.${this.stderrSuffix()}`);
     child.stdin.write(`${line}\n`);
+  }
+
+  private stderrSuffix(): string {
+    const detail = this.stderrTail.trim();
+    return detail ? ` stderr: ${detail}` : '';
   }
 
   private rejectAll(error: Error): void {

@@ -89,3 +89,22 @@ test('Pikafish adapter reports unavailable when executable or configured weights
     engine.dispose();
   }
 });
+
+test('Pikafish adapter turns an early process exit and stdin EPIPE into an unavailable error', async () => {
+  const engine = new PikafishEngineClient(baseConfig({
+    executablePath: process.execPath,
+    evalFile: '',
+    args: ['-e', "process.stderr.write('simulated loader failure\\n', () => process.exit(7));"],
+    startupTimeoutMs: 1_000,
+  }));
+  try {
+    await assert.rejects(
+      engine.bestMove({ initialFen: 'fen', moves: [] }),
+      (error: unknown) => error instanceof PikafishError
+        && error.code === 'UNAVAILABLE'
+        && /simulated loader failure/.test(error.message),
+    );
+  } finally {
+    engine.dispose();
+  }
+});
