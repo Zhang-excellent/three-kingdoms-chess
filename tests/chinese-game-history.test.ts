@@ -78,7 +78,9 @@ test('Chinese chess account history keeps the newest five games and rejects thir
   try {
     const owner = await auth.register('中国棋谱主人', '1234', true, '127.0.0.1');
     const thirdParty = await auth.register('中国棋谱旁观', '1234', true, '127.0.0.1');
-    if (!owner.ok || !owner.user || !thirdParty.ok || !thirdParty.user) assert.fail('account setup failed');
+    const restartedOwner = await auth.register('中国棋谱重开', '1234', true, '127.0.0.1');
+    if (!owner.ok || !owner.user || !thirdParty.ok || !thirdParty.user
+      || !restartedOwner.ok || !restartedOwner.user) assert.fail('account setup failed');
     for (let index = 1; index <= 6; index++) {
       const initial = newChineseGame();
       const finalGame = resignChineseGame(initial, 'red');
@@ -107,6 +109,33 @@ test('Chinese chess account history keeps the newest five games and rejects thir
       ['recent-6', 'recent-5', 'recent-4', 'recent-3', 'recent-2']);
     assert.ok(auth.chineseGameForUser(owner.user.id, 'recent-6'));
     assert.equal(auth.chineseGameForUser(thirdParty.user.id, 'recent-6'), null);
+
+    const restartedInitial = newChineseGame();
+    const restartedFinal = resignChineseGame(restartedInitial, 'red');
+    auth.saveCompletedChineseGame({
+      gameType: 'chinese-chess',
+      id: 'after-restart-round-one',
+      roomCode: CHINESE_CHESS_GAME_ID,
+      round: 1,
+      startedAt: 1_000,
+      endedAt: 1_001,
+      rulesVersion: restartedInitial.rulesVersion,
+      initialGame: restartedInitial,
+      participants: [
+        { playerId: 'restarted-owner', userId: restartedOwner.user.id, nickname: '中国棋谱重开', side: 'red', result: 'lost' },
+        { playerId: 'restarted-guest', userId: null, nickname: '游客黑', side: 'black', result: 'won' },
+      ],
+      moves: [],
+      events: [{ type: 'end', step: 0, reason: 'resignation', side: 'red', winner: 'black' }],
+      finalGame: restartedFinal,
+      endReason: 'resignation',
+      moveCount: 0,
+      winner: 'black',
+    });
+    assert.deepEqual(auth.recentChineseGames(restartedOwner.user.id).map(game => game.id),
+      ['after-restart-round-one']);
+    assert.equal(auth.chineseGameForUser(restartedOwner.user.id, 'recent-1'), null);
+    assert.equal(auth.chineseGameForUser(owner.user.id, 'after-restart-round-one'), null);
   } finally {
     auth.close();
   }

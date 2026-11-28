@@ -541,7 +541,11 @@ export class MistChessService {
       moveCount: this.game.history.length,
       winner,
     };
-    this.gamePersisted = true;
-    try { this.onCompleted(record); } catch { /* A completed game remains playable if archival fails. */ }
+    try {
+      this.onCompleted(record);
+      this.gamePersisted = true;
+    } catch (error) {
+      console.error('Failed to archive completed mist chess game', error);
+    }
   }
 }

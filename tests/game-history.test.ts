@@ -9,6 +9,7 @@ import { AuthService } from '../server/auth-service.ts';
 import { RoomService } from '../server/room-service.ts';
 import { createOnlineServer } from '../server/create-server.ts';
 import { replayArchivedGame } from '../src/game-replay.ts';
+import { newMistGame, resignMistGame } from '../src/mist-chess.ts';
 import type { ArchivedGameRecord, RecentGameSummary } from '../src/game-history.ts';
 import type { MoveIntent } from '../src/online.ts';
 
@@ -216,7 +217,7 @@ test('completed online games are stored once per game, shared by account partici
   assert.deepEqual(recent.map(game => game.endedAt), [...recent.map(game => game.endedAt)].sort((a, b) => b - a));
   assert.equal(recent.some(game => game.id === firstGameId), false);
   const retained = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal((retained.prepare('SELECT COUNT(*) AS count FROM game_records').get() as { count: number }).count, 8);
+  assert.equal((retained.prepare('SELECT COUNT(*) AS count FROM game_records').get() as { count: number }).count, 5);
   retained.close();
 
   const { server, origin } = await startServer(auth);
@@ -240,6 +241,134 @@ test('completed online games are stored once per game, shared by account partici
     assert.equal(reopened.gameForUser(accounts[0].user.id, fourthGameId)?.id, fourthGameId);
   } finally {
     reopened.close();
+  }
+});
+
+test('version five databases migrate, remove the round collision, and drop rogue participant bindings', async () => {
+  const databasePath = tempDb();
+  const initial = newMistGame();
+  const finalGame = resignMistGame(initial, 'red');
+  const ownerId = 'legacy-owner';
+  const unrelatedId = 'legacy-unrelated';
+  const participants = [{
+    playerId: 'legacy-seat',
+    userId: ownerId,
+    nickname: '旧棋谱主人',
+    side: 'red',
+    result: 'lost',
+  }];
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE auth_users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      username_key TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      recovery_hash TEXT NOT NULL,
+      avatar_data TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE game_records (
+      id TEXT PRIMARY KEY,
+      game_type TEXT NOT NULL DEFAULT 'three-kingdoms',
+      room_code TEXT NOT NULL,
+      room_round INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER NOT NULL,
+      rules_version TEXT NOT NULL,
+      initial_json TEXT NOT NULL,
+      participants_json TEXT NOT NULL,
+      moves_json TEXT NOT NULL,
+      events_json TEXT NOT NULL,
+      final_state_json TEXT NOT NULL,
+      final_pieces_json TEXT NOT NULL,
+      end_reason TEXT NOT NULL,
+      move_count INTEGER NOT NULL,
+      winner TEXT,
+      UNIQUE(room_code, room_round)
+    );
+    CREATE TABLE game_participants (
+      game_id TEXT NOT NULL REFERENCES game_records(id) ON DELETE CASCADE,
+      user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+      player_id TEXT NOT NULL,
+      nickname TEXT NOT NULL,
+      faction TEXT NOT NULL,
+      result TEXT NOT NULL,
+      eliminated INTEGER NOT NULL,
+      PRIMARY KEY(game_id, player_id),
+      UNIQUE(game_id, user_id)
+    );
+    PRAGMA user_version = 5;
+  `);
+  const insertUser = legacy.prepare(`INSERT INTO auth_users
+    (id, username, username_key, password_hash, recovery_hash, avatar_data, created_at, updated_at)
+    VALUES (?, ?, ?, 'disabled', 'disabled', NULL, 1, 1)`);
+  insertUser.run(ownerId, '旧棋谱主人', 'legacy-owner');
+  insertUser.run(unrelatedId, '旧旁观', 'legacy-unrelated');
+  legacy.prepare(`INSERT INTO game_records
+    (id, game_type, room_code, room_round, started_at, ended_at, rules_version, initial_json, participants_json,
+     moves_json, events_json, final_state_json, final_pieces_json, end_reason, move_count, winner)
+    VALUES (?, 'mist-chess', 'mist-chess', 1, 1, 2, ?, ?, ?, '[]', '[]', ?, ?, 'resignation', 0, 'black')`)
+    .run('legacy-game', initial.rulesVersion, JSON.stringify(initial), JSON.stringify(participants),
+      JSON.stringify(finalGame), JSON.stringify(finalGame.pieces));
+  legacy.prepare(`INSERT INTO game_participants
+    (game_id, user_id, player_id, nickname, faction, result, eliminated)
+    VALUES ('legacy-game', ?, 'legacy-seat', '旧棋谱主人', 'red', 'lost', 0)`)
+    .run(ownerId);
+  legacy.prepare(`INSERT INTO game_participants
+    (game_id, user_id, player_id, nickname, faction, result, eliminated)
+    VALUES ('legacy-game', ?, 'rogue-seat', '旧旁观', 'black', 'won', 0)`)
+    .run(unrelatedId);
+  legacy.close();
+
+  const auth = new AuthService(databasePath);
+  try {
+    const schema = new DatabaseSync(databasePath, { readOnly: true });
+    const sql = (schema.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'game_records'",
+    ).get() as { sql: string }).sql;
+    schema.close();
+    assert.equal(/UNIQUE\s*\(\s*room_code\s*,\s*room_round\s*\)/i.test(sql), false);
+    assert.equal(auth.mistGameForUser(ownerId, 'legacy-game')?.id, 'legacy-game');
+    assert.equal(auth.mistGameForUser(unrelatedId, 'legacy-game'), null);
+
+    const registered = await auth.register('迁移后新玩家', '1234', false, '127.0.0.1');
+    if (!registered.ok) assert.fail(registered.error);
+    auth.saveCompletedMistGame({
+      gameType: 'mist-chess',
+      id: 'new-round-one',
+      roomCode: 'mist-chess',
+      round: 1,
+      startedAt: 3,
+      endedAt: 4,
+      rulesVersion: initial.rulesVersion,
+      initialGame: structuredClone(initial),
+      participants: [{
+        playerId: 'new-seat',
+        userId: registered.user.id,
+        nickname: registered.user.username,
+        side: 'red',
+        result: 'lost',
+      }],
+      moves: [],
+      events: [{ type: 'end', step: 0, reason: 'resignation', side: 'red', winner: 'black' }],
+      finalGame: structuredClone(finalGame),
+      endReason: 'resignation',
+      moveCount: 0,
+      winner: 'black',
+    });
+    assert.deepEqual(auth.recentMistGames(registered.user.id).map(game => game.id), ['new-round-one']);
+    assert.equal(auth.mistGameForUser(registered.user.id, 'legacy-game'), null);
+    assert.equal(auth.mistGameForUser(ownerId, 'new-round-one'), null);
+  } finally {
+    auth.close();
   }
 });
 

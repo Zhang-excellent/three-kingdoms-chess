@@ -317,7 +317,7 @@ test('recovery user flow is removed while the legacy recovery column remains int
     const gameTable = verification.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_records'").get();
     const avatarColumn = verification.prepare("SELECT name FROM pragma_table_info('auth_users') WHERE name = 'avatar_data'").get();
     verification.close();
-    assert.equal(version.user_version, 5);
+    assert.equal(version.user_version, 6);
     assert.equal(row.recovery_hash, 'legacy-preserved');
     assert.ok(gameTable);
     assert.ok(avatarColumn);

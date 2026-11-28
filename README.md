@@ -105,7 +105,7 @@ Gradle 内部的 `android/app/build/outputs/apk/debug/app-debug.apk` 仍会作�
 - 用户名即昵称，支持中文、英文字母、数字和下划线，规范化为去首尾空格、Unicode NFKC 和英文小写后唯一；密码明确允许 4～64 个字符。注册处提示用户记住密码。
 - 账号会话使用服务端持久会话表与 HttpOnly Cookie。勾选“7 天免登录”时有效 7 天；不勾选时服务端最长有效 12 小时，浏览器关闭后 Cookie 也会结束。退出或改密会撤销旧会话。Android Capacitor 通过受限 CORS、`SameSite=None; Secure` Cookie 和 WebView 第三方 Cookie 支持复用同一 Session 服务。
 - 登录账号进入房间时，昵称由服务端根据 Cookie 会话确定，客户端提交的昵称或用户 ID 不能覆盖账号身份。游客席位显示“游客”标识，旧游客席位不会因昵称与账号相同而自动归入账号。
-- “我的账号”直接显示“三国象棋”“迷雾象棋”两个棋谱目录。每个目录独立按结束时间倒序展示该玩法最近 5 盘，显示时间、对手、己方阵营、结果和步数；三国象棋继续使用原有复盘，迷雾象棋使用无迷雾全盘复盘，并提供初始局面、上一步、下一步、最后一步和返回列表。
+- “我的账号”直接显示“三国象棋”“迷雾象棋”“中国象棋”三个棋谱目录。每个目录独立按结束时间倒序展示该玩法最近 5 盘，显示时间、对手、己方阵营、结果和步数；三种棋谱均提供初始局面、上一步、下一步、最后一步和返回列表。
 - 悔棋、重新开局、独立的背景音乐与木质落子音效设置、带规则版本、胜负及轮次位置的本机自动保存，以及键盘 Enter/空格操作。旧名次、联盟、四拍或旧初始布局存档保留原数据并提示另开新局。
 - 桌面与手机宽度的布局适配。
 - 本地试玩与联机对弈模式切换；创建房间须自定未占用的 6 位纯数字房间号，前导零保留。加入和观战严格按所填房间号进入；旧的 6 位字母数字房间号可继续用于已有房间的加入、观战和重连。
@@ -185,11 +185,11 @@ Gradle 内部的 `android/app/build/outputs/apk/debug/app-debug.apk` 仍会作�
 sudo install -d -o www-data -g www-data -m 0700 /opt/three-kingdoms-chess/data
 ```
 
-数据库连接时按 `user_version` 自动迁移到版本 `4`，保留已有 `auth_users` 和 `auth_sessions`。当前表包括 `auth_users`、`auth_sessions`、`game_records`、`game_participants` 及索引；`auth_users.avatar_data` 保存经过服务端格式与大小校验的头像数据。旧恢复码字段继续保留以避免重建账号表，但当前版本不再提供恢复码生成、查询或找回密码接口。密码使用 Node.js 成熟 `scrypt` 加盐哈希；Cookie 令牌只在数据库中保存摘要，范围限制为 `/three-chess`、`HttpOnly`。网页 Cookie 使用 `SameSite=Lax`，白名单 Android 来源使用 `SameSite=None; Secure`；生产环境网页 Cookie 也附加 `Secure`。密码、Cookie 和服务端会话令牌不写入 `localStorage`。
+数据库连接时按 `user_version` 自动迁移到版本 `6`，保留已有账号、会话和棋谱。v6 会重建 `game_records`/`game_participants`，移除错误的 `(room_code, room_round)` 唯一约束，以对局 UUID 作为唯一保存与幂等依据，并按棋谱内的权威参与快照校正参赛关系。当前表包括 `auth_users`、`auth_sessions`、`game_records`、`game_participants` 及索引；`auth_users.avatar_data` 保存经过服务端格式与大小校验的头像数据。旧恢复码字段继续保留以避免重建账号表，但当前版本不再提供恢复码生成、查询或找回密码接口。密码使用 Node.js 成熟 `scrypt` 加盐哈希；Cookie 令牌只在数据库中保存摘要，范围限制为 `/three-chess`、`HttpOnly`。网页 Cookie 使用 `SameSite=Lax`，白名单 Android 来源使用 `SameSite=None; Secure`；生产环境网页 Cookie 也附加 `Secure`。密码、Cookie 和服务端会话令牌不写入 `localStorage`。
 
-登录、注册和改密按服务端固定窗口限流；注册默认允许同一公网 IP 在一小时内发起 20 次请求，以兼顾校园、宿舍和共用设备，同时仍限制短时间批量注册。限流窗口和上限可通过环境变量调整，不使用浏览器指纹或“一 IP 一账号”。当前功能包含账号、固定昵称、会话和两种玩法的最近 5 盘目录，不含积分、得分率、排行榜、收藏或后台管理。
+登录、注册和改密按服务端固定窗口限流；注册默认允许同一公网 IP 在一小时内发起 20 次请求，以兼顾校园、宿舍和共用设备，同时仍限制短时间批量注册。限流窗口和上限可通过环境变量调整，不使用浏览器指纹或“一 IP 一账号”。当前功能包含账号、固定昵称、会话和三种玩法的最近 5 盘目录，不含积分、得分率、排行榜、收藏或后台管理。
 
-每盘历史对局只保存一份完整记录，通过 `game_participants` 关联参与的多个账号；`game_records.game_type` 区分三国象棋和迷雾象棋，旧记录迁移后仍归属三国象棋。开局即生成独立 UUID 对局 ID，同一房间“再来一局”使用新的局次与对局 ID；`(room_code, room_round)` 唯一约束防止重复结束生成多条记录。记录包含开始/结束时间、房间号、规则版本、初始局面、参与者用户 ID 与当时昵称、阵营、完整走法、认输/退出/超时/吃将等真实终局事件、终局原因、最终局面及各方结果。未正常结束并散房的房间不进入历史，不会补写上线前的虚构战绩。
+每盘历史对局只保存一份完整记录，通过 `game_participants` 关联参与的多个账号；`game_records.game_type` 区分三国象棋、迷雾象棋和中国象棋，旧记录迁移后仍归属三国象棋。开局即生成独立 UUID 对局 ID，同一房间“再来一局”使用新的对局 ID；保存和重复请求均以 UUID 判断，不再使用可能在服务重启后重复的房间局次组合。每位注册用户、每种棋实际只保留最近 5 盘：每次保存后删除已不在任一注册参与者最近 5 盘中的共享记录，游客邀请但仍与注册用户同盘的对局按该注册用户期限保留。记录包含开始/结束时间、房间号、规则版本、初始局面、参与者用户 ID 与当时昵称、阵营、完整走法、认输/退出/超时/吃将等真实终局事件、终局原因、最终局面及各方结果。未正常结束并散房的房间不进入历史，不会补写上线前的虚构战绩。
 
 备份和恢复详见 [账号系统与数据备份](docs/账号系统.md)。
 
@@ -262,8 +262,9 @@ npm run build
 | `tests/game.test.ts` | 规则、出局、轮次与连续合法行棋测试 |
 | `tests/game-record.test.ts` | 棋谱内容、胜负结果、初始/最终子力和文件名测试 |
 | `tests/game-replay.test.ts` | 旧谱兼容、快照恢复、结构化事件和损坏棋谱测试 |
-| `tests/game-history.test.ts` | 完整对局保存、多人关联、终局事件、最近 5 盘、权限、去重和重启持久化 |
+| `tests/game-history.test.ts` | 完整对局保存、多人关联、终局事件、最近 5 盘物理清理、权限、去重、重启持久化和 v5 数据库迁移 |
 | `tests/mist-game-history.test.ts` | 迷雾象棋结算保存、账号关联、独立最近 5 盘、权限、去重和重启持久化 |
+| `tests/chinese-game-history.test.ts` | 中国象棋结算保存、独立最近 5 盘、权限和重启后同局次保存 |
 | `tests/horse-chess.test.ts` | 马棋九马、马腿、夺帅与认输规则测试 |
 | `tests/chinese-chess.test.ts` | 经典中国象棋布局、走法、照面、将死与认输测试 |
 | `tests/chinese-chess-uci.test.ts` | 90 个坐标、初始 FEN、UCI 走法与历史转换测试 |

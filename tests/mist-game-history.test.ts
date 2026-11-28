@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { AuthService } from '../server/auth-service.ts';
 import { MistChessService } from '../server/mist-chess-service.ts';
 import { createOnlineServer } from '../server/create-server.ts';
+import { newMistGame, resignMistGame } from '../src/mist-chess.ts';
 import { replayArchivedMistGame } from '../src/mist-game-history.ts';
 import type { ArchivedMistGameRecord, RecentMistGameSummary } from '../src/mist-game-history.ts';
 
@@ -106,6 +107,14 @@ test('mist archives are shared by logged players, replayable, isolated by accoun
     assert.equal(recent.length, 5);
     assert.equal(recent.some(game => game.id === saved.id), false);
     assert.deepEqual(recent.map(game => game.endedAt), [...recent.map(game => game.endedAt)].sort((a, b) => b - a));
+    const retainedDatabase = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal((retainedDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM game_records WHERE game_type = 'mist-chess'",
+    ).get() as { count: number }).count, 5);
+    assert.equal((retainedDatabase.prepare(
+      'SELECT COUNT(*) AS count FROM game_records WHERE id = ?',
+    ).get(saved.id) as { count: number }).count, 0);
+    retainedDatabase.close();
 
     const server = createOnlineServer({ authService: auth, cookieSecure: false });
     await new Promise<void>(resolveListen => server.httpServer.listen(0, '127.0.0.1', resolveListen));
@@ -120,7 +129,11 @@ test('mist archives are shared by logged players, replayable, isolated by accoun
       const owner = await fetch(`${origin}/three-chess/api/games/mist/${saved.id}`, {
         headers: { Cookie: redAccount.cookie },
       });
-      assert.equal(owner.status, 200);
+      assert.equal(owner.status, 404);
+      const newestOwner = await fetch(`${origin}/three-chess/api/games/mist/mist-synthetic-4`, {
+        headers: { Cookie: redAccount.cookie },
+      });
+      assert.equal(newestOwner.status, 200);
       const outsider = await fetch(`${origin}/three-chess/api/games/mist/${saved.id}`, {
         headers: { Cookie: unrelated.cookie },
       });
@@ -138,6 +151,56 @@ test('mist archives are shared by logged players, replayable, isolated by accoun
   try {
     assert.equal(reopened.recentMistGames(redAccount.user.id).length, 5);
     assert.equal(reopened.mistGameForUser(blackAccount.user.id, 'mist-synthetic-4')?.id, 'mist-synthetic-4');
+  } finally {
+    reopened.close();
+  }
+});
+
+test('mist archives from a restarted service reuse round one without exposing another account game', async () => {
+  const databasePath = tempDb();
+  const auth = new AuthService(databasePath);
+  const oldRed = await register(auth, '重启前红');
+  const oldBlack = await register(auth, '重启前黑');
+  const newRed = await register(auth, '重启后红');
+  const newBlack = await register(auth, '重启后黑');
+  const initial = newMistGame();
+  const finalGame = resignMistGame(initial, 'red');
+  const record = (id: string, endedAt: number, red: typeof oldRed.user, black: typeof oldBlack.user) => ({
+    gameType: 'mist-chess' as const,
+    id,
+    roomCode: 'mist-chess',
+    round: 1,
+    startedAt: endedAt - 1_000,
+    endedAt,
+    rulesVersion: initial.rulesVersion,
+    initialGame: structuredClone(initial),
+    participants: [
+      { playerId: `${id}-red`, userId: red.id, nickname: red.username, side: 'red' as const, result: 'lost' as const },
+      { playerId: `${id}-black`, userId: black.id, nickname: black.username, side: 'black' as const, result: 'won' as const },
+    ],
+    moves: [],
+    events: [{ type: 'end' as const, step: 0, reason: 'resignation' as const, side: 'red' as const, winner: 'black' as const }],
+    finalGame: structuredClone(finalGame),
+    endReason: 'resignation' as const,
+    moveCount: 0,
+    winner: 'black' as const,
+  });
+  try {
+    auth.saveCompletedMistGame(record('before-restart', 1_000, oldRed.user, oldBlack.user));
+    auth.saveCompletedMistGame(record('after-restart', 2_000, newRed.user, newBlack.user));
+    assert.deepEqual(auth.recentMistGames(newRed.user.id).map(game => game.id), ['after-restart']);
+    assert.equal(auth.mistGameForUser(newRed.user.id, 'before-restart'), null);
+    assert.deepEqual(auth.recentMistGames(oldRed.user.id).map(game => game.id), ['before-restart']);
+    assert.equal(auth.mistGameForUser(oldRed.user.id, 'after-restart'), null);
+  } finally {
+    auth.close();
+  }
+
+  const reopened = new AuthService(databasePath);
+  try {
+    assert.deepEqual(reopened.recentMistGames(newRed.user.id).map(game => game.id), ['after-restart']);
+    assert.equal(reopened.mistGameForUser(newRed.user.id, 'before-restart'), null);
+    assert.equal(reopened.mistGameForUser(oldRed.user.id, 'before-restart')?.id, 'before-restart');
   } finally {
     reopened.close();
   }
